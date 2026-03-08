@@ -15,3 +15,14 @@ data/raw/
 data/interim/
 data/normalized/
 db/
+
+# Never publish downloaded spectral assets or derived databases
+*.sli
+*.sed
+*.sig
+*.asd
+*.hdr
+*.nc
+*.rds
+*.parquet
+*.duckdb
