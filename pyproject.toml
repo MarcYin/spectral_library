@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spectral-library-db"
+version = "0.1.0"
+description = "Manifest-driven spectral library fetch and catalog build scaffold."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "duckdb>=1.1.0",
+  "netCDF4>=1.7.0",
+  "openpyxl>=3.1.0",
+  "rdata>=0.11.0",
+]
+
+[project.scripts]
+spectral-library = "spectral_library.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

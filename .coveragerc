@@ -1,0 +1,8 @@
+[run]
+source = src/spectral_library
+
+[report]
+fail_under = 95
+show_missing = True
+exclude_also =
+    if __name__ == .__main__.:

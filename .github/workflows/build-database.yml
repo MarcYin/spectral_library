@@ -1,0 +1,184 @@
+name: Build Spectral Library Catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      tiers:
+        description: Comma-separated manifest tiers to include.
+        required: false
+        default: tier1,tier2
+      statuses:
+        description: Comma-separated manifest statuses to include.
+        required: false
+        default: planned
+      adapters:
+        description: Comma-separated fetch adapters to include.
+        required: false
+        default: zenodo_api,static_http,ecosis_package
+      source_ids:
+        description: Optional comma-separated source ids to target directly.
+        required: false
+        default: ""
+      limit:
+        description: Optional maximum number of sources for the matrix build.
+        required: false
+        default: "0"
+      fetch_mode:
+        description: Metadata-only mode is safer for large remote datasets.
+        required: false
+        default: metadata
+        type: choice
+        options:
+          - metadata
+          - assets
+  schedule:
+    - cron: "0 3 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has_sources: ${{ steps.plan.outputs.has_sources }}
+      manifest_sha256: ${{ steps.plan.outputs.manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - name: Build fetch matrix
+        id: plan
+        env:
+          INPUT_TIERS: ${{ github.event.inputs.tiers }}
+          INPUT_STATUSES: ${{ github.event.inputs.statuses }}
+          INPUT_ADAPTERS: ${{ github.event.inputs.adapters }}
+          INPUT_SOURCE_IDS: ${{ github.event.inputs.source_ids }}
+          INPUT_LIMIT: ${{ github.event.inputs.limit }}
+        run: |
+          mkdir -p build/plan
+          tiers="${INPUT_TIERS:-tier1,tier2}"
+          statuses="${INPUT_STATUSES:-planned}"
+          adapters="${INPUT_ADAPTERS:-zenodo_api,static_http,ecosis_package}"
+          source_ids="${INPUT_SOURCE_IDS:-}"
+          limit="${INPUT_LIMIT:-0}"
+
+          spectral-library plan-matrix \
+            --manifest manifests/sources.csv \
+            --tiers "$tiers" \
+            --statuses "$statuses" \
+            --adapters "$adapters" \
+            --source-ids "$source_ids" \
+            --limit "$limit" \
+            --output build/plan/matrix.json
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          matrix = json.loads(Path("build/plan/matrix.json").read_text(encoding="utf-8"))
+          has_sources = "true" if matrix.get("include") else "false"
+          compact = json.dumps({"include": matrix.get("include", [])}, separators=(",", ":"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"matrix={compact}\n")
+              handle.write(f"has_sources={has_sources}\n")
+              handle.write(f"manifest_sha256={matrix['manifest_sha256']}\n")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-plan
+          path: build/plan/matrix.json
+
+  fetch:
+    needs: plan
+    if: needs.plan.outputs.has_sources == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - name: Restore source cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/spectral-library/${{ matrix.source_id }}
+          key: spectral-library-${{ needs.plan.outputs.manifest_sha256 }}-${{ matrix.source_id }}-${{ github.event.inputs.fetch_mode || 'metadata' }}
+          restore-keys: |
+            spectral-library-${{ matrix.source_id }}-
+
+      - name: Fetch source
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          FETCH_MODE: ${{ github.event.inputs.fetch_mode || 'metadata' }}
+        run: |
+          spectral-library fetch-source \
+            --manifest manifests/sources.csv \
+            --source-id "${{ matrix.source_id }}" \
+            --output-root .cache/spectral-library \
+            --fetch-mode "${FETCH_MODE}"
+
+      - name: Validate cached result
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: test -f ".cache/spectral-library/${{ matrix.source_id }}/fetch-result.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-${{ matrix.source_id }}
+          path: .cache/spectral-library/${{ matrix.source_id }}
+
+  assemble:
+    needs:
+      - plan
+      - fetch
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.has_sources == 'true'
+        with:
+          pattern: source-*
+          path: build/downloaded
+
+      - name: Assemble DuckDB and Parquet outputs
+        run: |
+          spectral-library assemble-database \
+            --manifest manifests/sources.csv \
+            --results-root build/downloaded \
+            --output-root build/assembled
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spectral-library-catalog
+          path: |
+            build/assembled/build_summary.json
+            build/assembled/db
+            build/assembled/parquet
+            build/assembled/tabular
