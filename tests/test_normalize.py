@@ -119,6 +119,7 @@ class NormalizeHelpersTests(unittest.TestCase):
         self.assertEqual(_detect_value_scale([20.0, 40.0]), 100.0)
         self.assertEqual(_detect_value_scale([200.0, 400.0]), 1000.0)
         self.assertEqual(_detect_value_scale([2000.0, 4000.0]), 10000.0)
+        self.assertEqual(_detect_value_scale([425.0, 14415.0]), 10000.0)
         self.assertEqual(_detect_value_scale([], hint=5.0), 5.0)
 
         self.assertEqual(_convert_wavelengths_to_nm([], "nm"), [])
@@ -474,6 +475,38 @@ class NormalizeHelpersTests(unittest.TestCase):
             records = list(_iter_zip_spectra(archive_path, "src1", "Source 1", "primary_raw"))
             self.assertEqual(len(records), 2)
             self.assertEqual(records[0].parser, "csv_column_wide")
+
+    def test_iter_zip_spectra_skips_usgs_auxiliary_members_and_uses_wavelength_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = Path(tmpdir) / "usgs_bundle.zip"
+            spectrum_lines = ["s07_ASD Record=1: Example spectrum"] + ["0.1"] * 1001
+            wavelength_lines = ["s07_ASD Record=19: Wavelengths ASD 0.35-2.5 microns 2151 ch"] + [
+                f"{0.35 + 0.001 * idx:.6f}" for idx in range(1001)
+            ]
+            errorbar_lines = ["s07_ASD Record=2: Example error bars"] + ["0.01"] * 1001
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr(
+                    "ASCIIdata_splib07b_cvASD/ChapterA/s07_ASD_example.txt",
+                    "\n".join(spectrum_lines),
+                )
+                archive.writestr(
+                    "ASCIIdata_splib07b_cvASD/errorbars/errorbars_for_s07_ASD_example.txt",
+                    "\n".join(errorbar_lines),
+                )
+                archive.writestr(
+                    "ASCIIdata_splib07b_cvASD/s07_ASD_Wavelengths_ASD_0.35-2.5_microns_2151_ch.txt",
+                    "\n".join(wavelength_lines),
+                )
+                archive.writestr(
+                    "ASCIIdata_splib07b_cvASD/s07_ASD_Bandpass_(FWHM)_ASDFR_StandardResolution.txt",
+                    "\n".join(errorbar_lines),
+                )
+
+            records = list(_iter_zip_spectra(archive_path, "usgs_v7", "USGS v7", "primary_raw"))
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].parser, "usgs_ascii")
+            self.assertEqual(records[0].wavelengths_nm[:3], [350.0, 351.0, 352.0])
+            self.assertEqual(records[0].sample_name, "Example spectrum")
 
     def test_iter_xlsx_spectra_handles_row_wide_and_band_matrix_layouts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

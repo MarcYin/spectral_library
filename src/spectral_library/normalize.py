@@ -123,7 +123,7 @@ def _detect_value_scale(values: Iterable[float], hint: float | None = None) -> f
         return 100.0
     if max_value <= 1000.5:
         return 1000.0
-    if max_value <= 10000.5:
+    if max_value <= 20000.5:
         return 10000.0
     return 1.0
 
@@ -772,6 +772,7 @@ def _iter_usgs_text_spectra_from_lines(
     source_id: str,
     source_name: str,
     ingest_role: str,
+    wavelengths_nm: list[float] | None = None,
 ) -> Iterator[SpectrumRecord]:
     if not lines:
         return
@@ -783,7 +784,10 @@ def _iter_usgs_text_spectra_from_lines(
     if len(raw_values) < 1000:
         return
 
-    wavelengths_nm = list(range(350, 350 + len(raw_values)))
+    if wavelengths_nm is not None and len(wavelengths_nm) == len(raw_values):
+        actual_wavelengths = wavelengths_nm
+    else:
+        actual_wavelengths = list(range(350, 350 + len(raw_values)))
     values = [math.nan if value is None or abs(value) > 1e20 else value for value in raw_values]
     sample_name = title.split(":", 1)[-1].strip() or _input_stem(input_path)
 
@@ -794,10 +798,47 @@ def _iter_usgs_text_spectra_from_lines(
         input_path=str(input_path),
         parser="usgs_ascii",
         sample_name=sample_name,
-        wavelengths_nm=wavelengths_nm,
+        wavelengths_nm=actual_wavelengths,
         values=values,
         metadata={"title": title},
     )
+
+
+def _is_usgs_auxiliary_member(member_name_normalized: str) -> bool:
+    return (
+        "/errorbars/" in member_name_normalized
+        or member_name_normalized.endswith("/errorbars")
+        or "errorbars_for_" in member_name_normalized
+        or "wavelengths_asd" in member_name_normalized
+        or "bandpass" in member_name_normalized
+        or "fwhm" in member_name_normalized
+    )
+
+
+def _read_usgs_archive_wavelengths(archive: zipfile.ZipFile) -> list[float] | None:
+    wavelength_member = next(
+        (
+            member_name
+            for member_name in archive.namelist()
+            if member_name.lower().endswith(".txt") and "wavelengths_asd" in member_name.lower()
+        ),
+        "",
+    )
+    if not wavelength_member:
+        return None
+
+    lines = _decode_text(archive.read(wavelength_member)).splitlines()
+    if not lines or "Record=" not in lines[0]:
+        return None
+
+    raw_values = [_parse_float(line) for line in lines[1:] if line.strip()]
+    if len(raw_values) < 1000:
+        return None
+
+    values = [value for value in raw_values if value is not None and math.isfinite(value)]
+    if len(values) != len(raw_values):
+        return None
+    return _convert_wavelengths_to_nm(values, "micrometers")
 
 
 def _iter_pair_text_spectra_from_lines(
@@ -993,6 +1034,7 @@ def _iter_zip_spectra(path: Path, source_id: str, source_name: str, ingest_role:
     preferred_tokens = ("spectra", "spectrum", "reflectance", "refl", "rrs")
     ancillary_tokens = ("metadata", "quality", "readme", "license")
     with zipfile.ZipFile(path) as archive:
+        usgs_wavelengths = _read_usgs_archive_wavelengths(archive) if source_id == "usgs_v7" else None
         member_names = sorted(
             archive.namelist(),
             key=lambda member_name: (
@@ -1008,6 +1050,8 @@ def _iter_zip_spectra(path: Path, source_id: str, source_name: str, ingest_role:
             if suffix not in supported_suffixes:
                 continue
             member_name_normalized = member_name.lower()
+            if source_id == "usgs_v7" and _is_usgs_auxiliary_member(member_name_normalized):
+                continue
             if any(token in member_name_normalized for token in ancillary_tokens) and not any(
                 token in member_name_normalized for token in preferred_tokens
             ):
@@ -1018,7 +1062,17 @@ def _iter_zip_spectra(path: Path, source_id: str, source_name: str, ingest_role:
                 yield from _iter_netcdf_spectra_bytes(input_path, payload, source_id, source_name, ingest_role)
             else:
                 lines = _decode_text(payload).splitlines()
-                yield from _iter_textual_spectra_from_lines(lines, input_path, source_id, source_name, ingest_role)
+                if source_id == "usgs_v7" and suffix == ".txt":
+                    yield from _iter_usgs_text_spectra_from_lines(
+                        lines,
+                        input_path,
+                        source_id,
+                        source_name,
+                        ingest_role,
+                        wavelengths_nm=usgs_wavelengths,
+                    )
+                else:
+                    yield from _iter_textual_spectra_from_lines(lines, input_path, source_id, source_name, ingest_role)
 
 
 def _iter_xlsx_band_matrix_sheet(
