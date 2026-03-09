@@ -6,9 +6,12 @@ from pathlib import Path
 
 from .batch import fetch_batch, tidy_source_directory
 from .build_db import assemble_catalog
+from .coverage_filter import filter_normalized_by_coverage
 from .fetchers import get_fetcher
 from .manifest import filter_sources, load_manifest, manifest_sha256, split_csv_arg
 from .normalize import normalize_sources
+from .quality_plots import generate_quality_plots
+from .siac import build_siac_library
 
 
 DEFAULT_MANIFEST = Path("manifests/sources.csv")
@@ -107,6 +110,37 @@ def cmd_normalize_sources(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plot_quality(args: argparse.Namespace) -> int:
+    output_root = Path(args.output_root) if args.output_root else None
+    summary = generate_quality_plots(
+        Path(args.normalized_root),
+        output_root,
+        top_n_sources=args.top_n_sources,
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_filter_coverage(args: argparse.Namespace) -> int:
+    summary = filter_normalized_by_coverage(
+        Path(args.normalized_root),
+        Path(args.output_root),
+        min_coverage=args.min_coverage,
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_build_siac_library(args: argparse.Namespace) -> int:
+    summary = build_siac_library(
+        Path(args.manifest),
+        Path(args.normalized_root),
+        Path(args.output_root),
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spectral-library")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -164,6 +198,33 @@ def build_parser() -> argparse.ArgumentParser:
     normalize_parser.add_argument("--source-ids", default="")
     normalize_parser.add_argument("--limit", type=int, default=0)
     normalize_parser.set_defaults(func=cmd_normalize_sources)
+
+    plot_parser = subparsers.add_parser(
+        "plot-quality",
+        help="Generate QA plots from normalized tabular outputs.",
+    )
+    plot_parser.add_argument("--normalized-root", default="build/normalized")
+    plot_parser.add_argument("--output-root", default="")
+    plot_parser.add_argument("--top-n-sources", type=int, default=20)
+    plot_parser.set_defaults(func=cmd_plot_quality)
+
+    filter_parser = subparsers.add_parser(
+        "filter-coverage",
+        help="Retain only normalized spectra above a minimum grid coverage threshold.",
+    )
+    filter_parser.add_argument("--normalized-root", default="build/normalized")
+    filter_parser.add_argument("--output-root", required=True)
+    filter_parser.add_argument("--min-coverage", type=float, default=0.8)
+    filter_parser.set_defaults(func=cmd_filter_coverage)
+
+    siac_parser = subparsers.add_parser(
+        "build-siac-library",
+        help="Build the SIAC-oriented spectral library package from a normalized dataset.",
+    )
+    siac_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    siac_parser.add_argument("--normalized-root", default="build/normalized_rebuild_v9_final")
+    siac_parser.add_argument("--output-root", default="build/siac_spectral_library_v1")
+    siac_parser.set_defaults(func=cmd_build_siac_library)
 
     return parser
 

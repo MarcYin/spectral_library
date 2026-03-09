@@ -338,6 +338,66 @@ class CliCommandTests(unittest.TestCase):
             self.assertEqual(json.loads(stdout.getvalue())["normalized_spectra"], 3)
             self.assertTrue(mock_normalize_sources.called)
 
+    def test_plot_quality_command_prints_summary(self) -> None:
+        with patch.object(cli, "generate_quality_plots", return_value={"source_count": 4}) as mock_generate_quality_plots:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "plot-quality",
+                        "--normalized-root",
+                        "build/normalized_full_pass_with_usgs",
+                        "--output-root",
+                        "build/normalized_full_pass_with_usgs/plots",
+                        "--top-n-sources",
+                        "12",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["source_count"], 4)
+            self.assertTrue(mock_generate_quality_plots.called)
+
+    def test_filter_coverage_command_prints_summary(self) -> None:
+        with patch.object(cli, "filter_normalized_by_coverage", return_value={"retained_spectra": 7}) as mock_filter:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "filter-coverage",
+                        "--normalized-root",
+                        "build/normalized_full_pass_with_usgs",
+                        "--output-root",
+                        "build/normalized_full_pass_with_usgs_cov80",
+                        "--min-coverage",
+                        "0.8",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["retained_spectra"], 7)
+            self.assertTrue(mock_filter.called)
+
+    def test_build_siac_library_command_prints_summary(self) -> None:
+        with patch.object(cli, "build_siac_library", return_value={"classified_spectra": 9}) as mock_build_siac_library:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "build-siac-library",
+                        "--manifest",
+                        "manifests/sources.csv",
+                        "--normalized-root",
+                        "build/normalized_rebuild_v9_final",
+                        "--output-root",
+                        "build/siac_spectral_library_v1",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 9)
+            self.assertTrue(mock_build_siac_library.called)
+
     def test_main_without_subcommand_raises_system_exit(self) -> None:
         with self.assertRaises(SystemExit):
             cli.main_with_args([])

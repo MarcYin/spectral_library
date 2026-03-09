@@ -18,6 +18,9 @@ for the locally downloaded libraries.
   - `assemble-database`
   - `tidy-results`
   - `normalize-sources`
+  - `plot-quality`
+  - `filter-coverage`
+  - `build-siac-library`
 - GitHub Actions workflow:
   - `.github/workflows/build-database.yml`
 
@@ -48,6 +51,9 @@ spectral-library fetch-source --manifest manifests/sources.csv --source-id ossl 
 spectral-library fetch-batch --manifest manifests/sources.csv --output-root build/local_sources --fetch-mode assets --continue-on-error --clean-output
 spectral-library assemble-database --manifest manifests/sources.csv --results-root build/sources --output-root build/assembled
 spectral-library normalize-sources --manifest manifests/sources.csv --results-root build/local_sources --output-root build/normalized
+spectral-library filter-coverage --normalized-root build/normalized --output-root build/normalized_cov80 --min-coverage 0.8
+spectral-library plot-quality --normalized-root build/normalized --output-root build/normalized/plots
+spectral-library build-siac-library --manifest manifests/sources.csv --normalized-root build/normalized_rebuild_v9_final --output-root build/siac_spectral_library_v1
 ```
 
 `fetch-batch` writes one cleaned directory per source under the output root:
@@ -75,6 +81,29 @@ Normalization build:
 - `normalized_spectra`
 - `normalization_failures`
 - `source_summary`
+
+Quality plots:
+- `source_counts.png`
+- `source_failure_rates.png`
+- `native_spacing_hist.png`
+- `native_range_scatter.png`
+- `normalized_coverage_hist.png`
+- `failure_reasons.png`
+- `parser_counts.png`
+
+Coverage filtering:
+- `filter-coverage` rewrites `spectra_metadata.csv` and `normalized_spectra.csv`
+  using a minimum retained coverage threshold on the shared `400-2500 nm` grid
+- `wavelength_grid.csv` and `normalization_failures.csv` are copied through
+- `source_summary.csv` is rebuilt from the retained spectra
+
+SIAC export:
+- `build-siac-library` keeps the full curated normalized dataset and carries
+  land-cover labels only as optional annotations
+- it writes SIAC-ready metadata, spectra, source summaries, land-cover summaries
+  for labeled subsets, pooled/source/source-balanced prototypes, and a DuckDB package
+- the package keeps the same `400-2500 nm` / `1 nm` grid and is intended to be
+  built from the curated final normalized archive
 
 The normalization pass currently handles the common local formats already in
 the workspace:
