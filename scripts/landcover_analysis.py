@@ -105,6 +105,16 @@ FIT_SAMPLE_MAX = 5000
 PLOT_SAMPLE_MAX = 1200
 SCATTER_SAMPLE_MAX = 2500
 RANDOM_SEED = 42
+ANTARCTIC_ROCK_KEYWORDS = [
+    "basalt",
+    "lava",
+    "rock",
+    "granite",
+    "sandstone",
+    "dolerite",
+    "fragmental",
+]
+USGS_PERTURBED_KEYWORDS = ["+1shf", "+1shft", "+const", "/shif", "unshf"]
 
 
 def resolve_tabular_root(normalized_root: Path) -> Path:
@@ -119,15 +129,48 @@ def load_manifest_map(manifest_path: Path) -> dict[str, dict[str, str]]:
     return manifest.set_index("source_id").to_dict(orient="index")
 
 
+def parse_metadata_json(value: object) -> dict[str, str]:
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): "" if parsed[key] is None else str(parsed[key]) for key in parsed}
+
+
 def classify_landcover(row: pd.Series, manifest_info: dict[str, str]) -> tuple[str | None, str]:
     source_id = row["source_id"]
     input_path = row["input_path"]
     sample_name = str(row["sample_name"])
+    metadata_json = parse_metadata_json(row.get("metadata_json", ""))
+
+    if source_id == "hyspiri_ground_targets":
+        return "soil", "hyspiri:playa_dry_lake"
+
+    if source_id == "drylands_emit":
+        level_1 = metadata_json.get("level_1", "").lower()
+        if level_1 == "soil":
+            return "soil", "drylands_emit:metadata_level_1=soil"
+        if level_1 == "pv":
+            return "vegetation", "drylands_emit:metadata_level_1=pv"
+        if level_1 == "npv":
+            return None, "drylands_emit:metadata_level_1=npv"
+
+    if source_id == "antarctic_vegetation_speclib":
+        antarctic_text = f"{sample_name} {input_path}".lower()
+        if any(keyword in antarctic_text for keyword in ANTARCTIC_ROCK_KEYWORDS):
+            return "soil", "antarctic:rock_associated"
 
     if source_id in PURE_SOURCE_GROUPS:
         return PURE_SOURCE_GROUPS[source_id], f"source:{source_id}"
 
     if source_id == "usgs_v7":
+        sample_name_lower = sample_name.lower()
+        if any(keyword in sample_name_lower for keyword in USGS_PERTURBED_KEYWORDS):
+            return None, "usgs:perturbed_variant"
         suffix = input_path.split("ASCIIdata_splib07b_cvASD/")[-1]
         chapter = suffix.split("/")[0]
         if chapter in USGS_CHAPTER_GROUPS:

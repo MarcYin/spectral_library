@@ -136,6 +136,8 @@ def cmd_build_siac_library(args: argparse.Namespace) -> int:
         Path(args.manifest),
         Path(args.normalized_root),
         Path(args.output_root),
+        exclude_source_ids=split_csv_arg(args.exclude_source_ids),
+        exclude_spectra_csv=Path(args.exclude_spectra_csv) if args.exclude_spectra_csv else None,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
@@ -224,6 +226,8 @@ def build_parser() -> argparse.ArgumentParser:
     siac_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     siac_parser.add_argument("--normalized-root", default="build/normalized_rebuild_v9_final")
     siac_parser.add_argument("--output-root", default="build/siac_spectral_library_v1")
+    siac_parser.add_argument("--exclude-source-ids", default="")
+    siac_parser.add_argument("--exclude-spectra-csv", default="")
     siac_parser.set_defaults(func=cmd_build_siac_library)
 
     return parser

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import matplotlib
@@ -36,11 +37,12 @@ def load_metadata(root: Path) -> pd.DataFrame:
     )
     labels = pd.read_csv(
         root / "landcover_analysis" / "landcover_labels.csv",
-        usecols=["source_id", "spectrum_id", "landcover_group"],
+        usecols=["source_id", "spectrum_id", "landcover_group", "classification_rule"],
         low_memory=False,
     )
     merged = metadata.merge(labels, on=["source_id", "spectrum_id"], how="left")
     merged["landcover_group"] = merged["landcover_group"].fillna("unclassified")
+    merged["classification_rule"] = merged["classification_rule"].fillna("unclassified")
     merged["sample_key"] = merged["source_id"].astype(str) + "||" + merged["spectrum_id"].astype(str)
     return merged
 
@@ -78,6 +80,29 @@ def select_samples(metadata: pd.DataFrame, max_per_source: int, seed: int) -> pd
     return pd.concat(sampled_frames, ignore_index=True)
 
 
+def sanitize_slug(value: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip())
+    return text.strip("._") or "unclassified"
+
+
+def sample_subcategory_frame(frame: pd.DataFrame, max_per_group: int, seed: int) -> pd.DataFrame:
+    take = min(max_per_group, len(frame))
+    if take <= 0:
+        return frame.head(0).copy()
+    return frame.sample(n=take, random_state=seed).sort_values(["sample_name", "spectrum_id"]).reset_index(drop=True)
+
+
+def select_subcategory_samples(metadata: pd.DataFrame, max_per_group: int, seed: int) -> pd.DataFrame:
+    sampled_frames: list[pd.DataFrame] = []
+    for idx, ((source_id, classification_rule), frame) in enumerate(
+        metadata.groupby(["source_id", "classification_rule"], sort=True)
+    ):
+        sampled = sample_subcategory_frame(frame.copy(), max_per_group=max_per_group, seed=seed + idx * 997)
+        sampled["subcategory_slug"] = sanitize_slug(classification_rule)
+        sampled_frames.append(sampled)
+    return pd.concat(sampled_frames, ignore_index=True) if sampled_frames else metadata.head(0).copy()
+
+
 def load_sampled_spectra(root: Path, sample_keys: set[str]) -> tuple[np.ndarray, pd.DataFrame]:
     csv_path = root / "tabular" / "normalized_spectra.csv"
     header = pd.read_csv(csv_path, nrows=0)
@@ -95,6 +120,10 @@ def load_sampled_spectra(root: Path, sample_keys: set[str]) -> tuple[np.ndarray,
 
     spectra = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=usecols + ["sample_key"])
     return wavelengths, spectra
+
+
+def split_csv_arg(value: str) -> list[str]:
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
 def plot_source_grid(
@@ -161,6 +190,8 @@ def main() -> int:
     parser.add_argument("--root", required=True)
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--max-per-source", type=int, default=100)
+    parser.add_argument("--max-per-subcategory", type=int, default=100)
+    parser.add_argument("--source-ids", default="")
     parser.add_argument("--seed", type=int, default=20260309)
     args = parser.parse_args()
 
@@ -169,10 +200,24 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
 
     metadata = load_metadata(root)
+    selected_source_ids = set(split_csv_arg(args.source_ids))
+    if selected_source_ids:
+        metadata = metadata[metadata["source_id"].astype(str).isin(selected_source_ids)].copy()
     sampled = select_samples(metadata, max_per_source=args.max_per_source, seed=args.seed)
+    subcategory_sampled = select_subcategory_samples(
+        metadata,
+        max_per_group=args.max_per_subcategory,
+        seed=args.seed + 500_000,
+    )
+    combined = (
+        pd.concat([sampled, subcategory_sampled], ignore_index=True)
+        .drop_duplicates(subset=["sample_key"])
+        .reset_index(drop=True)
+    )
     sampled.to_csv(output_root / "sample_index.csv", index=False)
+    subcategory_sampled.to_csv(output_root / "subcategory_sample_index.csv", index=False)
 
-    wavelengths, spectral_frame = load_sampled_spectra(root, set(sampled["sample_key"].tolist()))
+    wavelengths, spectral_frame = load_sampled_spectra(root, set(combined["sample_key"].tolist()))
 
     summary_rows: list[dict[str, object]] = []
     for source_id, frame in sampled.groupby("source_id", sort=True):
@@ -212,16 +257,71 @@ def main() -> int:
             }
         )
 
+    subcategory_rows: list[dict[str, object]] = []
+    for (source_id, classification_rule), frame in subcategory_sampled.groupby(
+        ["source_id", "classification_rule"],
+        sort=True,
+    ):
+        source_dir = output_root / source_id / "subcategories"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        frame = frame.copy().reset_index(drop=True)
+        source_spectra = spectral_frame[spectral_frame["source_id"] == source_id].copy()
+        source_name = str(frame["source_name"].iloc[0])
+        subcategory_slug = str(frame["subcategory_slug"].iloc[0])
+        sub_dir = source_dir / subcategory_slug
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(sub_dir / "random_sample_manifest.csv", index=False)
+
+        title_base = f"{source_id} | {classification_rule}"
+        plot_source_grid(
+            frame,
+            source_spectra,
+            wavelengths,
+            sub_dir / "random_100_full_spectrum.png",
+            title=f"{title_base} | {source_name} | random spectra",
+        )
+        plot_source_grid(
+            frame,
+            source_spectra,
+            wavelengths,
+            sub_dir / "random_100_visible.png",
+            title=f"{title_base} | {source_name} | random spectra (400-700 nm)",
+            wavelength_window=(400, 700),
+        )
+
+        landcover_counts = frame["landcover_group"].value_counts().to_dict()
+        subcategory_rows.append(
+            {
+                "source_id": source_id,
+                "source_name": source_name,
+                "classification_rule": classification_rule,
+                "subcategory_slug": subcategory_slug,
+                "sample_count": int(len(frame)),
+                "landcover_groups": json.dumps(landcover_counts, sort_keys=True),
+                "full_plot": str(sub_dir / "random_100_full_spectrum.png"),
+                "visible_plot": str(sub_dir / "random_100_visible.png"),
+            }
+        )
+
     summary = pd.DataFrame(summary_rows).sort_values("source_id").reset_index(drop=True)
     summary.to_csv(output_root / "plot_summary.csv", index=False)
+    subcategory_summary = (
+        pd.DataFrame(subcategory_rows)
+        .sort_values(["source_id", "classification_rule"])
+        .reset_index(drop=True)
+    )
+    subcategory_summary.to_csv(output_root / "subcategory_plot_summary.csv", index=False)
     (output_root / "run_summary.json").write_text(
         json.dumps(
             {
                 "root": str(root),
                 "output_root": str(output_root),
                 "source_count": int(summary["source_id"].nunique()),
+                "subcategory_count": int(subcategory_summary.shape[0]),
                 "total_sampled_spectra": int(len(sampled)),
+                "total_subcategory_sampled_spectra": int(len(subcategory_sampled)),
                 "max_per_source": int(args.max_per_source),
+                "max_per_subcategory": int(args.max_per_subcategory),
                 "seed": int(args.seed),
             },
             indent=2,

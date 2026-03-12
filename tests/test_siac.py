@@ -142,7 +142,7 @@ class BuildSiacLibraryTests(unittest.TestCase):
                         "parser": "csv",
                         "native_wavelength_count": 3,
                         "native_min_nm": 400,
-                        "native_max_nm": 402,
+                        "native_max_nm": 2500,
                         "native_spacing_nm": 1,
                         "value_scale_applied": 1.0,
                         "normalized_points": 2101,
@@ -244,6 +244,405 @@ class BuildSiacLibraryTests(unittest.TestCase):
                 connection.close()
 
             self.assertEqual(wavelength_rows, [("nm_400", 400), ("nm_401", 401), ("nm_402", 402)])
+
+    def test_build_siac_library_can_exclude_source_but_keep_metadata_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifests" / "sources.csv"
+            normalized_root = root / "normalized"
+            output_root = root / "siac"
+
+            _write_csv(
+                manifest_path,
+                list(SourceRecord.__dataclass_fields__.keys()),
+                [
+                    _manifest_row("src1", "Source 1"),
+                    _manifest_row("src2", "Source 2"),
+                ],
+            )
+            _write_csv(
+                normalized_root / "tabular" / "spectra_metadata.csv",
+                [
+                    "source_id",
+                    "source_name",
+                    "ingest_role",
+                    "spectrum_id",
+                    "sample_name",
+                    "input_path",
+                    "parser",
+                    "native_wavelength_count",
+                    "native_min_nm",
+                    "native_max_nm",
+                    "native_spacing_nm",
+                    "value_scale_applied",
+                    "normalized_points",
+                    "metadata_json",
+                ],
+                [
+                    {
+                        "source_id": "src1",
+                        "source_name": "Source 1",
+                        "ingest_role": "primary_raw",
+                        "spectrum_id": "src1_a",
+                        "sample_name": "src1_a",
+                        "input_path": "/tmp/src1_a.csv",
+                        "parser": "csv",
+                        "native_wavelength_count": 3,
+                        "native_min_nm": 400,
+                        "native_max_nm": 402,
+                        "native_spacing_nm": 1,
+                        "value_scale_applied": 1.0,
+                        "normalized_points": 2101,
+                        "metadata_json": json.dumps({"sample": "a"}),
+                    },
+                    {
+                        "source_id": "src2",
+                        "source_name": "Source 2",
+                        "ingest_role": "primary_raw",
+                        "spectrum_id": "src2_a",
+                        "sample_name": "src2_a",
+                        "input_path": "/tmp/src2_a.csv",
+                        "parser": "csv",
+                        "native_wavelength_count": 3,
+                        "native_min_nm": 400,
+                        "native_max_nm": 402,
+                        "native_spacing_nm": 1,
+                        "value_scale_applied": 1.0,
+                        "normalized_points": 2101,
+                        "metadata_json": json.dumps({"sample": "b"}),
+                    },
+                ],
+            )
+            _write_csv(
+                normalized_root / "tabular" / "normalized_spectra.csv",
+                ["source_id", "spectrum_id", "sample_name", "nm_400", "nm_401", "nm_402"],
+                [
+                    {"source_id": "src1", "spectrum_id": "src1_a", "sample_name": "src1_a", "nm_400": 0.1, "nm_401": 0.2, "nm_402": 0.3},
+                    {"source_id": "src2", "spectrum_id": "src2_a", "sample_name": "src2_a", "nm_400": 0.9, "nm_401": 0.8, "nm_402": 0.7},
+                ],
+            )
+            _write_csv(
+                normalized_root / "landcover_analysis" / "landcover_labels.csv",
+                ["source_id", "spectrum_id", "sample_name", "landcover_group", "classification_rule"],
+                [
+                    {"source_id": "src1", "spectrum_id": "src1_a", "sample_name": "src1_a", "landcover_group": "soil", "classification_rule": "rule"},
+                    {"source_id": "src2", "spectrum_id": "src2_a", "sample_name": "src2_a", "landcover_group": "vegetation", "classification_rule": "rule"},
+                ],
+            )
+
+            summary = build_siac_library(
+                manifest_path,
+                normalized_root,
+                output_root,
+                exclude_source_ids=["src2"],
+            )
+
+            self.assertEqual(summary["total_spectra"], 1)
+            self.assertEqual(summary["source_count"], 2)
+            self.assertEqual(summary["spectra_source_count"], 1)
+            self.assertEqual(summary["excluded_source_count"], 1)
+            self.assertEqual(summary["excluded_spectra_count"], 1)
+            self.assertEqual(summary["excluded_source_ids"], ["src2"])
+
+            connection = duckdb.connect(str(output_root / "db" / "siac_spectral_library.duckdb"))
+            try:
+                included_sources = connection.execute(
+                    "SELECT DISTINCT source_id FROM siac_spectra_metadata ORDER BY source_id"
+                ).fetchall()
+                self.assertEqual(included_sources, [("src1",)])
+
+                excluded_row = connection.execute(
+                    """
+                    SELECT source_id, available_spectra_count, exclusion_reason
+                    FROM siac_excluded_sources
+                    """
+                ).fetchone()
+                self.assertEqual(excluded_row, ("src2", 1, "excluded_by_source_id"))
+
+                source_summary = connection.execute(
+                    """
+                    SELECT
+                      source_id,
+                      included_in_spectra,
+                      available_spectra_count,
+                      spectra_count,
+                      excluded_spectra_count,
+                      exclusion_reason
+                    FROM siac_source_summary
+                    WHERE source_id = 'src2'
+                    """
+                ).fetchone()
+                self.assertEqual(source_summary, ("src2", False, 1, 0, 1, "excluded_by_source_id"))
+
+                manifest_rows = connection.execute(
+                    """
+                    SELECT source_id, included_in_spectra, available_spectra_count
+                    FROM siac_manifest_sources
+                    ORDER BY source_id
+                    """
+                ).fetchall()
+                self.assertEqual(manifest_rows, [("src1", True, 1), ("src2", False, 1)])
+            finally:
+                connection.close()
+
+    def test_build_siac_library_can_exclude_individual_spectra_but_keep_exclusion_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifests" / "sources.csv"
+            normalized_root = root / "normalized"
+            output_root = root / "siac"
+            excluded_spectra_csv = root / "manifests" / "excluded_spectra.csv"
+
+            _write_csv(
+                manifest_path,
+                list(SourceRecord.__dataclass_fields__.keys()),
+                [
+                    _manifest_row("src1", "Source 1"),
+                    _manifest_row("src2", "Source 2"),
+                ],
+            )
+            _write_csv(
+                normalized_root / "tabular" / "spectra_metadata.csv",
+                [
+                    "source_id",
+                    "source_name",
+                    "ingest_role",
+                    "spectrum_id",
+                    "sample_name",
+                    "input_path",
+                    "parser",
+                    "native_wavelength_count",
+                    "native_min_nm",
+                    "native_max_nm",
+                    "native_spacing_nm",
+                    "value_scale_applied",
+                    "normalized_points",
+                    "metadata_json",
+                ],
+                [
+                    {
+                        "source_id": "src1",
+                        "source_name": "Source 1",
+                        "ingest_role": "primary_raw",
+                        "spectrum_id": "src1_a",
+                        "sample_name": "src1_a",
+                        "input_path": "/tmp/src1_a.csv",
+                        "parser": "csv",
+                        "native_wavelength_count": 3,
+                        "native_min_nm": 400,
+                        "native_max_nm": 402,
+                        "native_spacing_nm": 1,
+                        "value_scale_applied": 1.0,
+                        "normalized_points": 2101,
+                        "metadata_json": json.dumps({"sample": "a"}),
+                    },
+                    {
+                        "source_id": "src1",
+                        "source_name": "Source 1",
+                        "ingest_role": "primary_raw",
+                        "spectrum_id": "src1_b",
+                        "sample_name": "src1_b",
+                        "input_path": "/tmp/src1_b.csv",
+                        "parser": "csv",
+                        "native_wavelength_count": 3,
+                        "native_min_nm": 400,
+                        "native_max_nm": 402,
+                        "native_spacing_nm": 1,
+                        "value_scale_applied": 1.0,
+                        "normalized_points": 2101,
+                        "metadata_json": json.dumps({"sample": "b"}),
+                    },
+                    {
+                        "source_id": "src2",
+                        "source_name": "Source 2",
+                        "ingest_role": "primary_raw",
+                        "spectrum_id": "src2_a",
+                        "sample_name": "src2_a",
+                        "input_path": "/tmp/src2_a.csv",
+                        "parser": "csv",
+                        "native_wavelength_count": 3,
+                        "native_min_nm": 400,
+                        "native_max_nm": 402,
+                        "native_spacing_nm": 1,
+                        "value_scale_applied": 1.0,
+                        "normalized_points": 2101,
+                        "metadata_json": json.dumps({"sample": "c"}),
+                    },
+                ],
+            )
+            _write_csv(
+                normalized_root / "tabular" / "normalized_spectra.csv",
+                ["source_id", "spectrum_id", "sample_name", "nm_400", "nm_401", "nm_402"],
+                [
+                    {"source_id": "src1", "spectrum_id": "src1_a", "sample_name": "src1_a", "nm_400": 0.1, "nm_401": 0.2, "nm_402": 0.3},
+                    {"source_id": "src1", "spectrum_id": "src1_b", "sample_name": "src1_b", "nm_400": 0.3, "nm_401": 0.4, "nm_402": 0.5},
+                    {"source_id": "src2", "spectrum_id": "src2_a", "sample_name": "src2_a", "nm_400": 0.9, "nm_401": 0.8, "nm_402": 0.7},
+                ],
+            )
+            _write_csv(
+                normalized_root / "landcover_analysis" / "landcover_labels.csv",
+                ["source_id", "spectrum_id", "sample_name", "landcover_group", "classification_rule"],
+                [
+                    {"source_id": "src1", "spectrum_id": "src1_a", "sample_name": "src1_a", "landcover_group": "soil", "classification_rule": "rule"},
+                    {"source_id": "src1", "spectrum_id": "src1_b", "sample_name": "src1_b", "landcover_group": "soil", "classification_rule": "rule"},
+                    {"source_id": "src2", "spectrum_id": "src2_a", "sample_name": "src2_a", "landcover_group": "vegetation", "classification_rule": "rule"},
+                ],
+            )
+            _write_csv(
+                excluded_spectra_csv,
+                ["source_id", "spectrum_id", "reason"],
+                [{"source_id": "src1", "spectrum_id": "src1_b", "reason": "manual_review"}],
+            )
+
+            summary = build_siac_library(
+                manifest_path,
+                normalized_root,
+                output_root,
+                exclude_spectra_csv=excluded_spectra_csv,
+            )
+
+            self.assertEqual(summary["total_spectra"], 2)
+            self.assertEqual(summary["excluded_individual_spectra_count"], 1)
+            self.assertEqual(summary["excluded_spectra_count"], 1)
+
+            connection = duckdb.connect(str(output_root / "db" / "siac_spectral_library.duckdb"))
+            try:
+                included_ids = connection.execute(
+                    "SELECT spectrum_id FROM siac_spectra_metadata ORDER BY spectrum_id"
+                ).fetchall()
+                self.assertEqual(included_ids, [("src1_a",), ("src2_a",)])
+
+                excluded = connection.execute(
+                    "SELECT source_id, spectrum_id, exclusion_reason FROM siac_excluded_spectra"
+                ).fetchall()
+                self.assertEqual(excluded, [("src1", "src1_b", "manual_review")])
+            finally:
+                connection.close()
+
+    def test_build_siac_library_uses_tail_stable_subset_for_urban_pooled_prototypes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifests" / "sources.csv"
+            normalized_root = root / "normalized"
+            output_root = root / "siac"
+
+            _write_csv(
+                manifest_path,
+                list(SourceRecord.__dataclass_fields__.keys()),
+                [
+                    _manifest_row("urban_short", "Urban Short", subsection="urban"),
+                    _manifest_row("urban_full", "Urban Full", subsection="urban"),
+                ],
+            )
+            _write_csv(
+                normalized_root / "tabular" / "spectra_metadata.csv",
+                [
+                    "source_id",
+                    "source_name",
+                    "ingest_role",
+                    "spectrum_id",
+                    "sample_name",
+                    "input_path",
+                    "parser",
+                    "native_wavelength_count",
+                    "native_min_nm",
+                    "native_max_nm",
+                    "native_spacing_nm",
+                    "value_scale_applied",
+                    "normalized_points",
+                    "metadata_json",
+                ],
+                [
+                    {
+                        "source_id": "urban_short",
+                        "source_name": "Urban Short",
+                        "ingest_role": "primary_raw",
+                        "spectrum_id": "urban_short_a",
+                        "sample_name": "urban_short_a",
+                        "input_path": "/tmp/urban_short_a.csv",
+                        "parser": "csv",
+                        "native_wavelength_count": 3,
+                        "native_min_nm": 400,
+                        "native_max_nm": 2400,
+                        "native_spacing_nm": 1,
+                        "value_scale_applied": 1.0,
+                        "normalized_points": 2101,
+                        "metadata_json": json.dumps({"sample": "short"}),
+                    },
+                    {
+                        "source_id": "urban_full",
+                        "source_name": "Urban Full",
+                        "ingest_role": "primary_raw",
+                        "spectrum_id": "urban_full_a",
+                        "sample_name": "urban_full_a",
+                        "input_path": "/tmp/urban_full_a.csv",
+                        "parser": "csv",
+                        "native_wavelength_count": 3,
+                        "native_min_nm": 400,
+                        "native_max_nm": 2500,
+                        "native_spacing_nm": 1,
+                        "value_scale_applied": 1.0,
+                        "normalized_points": 2101,
+                        "metadata_json": json.dumps({"sample": "full"}),
+                    },
+                ],
+            )
+            _write_csv(
+                normalized_root / "tabular" / "normalized_spectra.csv",
+                ["source_id", "spectrum_id", "sample_name", "nm_400", "nm_401", "nm_402"],
+                [
+                    {"source_id": "urban_short", "spectrum_id": "urban_short_a", "sample_name": "urban_short_a", "nm_400": 0.9, "nm_401": 0.9, "nm_402": 0.9},
+                    {"source_id": "urban_full", "spectrum_id": "urban_full_a", "sample_name": "urban_full_a", "nm_400": 0.2, "nm_401": 0.2, "nm_402": 0.2},
+                ],
+            )
+            _write_csv(
+                normalized_root / "landcover_analysis" / "landcover_labels.csv",
+                ["source_id", "spectrum_id", "sample_name", "landcover_group", "classification_rule"],
+                [
+                    {"source_id": "urban_short", "spectrum_id": "urban_short_a", "sample_name": "urban_short_a", "landcover_group": "urban", "classification_rule": "rule"},
+                    {"source_id": "urban_full", "spectrum_id": "urban_full_a", "sample_name": "urban_full_a", "landcover_group": "urban", "classification_rule": "rule"},
+                ],
+            )
+
+            build_siac_library(manifest_path, normalized_root, output_root)
+
+            connection = duckdb.connect(str(output_root / "db" / "siac_spectral_library.duckdb"))
+            try:
+                pooled = connection.execute(
+                    """
+                    SELECT ROUND(nm_400, 4), spectra_count, source_count
+                    FROM siac_landcover_prototypes
+                    WHERE prototype_level = 'pooled' AND landcover_group = 'urban'
+                    """
+                ).fetchone()
+                self.assertEqual(pooled, (0.2, 1, 1))
+
+                balanced = connection.execute(
+                    """
+                    SELECT ROUND(nm_400, 4), spectra_count, source_count
+                    FROM siac_landcover_prototypes
+                    WHERE prototype_level = 'source_balanced' AND landcover_group = 'urban'
+                    """
+                ).fetchone()
+                self.assertEqual(balanced, (0.2, 1, 1))
+
+                source_rows = connection.execute(
+                    """
+                    SELECT prototype_level, source_id, ROUND(nm_400, 4)
+                    FROM siac_landcover_prototypes
+                    WHERE prototype_level = 'source' AND landcover_group = 'urban'
+                    ORDER BY source_id
+                    """
+                ).fetchall()
+                self.assertEqual(
+                    source_rows,
+                    [
+                        ("source", "urban_full", 0.2),
+                        ("source", "urban_short", 0.9),
+                    ],
+                )
+            finally:
+                connection.close()
 
 
 if __name__ == "__main__":

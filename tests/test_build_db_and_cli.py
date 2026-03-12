@@ -397,6 +397,55 @@ class CliCommandTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 9)
             self.assertTrue(mock_build_siac_library.called)
+            self.assertEqual(mock_build_siac_library.call_args.kwargs["exclude_source_ids"], [])
+            self.assertIsNone(mock_build_siac_library.call_args.kwargs["exclude_spectra_csv"])
+
+    def test_build_siac_library_command_passes_excluded_sources(self) -> None:
+        with patch.object(cli, "build_siac_library", return_value={"classified_spectra": 8}) as mock_build_siac_library:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "build-siac-library",
+                        "--manifest",
+                        "manifests/sources.csv",
+                        "--normalized-root",
+                        "build/normalized_rebuild_v22_native_410_2490",
+                        "--output-root",
+                        "build/siac_spectral_library_v14_native_410_2490_no_ghisacasia",
+                        "--exclude-source-ids",
+                        "ghisacasia_v001",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 8)
+            self.assertEqual(mock_build_siac_library.call_args.kwargs["exclude_source_ids"], ["ghisacasia_v001"])
+
+    def test_build_siac_library_command_passes_excluded_spectra_csv(self) -> None:
+        with patch.object(cli, "build_siac_library", return_value={"classified_spectra": 7}) as mock_build_siac_library:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "build-siac-library",
+                        "--manifest",
+                        "manifests/sources.csv",
+                        "--normalized-root",
+                        "build/normalized_rebuild_v22_native_410_2490",
+                        "--output-root",
+                        "build/siac_spectral_library_v14_native_410_2490_no_ghisacasia",
+                        "--exclude-spectra-csv",
+                        "manifests/siac_excluded_spectra.csv",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 7)
+            self.assertEqual(
+                mock_build_siac_library.call_args.kwargs["exclude_spectra_csv"],
+                Path("manifests/siac_excluded_spectra.csv"),
+            )
 
     def test_main_without_subcommand_raises_system_exit(self) -> None:
         with self.assertRaises(SystemExit):

@@ -18,6 +18,7 @@ VISIBLE_START = 400
 VISIBLE_END = 700
 VISIBLE_LAM = 50.0
 VISIBLE_ABS_THRESHOLD = 0.005
+BLEND_HALF_WINDOW_NM = 50
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,41 @@ DETECT_WINDOWS = [
     WindowSpec(2000, 2450, 100.0, 0.010),
 ]
 WEIGHT_THRESHOLD = 0.10
+
+
+def _contiguous_true_ranges(mask: np.ndarray) -> list[tuple[int, int]]:
+    indices = np.flatnonzero(mask)
+    if indices.size == 0:
+        return []
+    splits = np.where(np.diff(indices) > 1)[0] + 1
+    groups = np.split(indices, splits)
+    return [(int(group[0]), int(group[-1])) for group in groups if group.size > 0]
+
+
+def _two_sided_blend_weights(
+    wavelengths: np.ndarray,
+    start_nm: int,
+    end_nm: int,
+    half_window_nm: int,
+) -> np.ndarray:
+    weights = np.zeros(len(wavelengths), dtype=float)
+    left_outer = start_nm - half_window_nm
+    left_inner = start_nm + half_window_nm
+    right_inner = end_nm - half_window_nm
+    right_outer = end_nm + half_window_nm
+
+    left_ramp = (wavelengths >= left_outer) & (wavelengths < left_inner)
+    if left_inner > left_outer:
+        weights[left_ramp] = (wavelengths[left_ramp] - left_outer) / float(left_inner - left_outer)
+
+    middle = (wavelengths >= left_inner) & (wavelengths <= right_inner)
+    weights[middle] = 1.0
+
+    right_ramp = (wavelengths > right_inner) & (wavelengths <= right_outer)
+    if right_outer > right_inner:
+        weights[right_ramp] = (right_outer - wavelengths[right_ramp]) / float(right_outer - right_inner)
+
+    return np.clip(weights, 0.0, 1.0)
 
 
 def copy_static_files(base_root: Path, output_root: Path) -> None:
@@ -140,9 +176,33 @@ def replace_visible_bands(values: np.ndarray, flagged_all: np.ndarray) -> tuple[
         return_weights=False,
         merge_x_tol=0.0,
     )
-    visible_values[visible_flags] = smoothed[visible_flags]
+    wavelengths = np.arange(VISIBLE_START, VISIBLE_END + 1, dtype=int)
+    replaced_counts = np.zeros(values.shape[0], dtype=int)
+
+    for row_index in range(visible_values.shape[0]):
+        row_flags = visible_flags[row_index]
+        if not row_flags.any():
+            continue
+        original = visible_values[row_index].copy()
+        weights = np.zeros(len(wavelengths), dtype=float)
+        for start_idx, end_idx in _contiguous_true_ranges(row_flags):
+            start_nm = int(wavelengths[start_idx])
+            end_nm = int(wavelengths[end_idx])
+            local_weights = _two_sided_blend_weights(
+                wavelengths,
+                start_nm,
+                end_nm,
+                BLEND_HALF_WINDOW_NM,
+            )
+            weights = np.maximum(weights, local_weights)
+        valid = np.isfinite(original) & np.isfinite(smoothed[row_index]) & (weights > 0)
+        if not valid.any():
+            continue
+        blended = (1.0 - weights[valid]) * original[valid] + weights[valid] * smoothed[row_index, valid]
+        visible_values[row_index, valid] = blended
+        replaced_counts[row_index] = int(valid.sum())
     values[:, visible_slice] = visible_values
-    return values, visible_flags.sum(axis=1)
+    return values, replaced_counts
 
 
 def process_chunk(chunk: pd.DataFrame, spectral_columns: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Counter[str], Counter[str]]:
@@ -295,7 +355,8 @@ def main() -> int:
             "window_nm": [VISIBLE_START, VISIBLE_END],
             "lam": VISIBLE_LAM,
             "abs_threshold": VISIBLE_ABS_THRESHOLD,
-            "mode": "replace_detected_visible_bands_only",
+            "mode": "blend_detected_visible_regions_with_smoothed_estimate",
+            "blend_half_window_nm": BLEND_HALF_WINDOW_NM,
         },
         "stats": stats,
     }
