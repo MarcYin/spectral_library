@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import array
 import csv
+import io
 import json
 import math
 import tempfile
@@ -29,6 +30,7 @@ from spectral_library.normalize import (
     _iter_envi_spectra,
     _iter_netcdf_spectra,
     _iter_rds_spectra,
+    _iter_row_wide_spectra,
     _iter_tabular_spectra,
     _iter_textual_spectra_from_lines,
     _iter_xlsx_spectra,
@@ -41,6 +43,7 @@ from spectral_library.normalize import (
     _parse_wavelength_label,
     _pick_sample_name,
     _resolve_envi_data_path,
+    _should_skip_source_path,
     _sniff_delimiter,
     normalize_sources,
 )
@@ -310,6 +313,24 @@ class NormalizeHelpersTests(unittest.TestCase):
             self.assertEqual(long_records[0].parser, "csv_long_table")
             self.assertEqual(long_records[0].sample_name, "obs_1")
 
+            neon_long = root / "neon_long.csv"
+            neon_long.write_text(
+                "\n".join(
+                    [
+                        "spectralSampleID,spectralSampleCode,wavelength,reflectanceCondition,reflectance",
+                        "FSP_DSNY_20140508_1449,,350,top of foliage,0.11",
+                        "FSP_DSNY_20140508_1449,,351,top of foliage,0.12",
+                        "FSP_DSNY_20140508_1454,,350,top of foliage,0.21",
+                        "FSP_DSNY_20140508_1454,,351,top of foliage,0.22",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            neon_records = list(_iter_tabular_spectra(neon_long, "neon_field_spectra", "NEON", "primary_raw"))
+            self.assertEqual(len(neon_records), 2)
+            self.assertEqual(neon_records[0].sample_name, "FSP_DSNY_20140508_1449")
+
             empty = root / "empty.csv"
             empty.write_text("", encoding="utf-8")
             self.assertEqual(list(_iter_tabular_spectra(empty, "src1", "Source 1", "primary_raw")), [])
@@ -508,6 +529,67 @@ class NormalizeHelpersTests(unittest.TestCase):
             self.assertEqual(records[0].wavelengths_nm[:3], [350.0, 351.0, 352.0])
             self.assertEqual(records[0].sample_name, "Example spectrum")
 
+    def test_should_skip_source_path_skips_extracted_usgs_auxiliary_files(self) -> None:
+        self.assertTrue(
+            _should_skip_source_path(
+                "usgs_v7",
+                Path("/tmp/usgs/data/ASCIIdata_splib07b_cvASD/errorbars/errorbars_for_s07_ASD_example.txt"),
+            )
+        )
+        self.assertTrue(
+            _should_skip_source_path(
+                "usgs_v7",
+                Path("/tmp/usgs/data/ASCIIdata_splib07b_cvASD/s07_ASD_Wavelengths_ASD_0.35-2.5_microns_2151_ch.txt"),
+            )
+        )
+        self.assertFalse(
+            _should_skip_source_path(
+                "usgs_v7",
+                Path("/tmp/usgs/data/ASCIIdata_splib07b_cvASD/ChapterV_Vegetation/s07_ASD_Willow_leaf.txt"),
+            )
+        )
+
+    def test_iter_zip_spectra_recurses_into_nested_archives(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = Path(tmpdir) / "outer.zip"
+            inner_buffer = io.BytesIO()
+            with zipfile.ZipFile(inner_buffer, "w") as inner_archive:
+                inner_archive.writestr(
+                    "SPECTRAL LIBRARY/replicate sample means.csv",
+                    "Wavelength (nm),sample_a,sample_b\n400,0.1,0.3\n401,0.2,0.4\n",
+                )
+                inner_archive.writestr(
+                    "SPECTRAL LIBRARY/information.txt",
+                    "metadata only\n",
+                )
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("README.txt", "outer readme\n")
+                archive.writestr("nested_library.zip", inner_buffer.getvalue())
+
+            records = list(_iter_zip_spectra(archive_path, "src1", "Source 1", "primary_raw"))
+
+            self.assertEqual(len(records), 2)
+            self.assertTrue(all(record.parser == "csv_column_wide" for record in records))
+            self.assertTrue(all("nested_library.zip" in record.input_path for record in records))
+
+    def test_iter_zip_spectra_skips_metadata_csv_members(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = Path(tmpdir) / "bundle.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr(
+                    "Processed/Spectra.metadata.csv",
+                    "sample_id,note\nA001,test\n",
+                )
+                archive.writestr(
+                    "Processed/Leaf_Reflectance.csv",
+                    "sample_id,400,401,402\nleaf_a,0.1,0.2,0.3\n",
+                )
+
+            records = list(_iter_zip_spectra(archive_path, "src1", "Source 1", "primary_raw"))
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].sample_name, "leaf_a")
+
     def test_iter_xlsx_spectra_handles_row_wide_and_band_matrix_layouts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workbook_path = Path(tmpdir) / "spectra.xlsx"
@@ -532,6 +614,188 @@ class NormalizeHelpersTests(unittest.TestCase):
             self.assertIn("xlsx_band_matrix", parsers)
             self.assertTrue(any(record.sample_name == "sample_a" for record in records))
             self.assertTrue(any(record.sample_name.startswith("A1_") for record in records))
+
+    def test_iter_xlsx_spectra_forces_unit_scale_for_understory_estonia(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workbook_path = Path(tmpdir) / "understory.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Spectra"
+            sheet.append(["Stand nr", "Position", "WL350", "WL351", "WL352"])
+            sheet.append([1, 1, 0.02, 0.03, 500.0])
+            workbook.save(workbook_path)
+
+            records = list(_iter_xlsx_spectra(workbook_path, "understory_estonia_czech", "Understory", "primary_raw"))
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].parser, "xlsx_row_wide")
+            self.assertEqual(records[0].value_scale_hint, 1.0)
+
+    def test_iter_row_wide_spectra_forces_percent_scale_for_verified_sources(self) -> None:
+        cases = [
+            ("ossl", ["id.scan_uuid_c", "scan_visnir.350_pcnt", "scan_visnir.352_pcnt"], {"id.scan_uuid_c": "sample", "scan_visnir.350_pcnt": 4.7, "scan_visnir.352_pcnt": 4.9}),
+            ("ghisacasia_v001", ["Spectra", "350", "351"], {"Spectra": "C1A_jd152", "350": 23.5, "351": 24.1}),
+            (
+                "ngee_arctic_leaf_reflectance_transmittance_barrow_2014_2016",
+                ["Spectra_Name", "Wave_350", "Wave_351"],
+                {"Spectra_Name": "PEFR5_1624_IS_T", "Wave_350": 12.0, "Wave_351": -0.33},
+            ),
+        ]
+
+        for source_id, header, row in cases:
+            with self.subTest(source_id=source_id):
+                records = list(
+                    _iter_row_wide_spectra(
+                        "memory.csv",
+                        source_id,
+                        source_id,
+                        "primary_raw",
+                        header,
+                        [row],
+                    )
+                )
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0].value_scale_hint, 100.0)
+
+    def test_iter_row_wide_spectra_uses_hyspiri_row_specific_scale_hints(self) -> None:
+        ratio_header = ["Spectra", *[str(350 + index) for index in range(6)]]
+        ratio_row = {
+            "Spectra": "Ivanpah_1",
+            **{str(350 + index): value for index, value in enumerate([0.15, 0.4, 0.51, 0.56, 0.49, 0.52])},
+        }
+        percent_row = {
+            "Spectra": "Bare_Field_1_Spec-00841",
+            **{str(350 + index): value for index, value in enumerate([3.1, 25.0, 33.2, 54.8, 104.7, 45.2])},
+        }
+        spectralon_header = ["Spectra", *[str(350 + index) for index in range(100)]]
+        spectralon_values = [99.8] * 99 + [239.283]
+        spectralon_row = {
+            "Spectra": "Bare_Field_1_Spectralon",
+            **{str(350 + index): value for index, value in enumerate(spectralon_values)},
+        }
+
+        ratio_record = list(
+            _iter_row_wide_spectra(
+                "uw-bnl_nasa_hyspiri_airborne_campaign_ground_cal_target_spectra_spectral_measurements.csv",
+                "hyspiri_ground_targets",
+                "HyspIRI",
+                "primary_raw",
+                ratio_header,
+                [ratio_row],
+            )
+        )[0]
+        percent_record = list(
+            _iter_row_wide_spectra(
+                "uw-bnl_nasa_hyspiri_airborne_campaign_ground_cal_target_spectra_spectral_measurements.csv",
+                "hyspiri_ground_targets",
+                "HyspIRI",
+                "primary_raw",
+                ratio_header,
+                [percent_row],
+            )
+        )[0]
+        spectralon_record = list(
+            _iter_row_wide_spectra(
+                "uw-bnl_nasa_hyspiri_airborne_campaign_ground_cal_target_spectra_spectral_measurements.csv",
+                "hyspiri_ground_targets",
+                "HyspIRI",
+                "primary_raw",
+                spectralon_header,
+                [spectralon_row],
+            )
+        )[0]
+
+        self.assertEqual(ratio_record.value_scale_hint, 1.0)
+        self.assertEqual(percent_record.value_scale_hint, 100.0)
+        self.assertEqual(spectralon_record.value_scale_hint, 100.0)
+
+    def test_iter_textual_spectra_for_hyspiri_ivanpah_uses_only_reflectance_column(self) -> None:
+        lines = [
+            "Measurement: REFLECTANCE,,,",
+            "Data:,,,",
+            "Wvl,Norm. DN (Ref.),Norm. DN (Target),Reflect. %",
+            "350,723,112,15.977",
+            "351,741,115,15.990",
+            "352,765,119,16.037",
+        ]
+
+        records = list(
+            _iter_textual_spectra_from_lines(
+                lines,
+                "ivanpah_dry_lake_spectra_20130603.zip::Playa1/Ivanpah1-Spec_00751.csv",
+                "hyspiri_ground_targets",
+                "HyspIRI",
+                "primary_raw",
+            )
+        )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].value_scale_hint, 100.0)
+        self.assertEqual(records[0].values[:3], [15.977, 15.99, 16.037])
+
+    def test_iter_xlsx_spectra_handles_mean_curve_sheets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workbook_path = Path(tmpdir) / "means.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "FI-Hyy 20180628"
+            sheet.append(["wavelength", "mean", "standev"])
+            sheet.append([400, 0.11, 0.01])
+            sheet.append([401, 0.12, 0.02])
+            sheet.append([402, 0.13, 0.03])
+            workbook.save(workbook_path)
+
+            records = list(_iter_xlsx_spectra(workbook_path, "src1", "Source 1", "primary_raw"))
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].parser, "xlsx_sheet_mean_curve")
+            self.assertEqual(records[0].sample_name, "FI-Hyy 20180628")
+            self.assertEqual(records[0].wavelengths_nm, [400.0, 401.0, 402.0])
+            self.assertEqual(records[0].values, [0.11, 0.12, 0.13])
+
+    def test_iter_row_wide_spectra_filters_auxiliary_stat_band_fields(self) -> None:
+        header = ["sample_id", "reflectance_400", "reflectance_401", "std_400", "error_401", "uncertainty_402"]
+        rows = [
+            {
+                "sample_id": "sample_a",
+                "reflectance_400": 0.1,
+                "reflectance_401": 0.2,
+                "std_400": 0.01,
+                "error_401": 0.02,
+                "uncertainty_402": 0.03,
+            }
+        ]
+
+        records = list(
+            _iter_row_wide_spectra(
+                "sample.csv",
+                "src1",
+                "Source 1",
+                "primary_raw",
+                header,
+                rows,
+            )
+        )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].wavelengths_nm, [400.0, 401.0])
+        self.assertEqual(records[0].values, [0.1, 0.2])
+
+    def test_iter_tabular_spectra_filters_auxiliary_column_series(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "columns.csv"
+            csv_path.write_text(
+                "wavelength,mean,std,stdv,stderr,error,uncertainty,SampleA\n"
+                "400,0.1,0.01,0.011,0.012,0.013,0.014,0.5\n"
+                "401,0.2,0.02,0.021,0.022,0.023,0.024,0.6\n",
+                encoding="utf-8",
+            )
+
+            records = list(_iter_tabular_spectra(csv_path, "src1", "Source 1", "primary_raw"))
+
+            self.assertEqual([record.sample_name for record in records], ["mean", "SampleA"])
+            self.assertEqual(records[0].values, [0.1, 0.2])
+            self.assertEqual(records[1].values, [0.5, 0.6])
 
     def test_iter_netcdf_and_rds_spectra_cover_new_binary_readers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -561,6 +825,29 @@ class NormalizeHelpersTests(unittest.TestCase):
             self.assertEqual(len(rds_records), 1)
             self.assertEqual(rds_records[0].parser, "rds_dataframe")
             self.assertEqual(rds_records[0].sample_name, "sample_a")
+
+    def test_iter_netcdf_spectra_ignores_uncertainty_variables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nc_path = Path(tmpdir) / "surface.nc"
+            dataset = Dataset(nc_path, "w")
+            try:
+                dataset.createDimension("obs", 1)
+                dataset.createDimension("wavelength", 3)
+                wavelength = dataset.createVariable("wavelength", "f4", ("wavelength",))
+                wavelength.units = "nm"
+                wavelength[:] = [400, 401, 402]
+                uncertainty = dataset.createVariable("surface_reflectance_uncertainty", "f4", ("obs", "wavelength"))
+                uncertainty[:] = [[9.0, 9.0, 9.0]]
+                reflectance = dataset.createVariable("surface_reflectance", "f4", ("obs", "wavelength"))
+                reflectance[:] = [[0.1, 0.2, 0.3]]
+            finally:
+                dataset.close()
+
+            records = list(_iter_netcdf_spectra(nc_path, "src1", "Source 1", "primary_raw"))
+
+            self.assertEqual(len(records), 1)
+            for actual, expected in zip(records[0].values, [0.1, 0.2, 0.3]):
+                self.assertAlmostEqual(actual, expected, places=6)
 
 
 class NormalizePipelineTests(unittest.TestCase):
@@ -770,6 +1057,181 @@ class NormalizePipelineTests(unittest.TestCase):
             limited_output = root / "normalized_limited"
             limited_summary = normalize_sources(manifest_path, results_root, limited_output, source_ids=["txt_src", "envi_src"], limit=1)
             self.assertEqual(limited_summary["selected_sources"], 1)
+
+    def test_normalize_sources_prefers_cabo_reflectance_file_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifests" / "sources.csv"
+            results_root = root / "results"
+            output_root = root / "normalized"
+
+            write_manifest(manifest_path, [manifest_row(source_id="cabo_leaf_v2", name="CABO Leaf v2")])
+            write_fetch_result(results_root / "cabo_leaf_v2" / "fetch-result.json", "cabo_leaf_v2")
+
+            data_dir = results_root / "cabo_leaf_v2" / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            (data_dir / "ref_spec.csv").write_text(
+                "sample_name,400,401,402\nleaf_a,0.1,0.2,0.3\n",
+                encoding="utf-8",
+            )
+            (data_dir / "abs_spec.csv").write_text(
+                "sample_name,400,401,402\nleaf_a,0.7,0.8,0.9\n",
+                encoding="utf-8",
+            )
+            (data_dir / "trans_spec.csv").write_text(
+                "sample_name,400,401,402\nleaf_a,0.01,0.02,0.03\n",
+                encoding="utf-8",
+            )
+            (data_dir / "metadata_fields.csv").write_text("field,description\nx,y\n", encoding="utf-8")
+
+            summary = normalize_sources(manifest_path, results_root, output_root)
+            self.assertEqual(summary["normalized_sources"], 1)
+            self.assertEqual(summary["normalized_spectra"], 1)
+
+            connection = duckdb.connect(str(output_root / "db" / "normalized_catalog.duckdb"))
+            try:
+                row = connection.execute(
+                    """
+                    SELECT s.sample_name, m.parser, s.nm_400, s.nm_401, s.nm_402
+                    FROM normalized_spectra AS s
+                    JOIN spectra_metadata AS m USING (source_id, spectrum_id, sample_name)
+                    LIMIT 1
+                    """
+                ).fetchone()
+                failure_paths = {
+                    item[0]
+                    for item in connection.execute(
+                        "SELECT input_path FROM normalization_failures WHERE source_id = 'cabo_leaf_v2'"
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertEqual(row[0], "leaf_a")
+            self.assertEqual(row[1], "csv_row_wide")
+            self.assertAlmostEqual(row[2], 0.1)
+            self.assertAlmostEqual(row[3], 0.2)
+            self.assertAlmostEqual(row[4], 0.3)
+            self.assertFalse(any("abs_spec.csv" in path for path in failure_paths))
+            self.assertFalse(any("trans_spec.csv" in path for path in failure_paths))
+            self.assertFalse(any("metadata_fields.csv" in path for path in failure_paths))
+
+    def test_normalize_sources_filters_cabo_non_spectral_chemistry_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifests" / "sources.csv"
+            results_root = root / "results"
+            output_root = root / "normalized"
+
+            write_manifest(manifest_path, [manifest_row(source_id="cabo_leaf_v2", name="CABO Leaf v2")])
+            write_fetch_result(results_root / "cabo_leaf_v2" / "fetch-result.json", "cabo_leaf_v2")
+
+            data_dir = results_root / "cabo_leaf_v2" / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            (data_dir / "ref_spec.csv").write_text(
+                "sample_id,B208.9_mass,B249.8_mass,400,401,2400\nleaf_a,1.1,2.2,0.1,0.2,0.3\n",
+                encoding="utf-8",
+            )
+
+            summary = normalize_sources(manifest_path, results_root, output_root)
+            self.assertEqual(summary["normalized_spectra"], 1)
+
+            connection = duckdb.connect(str(output_root / "db" / "normalized_catalog.duckdb"))
+            try:
+                metadata_row = connection.execute(
+                    "SELECT native_min_nm, native_max_nm, native_wavelength_count FROM spectra_metadata LIMIT 1"
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(metadata_row[0], 400.0)
+            self.assertEqual(metadata_row[1], 2400.0)
+            self.assertEqual(metadata_row[2], 3)
+
+    def test_normalize_sources_skips_branch_tree_auxiliary_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifests" / "sources.csv"
+            results_root = root / "results"
+            output_root = root / "normalized"
+
+            write_manifest(
+                manifest_path,
+                [manifest_row(source_id="branch_tree_spectra_boreal_temperate", name="Branch Tree Spectra")],
+            )
+            write_fetch_result(
+                results_root / "branch_tree_spectra_boreal_temperate" / "fetch-result.json",
+                "branch_tree_spectra_boreal_temperate",
+            )
+
+            data_dir = results_root / "branch_tree_spectra_boreal_temperate" / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            (data_dir / "contact_probe_spectral_measurements.csv").write_text(
+                "sample_id,400,401,2400\nbranch_a,0.1,0.2,0.3\n",
+                encoding="utf-8",
+            )
+            (data_dir / "sampled_tree_descriptions.csv").write_text(
+                "tree_height_m,branch_length_m\n10,1.2\n",
+                encoding="utf-8",
+            )
+
+            summary = normalize_sources(manifest_path, results_root, output_root)
+            self.assertEqual(summary["normalized_spectra"], 1)
+
+            connection = duckdb.connect(str(output_root / "db" / "normalized_catalog.duckdb"))
+            try:
+                sample_name = connection.execute("SELECT sample_name FROM spectra_metadata LIMIT 1").fetchone()[0]
+                failure_paths = {
+                    item[0]
+                    for item in connection.execute(
+                        "SELECT input_path FROM normalization_failures WHERE source_id = 'branch_tree_spectra_boreal_temperate'"
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertEqual(sample_name, "branch_a")
+            self.assertFalse(any("sampled_tree_descriptions.csv" in path for path in failure_paths))
+
+    def test_normalize_sources_skips_understory_icos_auxiliary_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "manifests" / "sources.csv"
+            results_root = root / "results"
+            output_root = root / "normalized"
+
+            write_manifest(
+                manifest_path,
+                [manifest_row(source_id="understory_icos_europe", name="Understory ICOS Europe")],
+            )
+            write_fetch_result(
+                results_root / "understory_icos_europe" / "fetch-result.json",
+                "understory_icos_europe",
+            )
+
+            data_dir = results_root / "understory_icos_europe" / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            (data_dir / "Pisek_et_al_2021_BG_supp_data.xlsx").write_text("", encoding="utf-8")
+            (data_dir / "Pisek_et_al_2021_BG_Table1.csv").write_text(
+                "site,latitude\nTEST,61.0\n",
+                encoding="utf-8",
+            )
+
+            summary = normalize_sources(manifest_path, results_root, output_root)
+            self.assertEqual(summary["normalized_spectra"], 0)
+
+            connection = duckdb.connect(str(output_root / "db" / "normalized_catalog.duckdb"))
+            try:
+                failure_paths = {
+                    item[0]
+                    for item in connection.execute(
+                        "SELECT input_path FROM normalization_failures WHERE source_id = 'understory_icos_europe'"
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertFalse(any("Pisek_et_al_2021_BG_Table1.csv" in path for path in failure_paths))
 
 
 if __name__ == "__main__":

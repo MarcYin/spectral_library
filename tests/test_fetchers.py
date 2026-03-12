@@ -32,6 +32,12 @@ from spectral_library.fetchers.ecosis import (
     _normalize_resource_url,
     fetch as fetch_ecosis,
 )
+from spectral_library.fetchers.ess_dive import (
+    _extract_doi as ess_dive_extract_doi,
+    _is_metadata_member as ess_dive_is_metadata_member,
+    _parse_sysmeta as ess_dive_parse_sysmeta,
+    fetch as fetch_ess_dive,
+)
 from spectral_library.fetchers.github_archive import (
     _iter_matching_members,
     _relative_destination,
@@ -39,6 +45,16 @@ from spectral_library.fetchers.github_archive import (
 )
 from spectral_library.fetchers.http_utils import infer_filename, looks_like_download, sanitize_filename
 from spectral_library.fetchers.manual import fetch as fetch_manual
+from spectral_library.fetchers.mendeley import (
+    _extract_dataset_id_and_version as mendeley_extract_dataset_id_and_version,
+    _extract_files as mendeley_extract_files,
+    fetch as fetch_mendeley,
+)
+from spectral_library.fetchers.neon import (
+    _extract_product_code as neon_extract_product_code,
+    _select_neon_files as neon_select_files,
+    fetch as fetch_neon,
+)
 from spectral_library.fetchers.pangaea import fetch as fetch_pangaea
 from spectral_library.fetchers.specchio import _load_query_config, fetch as fetch_specchio
 from spectral_library.fetchers.static_http import fetch as fetch_static_http
@@ -295,7 +311,10 @@ class FetcherRegistryTests(unittest.TestCase):
     def test_get_fetcher_known_and_unknown(self) -> None:
         self.assertIs(get_fetcher("manual_portal"), fetch_manual)
         self.assertIs(get_fetcher("ecostress_web"), fetch_ecostress)
+        self.assertIs(get_fetcher("ess_dive_dataone"), fetch_ess_dive)
         self.assertIs(get_fetcher("github_archive"), fetch_github_archive)
+        self.assertIs(get_fetcher("mendeley_public"), fetch_mendeley)
+        self.assertIs(get_fetcher("neon_api"), fetch_neon)
         self.assertIs(get_fetcher("pangaea"), fetch_pangaea)
         self.assertIs(get_fetcher("specchio_client"), fetch_specchio)
         with self.assertRaises(KeyError):
@@ -611,6 +630,290 @@ class EcosisFetcherTests(unittest.TestCase):
             self.assertTrue((Path(tmpdir) / "meta.csv").exists())
             self.assertTrue((Path(tmpdir) / "extra.csv").exists())
             self.assertIn("not listed", result.notes[0].lower())
+
+
+class NeonFetcherTests(unittest.TestCase):
+    def test_neon_helpers(self) -> None:
+        self.assertEqual(
+            neon_extract_product_code("https://data.neonscience.org/data-products/DP1.30012.001"),
+            "DP1.30012.001",
+        )
+        self.assertEqual(
+            neon_extract_product_code("https://data.neonscience.org/api/v0/products/DP1.30012.001"),
+            "DP1.30012.001",
+        )
+        selected = neon_select_files(
+            [
+                {"name": "FSP_GRSM.csv", "url": "https://example.com/FSP_GRSM.csv", "size": 10, "md5": "abc"},
+                {"name": "metadata.csv", "url": "https://example.com/metadata.csv", "size": 20},
+                {"name": "FSP_GRSM.txt", "url": "https://example.com/FSP_GRSM.txt", "size": 30},
+            ]
+        )
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]["name"], "FSP_GRSM.csv")
+
+    @patch("spectral_library.fetchers.neon.urlopen")
+    def test_neon_fetch_downloads_spectral_csvs(self, mock_urlopen) -> None:
+        product_payload = {
+            "data": {
+                "siteCodes": [
+                    {
+                        "siteCode": "GRSM",
+                        "availableDataUrls": ["https://data.neonscience.org/api/v0/data/DP1.30012.001/GRSM/2015-07"],
+                    }
+                ]
+            }
+        }
+        month_payload = {
+            "data": {
+                "month": "2015-07",
+                "files": [
+                    {
+                        "name": "FSP_GRSM_001.csv",
+                        "url": "https://storage.neonscience.org/FSP_GRSM_001.csv",
+                        "size": 24,
+                        "md5": "abc",
+                    },
+                    {
+                        "name": "NEON.D07.GRSM.DP1.30012.001.fsp_sampleMetadata.2015-07.basic.csv",
+                        "url": "https://storage.neonscience.org/sample_metadata.csv",
+                        "size": 50,
+                        "md5": "def",
+                    },
+                ],
+            }
+        }
+        mock_urlopen.side_effect = [
+            FakeResponse(
+                json.dumps(product_payload).encode("utf-8"),
+                url="https://data.neonscience.org/api/v0/products/DP1.30012.001",
+                headers={"Content-Type": "application/json"},
+            ),
+            FakeResponse(
+                json.dumps(month_payload).encode("utf-8"),
+                url="https://data.neonscience.org/api/v0/data/DP1.30012.001/GRSM/2015-07",
+                headers={"Content-Type": "application/json"},
+            ),
+            FakeResponse(
+                b"spectralSampleID,wavelength,reflectance\nFSP_GRSM_001,400,0.1\n",
+                url="https://storage.neonscience.org/FSP_GRSM_001.csv",
+                headers={"Content-Type": "text/csv"},
+            ),
+        ]
+        source = make_source(
+            source_id="neon_field_spectra",
+            name="NEON Field Spectra",
+            fetch_adapter="neon_api",
+            provider="neon",
+            landing_url="https://data.neonscience.org/data-products/DP1.30012.001",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = fetch_neon(source, Path(tmpdir), "assets", "ua")
+
+            self.assertEqual(result.status, "downloaded")
+            self.assertTrue((Path(tmpdir) / "FSP_GRSM_001.csv").exists())
+            self.assertTrue((Path(tmpdir) / "neon_product.json").exists())
+            catalog_payload = json.loads((Path(tmpdir) / "neon_catalog.json").read_text(encoding="utf-8"))
+            self.assertEqual(catalog_payload["spectra_file_count"], 1)
+            self.assertEqual(catalog_payload["sites"][0]["site_code"], "GRSM")
+            self.assertIn("Discovered 1 NEON field spectra files", result.notes[0])
+
+
+class EssDiveFetcherTests(unittest.TestCase):
+    def test_ess_dive_helpers(self) -> None:
+        self.assertEqual(ess_dive_extract_doi("https://www.osti.gov/biblio/1430079"), "10.5440/1430079")
+        self.assertEqual(
+            ess_dive_extract_doi("https://data.ess-dive.lbl.gov/view/doi:10.5440/1437044"),
+            "10.5440/1437044",
+        )
+        sysmeta = ess_dive_parse_sysmeta(
+            """
+            <ns3:systemMetadata>
+              <identifier>member-1</identifier>
+              <formatId>text/csv</formatId>
+              <size>123</size>
+              <fileName>spectra.csv</fileName>
+            </ns3:systemMetadata>
+            """
+        )
+        self.assertEqual(sysmeta["identifier"], "member-1")
+        self.assertEqual(sysmeta["file_name"], "spectra.csv")
+        self.assertEqual(sysmeta["size_bytes"], 123)
+        self.assertTrue(ess_dive_is_metadata_member({"identifier": "meta", "format_id": "text/csv", "file_name": "a.csv"}, "meta"))
+        self.assertTrue(
+            ess_dive_is_metadata_member(
+                {"identifier": "member", "format_id": "https://eml.ecoinformatics.org/eml-2.2.0", "file_name": "record.xml"},
+                "meta",
+            )
+        )
+        self.assertFalse(
+            ess_dive_is_metadata_member({"identifier": "member", "format_id": "text/csv", "file_name": "spectra.csv"}, "meta")
+        )
+
+    @patch("spectral_library.fetchers.ess_dive.urlopen")
+    def test_ess_dive_fetch_downloads_package_members(self, mock_urlopen) -> None:
+        solr_payload = {
+            "response": {
+                "docs": [
+                    {
+                        "id": "ess-dive-meta",
+                        "identifier": "ess-dive-meta",
+                        "title": "NGEE Example",
+                        "documents": ["ess-dive-meta", "ess-dive-csv", "ess-dive-xlsx"],
+                    }
+                ]
+            }
+        }
+        mock_urlopen.side_effect = [
+            FakeResponse(
+                json.dumps(solr_payload).encode("utf-8"),
+                url="https://cn.dataone.org/cn/v2/query/solr/?q=10.5440/1430079",
+                headers={"Content-Type": "application/json"},
+            ),
+            FakeResponse(
+                b"<systemMetadata><identifier>ess-dive-meta</identifier><formatId>https://eml.ecoinformatics.org/eml-2.2.0</formatId><size>10</size><fileName>metadata.xml</fileName></systemMetadata>",
+                url="https://cn.dataone.org/cn/v2/meta/ess-dive-meta",
+                headers={"Content-Type": "application/xml"},
+            ),
+            FakeResponse(
+                b"<systemMetadata><identifier>ess-dive-csv</identifier><formatId>text/csv</formatId><size>20</size><fileName>spectra.csv</fileName></systemMetadata>",
+                url="https://cn.dataone.org/cn/v2/meta/ess-dive-csv",
+                headers={"Content-Type": "application/xml"},
+            ),
+            FakeResponse(
+                b"<systemMetadata><identifier>ess-dive-xlsx</identifier><formatId>application/vnd.openxmlformats-officedocument.spreadsheetml.sheet</formatId><size>30</size><fileName>spectra.xlsx</fileName></systemMetadata>",
+                url="https://cn.dataone.org/cn/v2/meta/ess-dive-xlsx",
+                headers={"Content-Type": "application/xml"},
+            ),
+            FakeResponse(
+                b"wavelength,reflectance\n400,0.1\n",
+                url="https://cn.dataone.org/cn/v2/resolve/ess-dive-csv",
+                headers={"Content-Type": "text/csv"},
+            ),
+            FakeResponse(
+                b"xlsx-binary",
+                url="https://cn.dataone.org/cn/v2/resolve/ess-dive-xlsx",
+                headers={"Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+            ),
+        ]
+        source = make_source(
+            source_id="ngee_example",
+            name="NGEE Example",
+            fetch_adapter="ess_dive_dataone",
+            provider="osti_ornl",
+            landing_url="https://www.osti.gov/biblio/1430079",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = fetch_ess_dive(source, Path(tmpdir), "assets", "ua")
+
+            self.assertEqual(result.status, "downloaded")
+            self.assertTrue((Path(tmpdir) / "ess_dive_package.json").exists())
+            self.assertTrue((Path(tmpdir) / "spectra.csv").exists())
+            self.assertTrue((Path(tmpdir) / "spectra.xlsx").exists())
+            self.assertIn("Discovered 2 ESS-DIVE package members", result.notes[0])
+
+
+class MendeleyFetcherTests(unittest.TestCase):
+    def test_mendeley_helpers(self) -> None:
+        self.assertEqual(
+            mendeley_extract_dataset_id_and_version("https://data.mendeley.com/datasets/kvnx6vt8x9/1"),
+            ("kvnx6vt8x9", 1),
+        )
+        self.assertEqual(
+            mendeley_extract_dataset_id_and_version("https://data.mendeley.com/datasets/9dx32rszp8"),
+            ("9dx32rszp8", None),
+        )
+        files = mendeley_extract_files(
+            {
+                "files": [
+                    {
+                        "filename": "spectra.xlsx",
+                        "content_details": {
+                            "download_url": "https://data.mendeley.com/public-files/example.xlsx",
+                            "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            "size": 123,
+                            "sha256_hash": "abc",
+                        },
+                    },
+                    {"filename": "missing_url.txt", "content_details": {}},
+                ]
+            }
+        )
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0]["filename"], "spectra.xlsx")
+
+    @patch("spectral_library.fetchers.mendeley.urlopen")
+    def test_mendeley_fetch_downloads_public_files(self, mock_urlopen) -> None:
+        versioned_payload = {
+            "id": "9dx32rszp8",
+            "version": 2,
+            "files": [],
+        }
+        payload = {
+            "id": "9dx32rszp8",
+            "version": 2,
+            "files": [
+                {
+                    "filename": "understory.xlsx",
+                    "content_details": {
+                        "download_url": "https://data.mendeley.com/public-files/datasets/9dx32rszp8/files/file-1/file_downloaded",
+                        "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "size": 99,
+                        "sha256_hash": "abc",
+                    },
+                },
+                {
+                    "filename": "guide.pdf",
+                    "content_details": {
+                        "download_url": "https://data.mendeley.com/public-files/datasets/9dx32rszp8/files/file-2/file_downloaded",
+                        "content_type": "application/pdf",
+                        "size": 50,
+                        "sha256_hash": "def",
+                    },
+                },
+            ],
+        }
+        mock_urlopen.side_effect = [
+            FakeResponse(
+                json.dumps(versioned_payload).encode("utf-8"),
+                url="https://data.mendeley.com/public-api/datasets/9dx32rszp8?version=2",
+                headers={"Content-Type": "application/json"},
+            ),
+            FakeResponse(
+                json.dumps(payload).encode("utf-8"),
+                url="https://data.mendeley.com/public-api/datasets/9dx32rszp8",
+                headers={"Content-Type": "application/json"},
+            ),
+            FakeResponse(
+                b"xlsx-binary",
+                url="https://data.mendeley.com/public-files/datasets/9dx32rszp8/files/file-1/file_downloaded",
+                headers={"Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+            ),
+            FakeResponse(
+                b"%PDF-1.7",
+                url="https://data.mendeley.com/public-files/datasets/9dx32rszp8/files/file-2/file_downloaded",
+                headers={"Content-Type": "application/pdf"},
+            ),
+        ]
+        source = make_source(
+            source_id="understory_estonia_czech",
+            name="Understory Estonia Czech",
+            fetch_adapter="mendeley_public",
+            provider="mendeley",
+            landing_url="https://data.mendeley.com/datasets/9dx32rszp8/2",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = fetch_mendeley(source, Path(tmpdir), "assets", "ua")
+
+            self.assertEqual(result.status, "downloaded")
+            self.assertTrue((Path(tmpdir) / "mendeley_dataset.json").exists())
+            self.assertTrue((Path(tmpdir) / "understory.xlsx").exists())
+            self.assertTrue((Path(tmpdir) / "guide.pdf").exists())
+            self.assertIn("fell back", result.notes[0].lower())
+            self.assertIn("Discovered 2 Mendeley public files", result.notes[1])
 
 
 class EcostressFetcherTests(unittest.TestCase):

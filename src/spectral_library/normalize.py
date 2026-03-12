@@ -25,13 +25,15 @@ TARGET_WAVELENGTHS = tuple(range(TARGET_START_NM, TARGET_END_NM + 1, TARGET_STEP
 SPECTRAL_COLUMN_PREFIX = "nm_"
 SPECTRAL_COLUMNS = [f"{SPECTRAL_COLUMN_PREFIX}{wavelength}" for wavelength in TARGET_WAVELENGTHS]
 
-LONG_WAVELENGTH_COLUMNS = ("wavelength", "wavelength_nm", "lambda", "wl")
+LONG_WAVELENGTH_COLUMNS = ("wavelength", "wavelength_nm", "lambda", "wl", "wvl")
 LONG_VALUE_COLUMNS = ("r", "reflectance", "value", "y", "response")
 PREFERRED_SAMPLE_COLUMNS = (
     "sample_name",
     "name",
     "spectra",
     "spectrum",
+    "spectralsampleid",
+    "spectralsamplecode",
     "observation_id",
     "id_prog_spectrum",
     "id_spectrum_original",
@@ -49,6 +51,30 @@ WAVELENGTH_HEADER_PATTERNS = (
     re.compile(r"^(\d+(?:\.\d+)?)\s*(?:nm|nanometers?)?$", re.IGNORECASE),
 )
 WAVELENGTH_TOKEN_PATTERN = re.compile(r"(?<!\d)(\d{3,4}(?:\.\d+)?)(?!\d)")
+AUXILIARY_SERIES_TOKEN_PATTERN = re.compile(r"[a-z]+(?:\d+[a-z]+)?|\d+", re.IGNORECASE)
+AUXILIARY_SERIES_TOKENS = {
+    "std",
+    "stdv",
+    "stdev",
+    "stddev",
+    "standev",
+    "stderr",
+    "uncert",
+    "uncertainty",
+    "error",
+    "err",
+    "variance",
+    "var",
+    "sigma",
+    "rmse",
+    "mad",
+}
+FIXED_SCALE_SOURCE_HINTS = {
+    "understory_estonia_czech": 1.0,
+    "ossl": 100.0,
+    "ghisacasia_v001": 100.0,
+    "ngee_arctic_leaf_reflectance_transmittance_barrow_2014_2016": 100.0,
+}
 
 
 @dataclass(frozen=True)
@@ -108,6 +134,14 @@ def _parse_wavelength_label(label: str) -> float | None:
     return None
 
 
+def _is_auxiliary_spectral_series(label: str) -> bool:
+    normalized = _normalize_header_name(label)
+    if not normalized:
+        return False
+    tokens = AUXILIARY_SERIES_TOKEN_PATTERN.findall(normalized)
+    return any(token in AUXILIARY_SERIES_TOKENS for token in tokens)
+
+
 def _detect_value_scale(values: Iterable[float], hint: float | None = None) -> float:
     if hint and hint > 0:
         return hint
@@ -126,6 +160,69 @@ def _detect_value_scale(values: Iterable[float], hint: float | None = None) -> f
     if max_value <= 20000.5:
         return 10000.0
     return 1.0
+
+
+def _quantile(values: Sequence[float], quantile: float) -> float:
+    if not values:
+        return math.nan
+    if len(values) == 1:
+        return values[0]
+    ordered = sorted(values)
+    position = max(0, min(len(ordered) - 1, round((len(ordered) - 1) * quantile)))
+    return ordered[position]
+
+
+def _detect_hyspiri_package_scale(values: Sequence[float]) -> float | None:
+    finite = [abs(value) for value in values if math.isfinite(value)]
+    if not finite:
+        return None
+
+    robust_max = _quantile(finite, 0.99)
+    if robust_max <= 1.5:
+        return 1.0
+    if robust_max <= 150.0:
+        return 100.0
+    return None
+
+
+def _row_wide_value_scale_hint(
+    source_id: str,
+    input_path: str | Path,
+    values: Sequence[float | None],
+) -> float | None:
+    fixed_hint = FIXED_SCALE_SOURCE_HINTS.get(source_id)
+    if fixed_hint is not None:
+        return fixed_hint
+
+    input_name = str(input_path)
+    if (
+        source_id == "hyspiri_ground_targets"
+        and "uw-bnl_nasa_hyspiri_airborne_campaign_ground_cal_target_spectra_spectral_measurements.csv" in input_name
+    ):
+        return _detect_hyspiri_package_scale([value for value in values if value is not None])
+    return None
+
+
+def _column_wise_sample_specs(source_id: str, header: list[str]) -> list[tuple[int, str, float | None]]:
+    sample_specs: list[tuple[int, str, float | None]] = []
+    for index, raw_name in enumerate(header[1:], start=1):
+        sample_name = _stringify_cell(raw_name)
+        normalized_name = _normalize_header_name(sample_name)
+        scale_hint: float | None = None
+
+        if _is_auxiliary_spectral_series(sample_name):
+            continue
+
+        if source_id == "hyspiri_ground_targets":
+            if "reflect" not in normalized_name:
+                continue
+            scale_hint = 100.0 if "%" in sample_name or "percent" in normalized_name else None
+
+        sample_specs.append((index, sample_name, scale_hint))
+
+    if sample_specs:
+        return sample_specs
+    return [(index, _stringify_cell(raw_name), None) for index, raw_name in enumerate(header[1:], start=1)]
 
 
 def _convert_wavelengths_to_nm(wavelengths: Iterable[float], units: str | None) -> list[float]:
@@ -376,6 +473,15 @@ def _pick_sample_name(row: dict[str, object | None], row_index: int) -> str:
     return f"spectrum_{row_index:05d}"
 
 
+def _should_use_spectral_field(source_id: str, field: str, wavelength: float) -> bool:
+    normalized_field = _normalize_header_name(field)
+    if _is_auxiliary_spectral_series(normalized_field):
+        return False
+    if source_id == "cabo_leaf_v2":
+        return normalized_field.replace(".", "", 1).isdigit() and 350 <= wavelength <= 2500
+    return True
+
+
 def _sniff_delimiter(sample: str) -> str:
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
@@ -433,10 +539,13 @@ def _iter_row_wide_spectra(
     parser_name: str = "csv_row_wide",
 ) -> Iterator[SpectrumRecord]:
     wavelength_fields = [(field, _parse_wavelength_label(field)) for field in header]
-    spectral_fields = [(field, wavelength) for field, wavelength in wavelength_fields if wavelength is not None]
+    spectral_fields = [
+        (field, wavelength)
+        for field, wavelength in wavelength_fields
+        if wavelength is not None and _should_use_spectral_field(source_id, field, wavelength)
+    ]
     spectral_names = {field for field, _ in spectral_fields}
     row_index = 0
-
     for row in reader:
         row_index += 1
         wavelengths_nm = [wavelength for _, wavelength in spectral_fields]
@@ -450,6 +559,7 @@ def _iter_row_wide_spectra(
             if key not in spectral_names and (text := _stringify_cell(value))
         }
         sample_name = _pick_sample_name(row, row_index)
+        value_scale_hint = _row_wide_value_scale_hint(source_id, input_path, values)
         yield SpectrumRecord(
             source_id=source_id,
             source_name=source_name,
@@ -460,6 +570,7 @@ def _iter_row_wide_spectra(
             wavelengths_nm=wavelengths_nm,
             values=[value if value is not None else math.nan for value in values],
             metadata=metadata,
+            value_scale_hint=value_scale_hint,
         )
 
 
@@ -473,12 +584,12 @@ def _iter_column_wise_spectra(
     *,
     parser_name: str = "csv_column_wide",
 ) -> Iterator[SpectrumRecord]:
-    sample_names = [_stringify_cell(value) for value in header[1:]]
-    if not sample_names:
+    sample_specs = _column_wise_sample_specs(source_id, header)
+    if not sample_specs:
         return
 
     wavelengths_nm: list[float] = []
-    sample_values = [[] for _ in sample_names]
+    sample_values = {column_index: [] for column_index, _, _ in sample_specs}
 
     for row in rows:
         if not row or not _stringify_cell(row[0]):
@@ -487,11 +598,12 @@ def _iter_column_wise_spectra(
         if wavelength is None:
             continue
         wavelengths_nm.append(wavelength)
-        padded = list(row[1:]) + [None] * max(0, len(sample_names) - len(row[1:]))
-        for index, value in enumerate(padded[: len(sample_names)]):
-            sample_values[index].append(_parse_float(value))
+        for column_index, _, _ in sample_specs:
+            value = row[column_index] if column_index < len(row) else None
+            sample_values[column_index].append(_parse_float(value))
 
-    for index, (sample_name, values) in enumerate(zip(sample_names, sample_values), start=1):
+    for index, (column_index, sample_name, scale_hint) in enumerate(sample_specs, start=1):
+        values = sample_values[column_index]
         if not any(value is not None for value in values):
             continue
         yield SpectrumRecord(
@@ -504,6 +616,7 @@ def _iter_column_wise_spectra(
             wavelengths_nm=wavelengths_nm,
             values=[value if value is not None else math.nan for value in values],
             metadata={},
+            value_scale_hint=scale_hint,
         )
 
 
@@ -608,6 +721,28 @@ def _iter_tabular_spectra_from_lines(
 
     preview = "\n".join(lines[:80])
     delimiter = _sniff_delimiter(preview)
+
+    if source_id == "hyspiri_ground_targets":
+        for index, line in enumerate(lines):
+            parsed_header = next(csv.reader([line], delimiter=delimiter))
+            normalized_header = [_normalize_header_name(_stringify_cell(value)) for value in parsed_header]
+            if (
+                parsed_header
+                and _is_wavelength_header(_stringify_cell(parsed_header[0]))
+                and any("reflect" in value for value in normalized_header[1:])
+            ):
+                reader = csv.reader(lines[index + 1 :], delimiter=delimiter)
+                yield from _iter_column_wise_spectra(
+                    input_path,
+                    source_id,
+                    source_name,
+                    ingest_role,
+                    [_stringify_cell(value) for value in parsed_header],
+                    reader,
+                    parser_name=f"{parser_prefix}_column_wide",
+                )
+                return
+
     preview_lines = lines[:80] or [""]
     header_index, _ = _find_tabular_header(preview_lines, delimiter)
     data_lines = lines[header_index:]
@@ -621,6 +756,23 @@ def _iter_tabular_spectra_from_lines(
 
     normalized = [_normalize_header_name(_stringify_cell(value)) for value in header]
     wavelength_hits = sum(1 for value in header if _parse_wavelength_label(_stringify_cell(value)) is not None)
+
+    if (
+        source_id == "hyspiri_ground_targets"
+        and normalized
+        and _is_wavelength_header(_stringify_cell(header[0]))
+        and any("reflect" in value for value in normalized[1:])
+    ):
+        yield from _iter_column_wise_spectra(
+            input_path,
+            source_id,
+            source_name,
+            ingest_role,
+            [_stringify_cell(value) for value in header],
+            reader,
+            parser_name=f"{parser_prefix}_column_wide",
+        )
+        return
 
     if (
         header_index > 0
@@ -970,7 +1122,7 @@ def _iter_netcdf_spectra_bytes(
                     name
                     for name in dataset.variables
                     if "reflectance" in _normalize_header_name(name)
-                    and "std" not in _normalize_header_name(name)
+                    and not _is_auxiliary_spectral_series(name)
                     and "wavelength" in dataset.variables[name].dimensions
                 ),
                 None,
@@ -1029,50 +1181,108 @@ def _iter_netcdf_spectra(path: Path, source_id: str, source_name: str, ingest_ro
     yield from _iter_netcdf_spectra_bytes(path, path.read_bytes(), source_id, source_name, ingest_role)
 
 
-def _iter_zip_spectra(path: Path, source_id: str, source_name: str, ingest_role: str) -> Iterator[SpectrumRecord]:
+def _is_usgs_auxiliary_name(name: str) -> bool:
+    normalized = name.lower()
+    return (
+        "/errorbars/" in normalized
+        or normalized.endswith("/errorbars")
+        or "errorbars_for_" in normalized
+        or "wavelengths_asd" in normalized
+        or "bandpass" in normalized
+    )
+
+
+def _should_skip_source_path(source_id: str, path: Path) -> bool:
+    name = path.name.lower()
+    if source_id == "usgs_v7":
+        relative = "/".join(path.parts[-4:])
+        if _is_usgs_auxiliary_name(relative) or _is_usgs_auxiliary_name(name):
+            return True
+    if source_id == "cabo_leaf_v2" and path.suffix.lower() == ".csv":
+        return name != "ref_spec.csv"
+    if source_id == "branch_tree_spectra_boreal_temperate" and path.suffix.lower() == ".csv":
+        return name == "sampled_tree_descriptions.csv"
+    if source_id == "understory_icos_europe" and path.suffix.lower() == ".csv":
+        return name == "pisek_et_al_2021_bg_table1.csv"
+    return False
+
+
+def _iter_zip_spectra_from_archive(
+    archive: zipfile.ZipFile,
+    archive_label: str,
+    source_id: str,
+    source_name: str,
+    ingest_role: str,
+    *,
+    usgs_wavelengths: list[float] | None = None,
+) -> Iterator[SpectrumRecord]:
     supported_suffixes = {".csv", ".txt", ".tab", ".nc"}
     preferred_tokens = ("spectra", "spectrum", "reflectance", "refl", "rrs")
-    ancillary_tokens = ("metadata", "quality", "readme", "license")
+    ancillary_tokens = ("metadata", "quality", "readme", "license", "information")
+    nested_zip_suffixes = {".zip"}
+    member_names = sorted(
+        archive.namelist(),
+        key=lambda member_name: (
+            0 if any(token in member_name.lower() for token in preferred_tokens) else 1,
+            member_name.lower(),
+        ),
+    )
+    for member_name in member_names:
+        member_path = Path(member_name)
+        if member_name.endswith("/") or member_path.name.startswith(".") or member_path.parts[:1] == ("__MACOSX",):
+            continue
+        if member_path.name.lower().endswith(".metadata.csv"):
+            continue
+        suffix = member_path.suffix.lower()
+        if suffix not in supported_suffixes | nested_zip_suffixes:
+            continue
+        member_name_normalized = member_name.lower()
+        if source_id == "usgs_v7" and _is_usgs_auxiliary_member(member_name_normalized):
+            continue
+        if any(token in member_name_normalized for token in ancillary_tokens) and not any(
+            token in member_name_normalized for token in preferred_tokens
+        ):
+            continue
+        input_path = f"{archive_label}::{member_name}"
+        payload = archive.read(member_name)
+        if suffix == ".zip":
+            with zipfile.ZipFile(io.BytesIO(payload)) as nested_archive:
+                yield from _iter_zip_spectra_from_archive(
+                    nested_archive,
+                    input_path,
+                    source_id,
+                    source_name,
+                    ingest_role,
+                    usgs_wavelengths=usgs_wavelengths,
+                )
+        elif suffix == ".nc":
+            yield from _iter_netcdf_spectra_bytes(input_path, payload, source_id, source_name, ingest_role)
+        else:
+            lines = _decode_text(payload).splitlines()
+            if source_id == "usgs_v7" and suffix == ".txt":
+                yield from _iter_usgs_text_spectra_from_lines(
+                    lines,
+                    input_path,
+                    source_id,
+                    source_name,
+                    ingest_role,
+                    wavelengths_nm=usgs_wavelengths,
+                )
+            else:
+                yield from _iter_textual_spectra_from_lines(lines, input_path, source_id, source_name, ingest_role)
+
+
+def _iter_zip_spectra(path: Path, source_id: str, source_name: str, ingest_role: str) -> Iterator[SpectrumRecord]:
     with zipfile.ZipFile(path) as archive:
         usgs_wavelengths = _read_usgs_archive_wavelengths(archive) if source_id == "usgs_v7" else None
-        member_names = sorted(
-            archive.namelist(),
-            key=lambda member_name: (
-                0 if any(token in member_name.lower() for token in preferred_tokens) else 1,
-                member_name.lower(),
-            ),
+        yield from _iter_zip_spectra_from_archive(
+            archive,
+            str(path),
+            source_id,
+            source_name,
+            ingest_role,
+            usgs_wavelengths=usgs_wavelengths,
         )
-        for member_name in member_names:
-            member_path = Path(member_name)
-            if member_name.endswith("/") or member_path.name.startswith(".") or member_path.parts[:1] == ("__MACOSX",):
-                continue
-            suffix = member_path.suffix.lower()
-            if suffix not in supported_suffixes:
-                continue
-            member_name_normalized = member_name.lower()
-            if source_id == "usgs_v7" and _is_usgs_auxiliary_member(member_name_normalized):
-                continue
-            if any(token in member_name_normalized for token in ancillary_tokens) and not any(
-                token in member_name_normalized for token in preferred_tokens
-            ):
-                continue
-            input_path = f"{path}::{member_name}"
-            payload = archive.read(member_name)
-            if suffix == ".nc":
-                yield from _iter_netcdf_spectra_bytes(input_path, payload, source_id, source_name, ingest_role)
-            else:
-                lines = _decode_text(payload).splitlines()
-                if source_id == "usgs_v7" and suffix == ".txt":
-                    yield from _iter_usgs_text_spectra_from_lines(
-                        lines,
-                        input_path,
-                        source_id,
-                        source_name,
-                        ingest_role,
-                        wavelengths_nm=usgs_wavelengths,
-                    )
-                else:
-                    yield from _iter_textual_spectra_from_lines(lines, input_path, source_id, source_name, ingest_role)
 
 
 def _iter_xlsx_band_matrix_sheet(
@@ -1095,6 +1305,7 @@ def _iter_xlsx_band_matrix_sheet(
     sample_columns = [
         index
         for index in range(band_column + 1, len(header_row))
+        if not _is_auxiliary_spectral_series(_stringify_cell(header_row[index] if index < len(header_row) else None))
         if any(_stringify_cell(row[index] if index < len(row) else None) for row in preview_rows[header_index + 1 : header_index + 6])
     ]
     if not sample_columns:
@@ -1147,6 +1358,47 @@ def _iter_xlsx_band_matrix_sheet(
         workbook.close()
 
 
+def _iter_xlsx_mean_curve_sheet(
+    path: Path,
+    sheet_name: str,
+    header_index: int,
+    source_id: str,
+    source_name: str,
+    ingest_role: str,
+) -> Iterator[SpectrumRecord]:
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        worksheet = workbook[sheet_name]
+        wavelengths_nm: list[float] = []
+        values: list[float] = []
+        for row in worksheet.iter_rows(min_row=header_index + 2, values_only=True):
+            wavelength = _parse_float(row[0] if len(row) > 0 else None)
+            mean_value = _parse_float(row[1] if len(row) > 1 else None)
+            if wavelength is None or mean_value is None:
+                continue
+            wavelengths_nm.append(wavelength)
+            values.append(mean_value)
+
+        if len(wavelengths_nm) < 2:
+            return
+
+        yield SpectrumRecord(
+            source_id=source_id,
+            source_name=source_name,
+            ingest_role=ingest_role,
+            input_path=f"{path}::{sheet_name}",
+            parser="xlsx_sheet_mean_curve",
+            sample_name=sheet_name,
+            wavelengths_nm=wavelengths_nm,
+            values=values,
+            metadata={"sheet": sheet_name},
+        )
+    finally:
+        workbook.close()
+
+
 def _iter_xlsx_spectra(path: Path, source_id: str, source_name: str, ingest_role: str) -> Iterator[SpectrumRecord]:
     import openpyxl
 
@@ -1179,6 +1431,34 @@ def _iter_xlsx_spectra(path: Path, source_id: str, source_name: str, ingest_role
                 sheet_name,
                 preview_rows,
                 band_matrix_index,
+                source_id,
+                source_name,
+                ingest_role,
+            )
+            continue
+
+        mean_curve_index = next(
+            (
+                index
+                for index, row in enumerate(preview_rows)
+                if len(row) >= 2
+                and _normalize_header_name(_stringify_cell(row[0])) == "wavelength"
+                and _normalize_header_name(_stringify_cell(row[1])) in {"mean", "reflectance", "value"}
+                and sum(
+                    1
+                    for probe_row in preview_rows[index + 1 : index + 6]
+                    if _parse_float(probe_row[0] if len(probe_row) > 0 else None) is not None
+                    and _parse_float(probe_row[1] if len(probe_row) > 1 else None) is not None
+                )
+                >= 3
+            ),
+            None,
+        )
+        if mean_curve_index is not None:
+            yield from _iter_xlsx_mean_curve_sheet(
+                path,
+                sheet_name,
+                mean_curve_index,
                 source_id,
                 source_name,
                 ingest_role,
@@ -1591,6 +1871,9 @@ def normalize_sources(
             else:
                 for path in sorted(candidate_paths, key=_file_sort_key):
                     if path in handled_paths:
+                        continue
+                    if _should_skip_source_path(source.source_id, path):
+                        handled_paths.add(path)
                         continue
 
                     lower_suffix = path.suffix.lower()

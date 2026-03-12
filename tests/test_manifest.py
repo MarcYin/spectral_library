@@ -13,7 +13,10 @@ MANIFEST_PATH = REPO_ROOT / "manifests" / "sources.csv"
 class ManifestTests(unittest.TestCase):
     def test_load_manifest_count(self) -> None:
         records = load_manifest(MANIFEST_PATH)
-        self.assertEqual(len(records), 47)
+        self.assertGreaterEqual(len(records), 57)
+        source_ids = {record.source_id for record in records}
+        self.assertIn("cabo_leaf_v2", source_ids)
+        self.assertIn("neon_field_spectra", source_ids)
 
     def test_filter_sources_planned_zenodo(self) -> None:
         records = load_manifest(MANIFEST_PATH)
