@@ -346,6 +346,21 @@ class MappingResult:
 
 
 @dataclass
+class BatchMappingResult:
+    sample_ids: tuple[str, ...]
+    results: tuple[MappingResult, ...]
+
+    def to_summary_dict(self) -> dict[str, object]:
+        return {
+            "sample_ids": list(self.sample_ids),
+            "results": [
+                {"sample_id": sample_id, **result.to_summary_dict()}
+                for sample_id, result in zip(self.sample_ids, self.results)
+            ],
+        }
+
+
+@dataclass
 class _SegmentRetrieval:
     segment: str
     valid_band_count: int
@@ -364,6 +379,41 @@ def _optional_float(value: object) -> float | None:
     if isinstance(value, str) and not value.strip():
         return None
     return float(value)
+
+
+def _default_sample_id(index: int) -> str:
+    return f"sample_{index + 1:06d}"
+
+
+def _attach_sample_context(error: SpectralLibraryError, *, sample_id: str, sample_index: int) -> SpectralLibraryError:
+    context = {"sample_id": sample_id, "sample_index": sample_index, **error.context}
+    if type(error) is SpectralLibraryError:
+        return SpectralLibraryError(error.code, error.message, context=context)
+    return error.__class__(error.message, context=context)
+
+
+def _normalized_sample_ids(sample_ids: Sequence[str] | None, *, sample_count: int) -> tuple[str, ...]:
+    if sample_count < 1:
+        raise MappingInputError("Batch mapping requires at least one reflectance sample.")
+    if sample_ids is None:
+        return tuple(_default_sample_id(index) for index in range(sample_count))
+
+    if len(sample_ids) != sample_count:
+        raise MappingInputError(
+            "sample_ids must have the same length as the reflectance batch.",
+            context={"sample_count": sample_count, "sample_id_count": len(sample_ids)},
+        )
+
+    normalized: list[str] = []
+    for index, sample_id in enumerate(sample_ids):
+        text = str(sample_id).strip()
+        if not text:
+            raise MappingInputError("sample_ids must be non-empty.", context={"sample_index": index})
+        normalized.append(text)
+
+    if len(set(normalized)) != len(normalized):
+        raise MappingInputError("sample_ids must be unique within a batch.")
+    return tuple(normalized)
 
 
 def _segment_slice(segment: str) -> slice:
@@ -1353,6 +1403,83 @@ class SpectralMapper:
             min_valid_bands=min_valid_bands,
             candidate_row_indices=None,
         )
+
+    def map_reflectance_batch(
+        self,
+        *,
+        source_sensor: str,
+        reflectance_rows: Sequence[Sequence[float] | Mapping[str, float]] | np.ndarray,
+        valid_mask_rows: Sequence[Sequence[bool] | Mapping[str, bool] | None] | np.ndarray | None = None,
+        sample_ids: Sequence[str] | None = None,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        k: int = 10,
+        min_valid_bands: int = 1,
+    ) -> BatchMappingResult:
+        if isinstance(reflectance_rows, Mapping):
+            raise MappingInputError("map_reflectance_batch requires a batch of samples, not a single mapping.")
+
+        if isinstance(reflectance_rows, np.ndarray):
+            if reflectance_rows.ndim != 2 or reflectance_rows.shape[0] == 0:
+                raise MappingInputError(
+                    "reflectance_rows arrays must be two-dimensional with at least one sample row.",
+                    context={"shape": list(reflectance_rows.shape)},
+                )
+            batch_rows: list[Sequence[float] | Mapping[str, float]] = [np.asarray(row) for row in reflectance_rows]
+        elif isinstance(reflectance_rows, Sequence) and not isinstance(reflectance_rows, (str, bytes)):
+            batch_rows = list(reflectance_rows)
+            if not batch_rows:
+                raise MappingInputError("Batch mapping requires at least one reflectance sample.")
+        else:
+            raise MappingInputError("reflectance_rows must be a two-dimensional array or a sequence of per-sample inputs.")
+
+        normalized_sample_ids = _normalized_sample_ids(sample_ids, sample_count=len(batch_rows))
+
+        if isinstance(valid_mask_rows, Mapping):
+            raise MappingInputError("map_reflectance_batch requires valid_mask_rows to be batched when provided.")
+        if valid_mask_rows is None:
+            batch_valid_masks: list[Sequence[bool] | Mapping[str, bool] | None] = [None] * len(batch_rows)
+        elif isinstance(valid_mask_rows, np.ndarray):
+            if valid_mask_rows.ndim != 2 or valid_mask_rows.shape[0] != len(batch_rows):
+                raise MappingInputError(
+                    "valid_mask_rows arrays must be two-dimensional and aligned to reflectance_rows.",
+                    context={
+                        "reflectance_sample_count": len(batch_rows),
+                        "valid_mask_shape": list(valid_mask_rows.shape),
+                    },
+                )
+            batch_valid_masks = [np.asarray(row, dtype=bool) for row in valid_mask_rows]
+        elif isinstance(valid_mask_rows, Sequence) and not isinstance(valid_mask_rows, (str, bytes)):
+            batch_valid_masks = list(valid_mask_rows)
+            if len(batch_valid_masks) != len(batch_rows):
+                raise MappingInputError(
+                    "valid_mask_rows must have the same length as reflectance_rows.",
+                    context={"sample_count": len(batch_rows), "valid_mask_count": len(batch_valid_masks)},
+                )
+        else:
+            raise MappingInputError("valid_mask_rows must be a two-dimensional array or a sequence of per-sample masks.")
+
+        results: list[MappingResult] = []
+        for sample_index, (sample_id, reflectance, valid_mask) in enumerate(
+            zip(normalized_sample_ids, batch_rows, batch_valid_masks)
+        ):
+            try:
+                results.append(
+                    self._map_reflectance_internal(
+                        source_sensor=source_sensor,
+                        reflectance=reflectance,
+                        valid_mask=valid_mask,
+                        output_mode=output_mode,
+                        target_sensor=target_sensor,
+                        k=k,
+                        min_valid_bands=min_valid_bands,
+                        candidate_row_indices=None,
+                    )
+                )
+            except SpectralLibraryError as error:
+                raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
+
+        return BatchMappingResult(sample_ids=normalized_sample_ids, results=tuple(results))
 
     def _source_queries(self, source_sensor: str) -> np.ndarray:
         if source_sensor not in self._source_query_cache:

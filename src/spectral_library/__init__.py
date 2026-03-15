@@ -1,5 +1,6 @@
 from ._version import __version__
 from .mapping import (
+    BatchMappingResult,
     MappingInputError,
     MappingResult,
     PreparedLibraryCompatibilityError,
@@ -15,6 +16,7 @@ from .mapping import (
 
 __all__ = [
     "__version__",
+    "BatchMappingResult",
     "MappingInputError",
     "MappingResult",
     "PreparedLibraryCompatibilityError",

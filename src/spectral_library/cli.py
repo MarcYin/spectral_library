@@ -13,9 +13,15 @@ from .coverage_filter import filter_normalized_by_coverage
 from .fetchers import get_fetcher
 from .manifest import filter_sources, load_manifest, manifest_sha256, split_csv_arg
 from .mapping import (
+    CANONICAL_WAVELENGTHS,
     SUPPORTED_OUTPUT_MODES,
+    SWIR_WAVELENGTHS,
+    VNIR_WAVELENGTHS,
+    BatchMappingResult,
     SpectralLibraryError,
     SpectralMapper,
+    _attach_sample_context,
+    _default_sample_id,
     benchmark_mapping,
     prepare_mapping_library,
     validate_prepared_library,
@@ -141,6 +147,160 @@ def _load_reflectance_input(path: Path) -> tuple[dict[str, float], dict[str, boo
         return reflectance, None
 
 
+def _load_batch_reflectance_input(path: Path) -> tuple[tuple[str, ...], list[dict[str, float]], list[dict[str, bool] | None]]:
+    if not path.exists():
+        raise SpectralLibraryError("missing_input_file", "Input reflectance CSV does not exist.", context={"path": str(path)})
+
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        if not fieldnames:
+            raise SpectralLibraryError(
+                "invalid_input_csv",
+                "Input reflectance CSV must include a header row.",
+                context={"path": str(path)},
+            )
+
+        if {"sample_id", "band_id", "reflectance"}.issubset(fieldnames):
+            sample_ids: list[str] = []
+            sample_indices: dict[str, int] = {}
+            reflectance_by_sample: dict[str, dict[str, float]] = {}
+            valid_by_sample: dict[str, dict[str, bool]] = {}
+            has_valid = "valid" in fieldnames
+            for row in reader:
+                sample_id = (row.get("sample_id") or "").strip()
+                if not sample_id:
+                    raise SpectralLibraryError(
+                        "invalid_input_csv",
+                        "Batch long-format input requires non-empty sample_id values.",
+                        context={"path": str(path)},
+                    )
+                if sample_id not in sample_indices:
+                    sample_indices[sample_id] = len(sample_ids)
+                    sample_ids.append(sample_id)
+                    reflectance_by_sample[sample_id] = {}
+                    valid_by_sample[sample_id] = {}
+                sample_index = sample_indices[sample_id]
+                band_id = (row.get("band_id") or "").strip()
+                if not band_id:
+                    raise SpectralLibraryError(
+                        "invalid_input_csv",
+                        "Input reflectance CSV band_id values must be non-empty.",
+                        context={"path": str(path), "sample_id": sample_id, "sample_index": sample_index},
+                    )
+                if band_id in reflectance_by_sample[sample_id]:
+                    raise SpectralLibraryError(
+                        "invalid_input_csv",
+                        "Batch input CSV must not contain duplicate band_id rows within a sample.",
+                        context={"path": str(path), "sample_id": sample_id, "sample_index": sample_index, "band_id": band_id},
+                    )
+                try:
+                    reflectance_by_sample[sample_id][band_id] = _parse_reflectance_cell(
+                        row.get("reflectance"),
+                        path=path,
+                        band_id=band_id,
+                    )
+                    if has_valid:
+                        valid_by_sample[sample_id][band_id] = _parse_valid_cell(row.get("valid"))
+                except SpectralLibraryError as error:
+                    raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
+
+            if not sample_ids:
+                raise SpectralLibraryError(
+                    "invalid_input_csv",
+                    "Batch input reflectance CSV did not contain any sample rows.",
+                    context={"path": str(path)},
+                )
+
+            return (
+                tuple(sample_ids),
+                [reflectance_by_sample[sample_id] for sample_id in sample_ids],
+                [valid_by_sample[sample_id] if has_valid else None for sample_id in sample_ids],
+            )
+
+        rows = list(reader)
+        if not rows:
+            raise SpectralLibraryError(
+                "invalid_input_csv",
+                "Batch input reflectance CSV did not contain any sample rows.",
+                context={"path": str(path)},
+            )
+
+        valid_columns = {
+            fieldname[6:]: fieldname
+            for fieldname in fieldnames
+            if fieldname.startswith("valid_") and len(fieldname) > 6
+        }
+        reflectance_columns = [
+            fieldname
+            for fieldname in fieldnames
+            if fieldname != "sample_id" and fieldname not in valid_columns.values()
+        ]
+        if not reflectance_columns:
+            raise SpectralLibraryError(
+                "invalid_input_csv",
+                "Wide-format batch input must include at least one reflectance band column.",
+                context={"path": str(path)},
+            )
+        for band_id, column_name in valid_columns.items():
+            if band_id not in reflectance_columns:
+                raise SpectralLibraryError(
+                    "invalid_input_csv",
+                    "Wide-format valid_<band_id> columns must match reflectance band columns.",
+                    context={"path": str(path), "column": column_name},
+                )
+
+        sample_ids: list[str] = []
+        reflectance_rows: list[dict[str, float]] = []
+        valid_rows: list[dict[str, bool] | None] = []
+        for row_index, row in enumerate(rows):
+            if "sample_id" in fieldnames:
+                sample_id = (row.get("sample_id") or "").strip()
+                if not sample_id:
+                    raise SpectralLibraryError(
+                        "invalid_input_csv",
+                        "Wide-format batch input sample_id values must be non-empty when the column is present.",
+                        context={"path": str(path), "sample_index": row_index},
+                    )
+            else:
+                sample_id = _default_sample_id(row_index)
+            if sample_id in sample_ids:
+                raise SpectralLibraryError(
+                    "invalid_input_csv",
+                    "Batch input sample_id values must be unique.",
+                    context={"path": str(path), "sample_id": sample_id, "sample_index": row_index},
+                )
+
+            reflectance: dict[str, float] = {}
+            valid_mask: dict[str, bool] = {}
+            for band_id in reflectance_columns:
+                value = row.get(band_id)
+                if value is not None and str(value).strip():
+                    try:
+                        reflectance[band_id] = _parse_reflectance_cell(value, path=path, column=band_id)
+                    except SpectralLibraryError as error:
+                        raise _attach_sample_context(error, sample_id=sample_id, sample_index=row_index) from error
+                valid_column = valid_columns.get(band_id)
+                if valid_column is not None:
+                    try:
+                        valid_mask[band_id] = _parse_valid_cell(row.get(valid_column))
+                    except SpectralLibraryError as error:
+                        raise _attach_sample_context(error, sample_id=sample_id, sample_index=row_index) from error
+
+            if not reflectance:
+                raise SpectralLibraryError(
+                    "invalid_input_csv",
+                    "Batch input sample rows must contain at least one usable band value.",
+                    context={"path": str(path), "sample_id": sample_id, "sample_index": row_index},
+                )
+
+            sample_ids.append(sample_id)
+            reflectance_rows.append(reflectance)
+            valid_rows.append(valid_mask or None)
+
+        return tuple(sample_ids), reflectance_rows, valid_rows
+
+
 def _write_mapping_output(
     mapper: SpectralMapper,
     result: object,
@@ -187,6 +347,80 @@ def _write_mapping_output(
         for wavelength_nm, value in zip(result.reconstructed_wavelength_nm, reflectance):
             writer.writerow({"wavelength_nm": int(wavelength_nm), "reflectance": float(value)})
         return int(len(reflectance))
+
+
+def _write_batch_mapping_output(
+    mapper: SpectralMapper,
+    result: BatchMappingResult,
+    *,
+    output_mode: str,
+    target_sensor: str | None,
+    output_path: Path,
+) -> tuple[int, tuple[str, ...]]:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        if output_mode == "target_sensor":
+            schema = mapper.get_sensor_schema(target_sensor or "")
+            output_columns = schema.band_ids()
+            fieldnames = ["sample_id", *output_columns]
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for sample_id, sample_result in zip(result.sample_ids, result.results):
+                if sample_result.target_reflectance is None:
+                    raise SpectralLibraryError(
+                        "invalid_result",
+                        "Batch mapping result is missing target_reflectance.",
+                        context={"sample_id": sample_id},
+                    )
+                row = {fieldname: "" for fieldname in fieldnames}
+                row["sample_id"] = sample_id
+                for band_id, reflectance in zip(sample_result.target_band_ids, sample_result.target_reflectance):
+                    if band_id not in output_columns:
+                        raise SpectralLibraryError(
+                            "invalid_result",
+                            "Batch mapping result emitted an unexpected target band.",
+                            context={"sample_id": sample_id, "band_id": band_id},
+                        )
+                    row[band_id] = float(reflectance)
+                writer.writerow(row)
+            return len(result.results), output_columns
+
+        if output_mode == "vnir_spectrum":
+            output_columns = tuple(f"nm_{int(wavelength_nm)}" for wavelength_nm in VNIR_WAVELENGTHS)
+            getter = lambda mapping_result: mapping_result.reconstructed_vnir
+        elif output_mode == "swir_spectrum":
+            output_columns = tuple(f"nm_{int(wavelength_nm)}" for wavelength_nm in SWIR_WAVELENGTHS)
+            getter = lambda mapping_result: mapping_result.reconstructed_swir
+        else:
+            output_columns = tuple(f"nm_{int(wavelength_nm)}" for wavelength_nm in CANONICAL_WAVELENGTHS)
+            getter = lambda mapping_result: mapping_result.reconstructed_full_spectrum
+
+        fieldnames = ["sample_id", *output_columns]
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for sample_id, sample_result in zip(result.sample_ids, result.results):
+            reflectance = getter(sample_result)
+            if reflectance is None:
+                raise SpectralLibraryError(
+                    "invalid_result",
+                    "Batch mapping result is missing reconstructed spectral output.",
+                    context={"sample_id": sample_id, "output_mode": output_mode},
+                )
+            if len(reflectance) != len(output_columns):
+                raise SpectralLibraryError(
+                    "invalid_result",
+                    "Batch mapping result emitted a spectral output with the wrong width.",
+                    context={
+                        "sample_id": sample_id,
+                        "output_mode": output_mode,
+                        "expected_length": len(output_columns),
+                        "actual_length": len(reflectance),
+                    },
+                )
+            row = {"sample_id": sample_id}
+            row.update({column: float(value) for column, value in zip(output_columns, reflectance)})
+            writer.writerow(row)
+        return len(result.results), output_columns
 
 
 def _emit_cli_error(error: SpectralLibraryError, *, command: str | None, json_errors: bool) -> None:
@@ -369,6 +603,46 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
+    mapper = SpectralMapper(Path(args.prepared_root))
+    sample_ids, reflectance_rows, valid_mask_rows = _load_batch_reflectance_input(Path(args.input))
+    result = mapper.map_reflectance_batch(
+        source_sensor=args.source_sensor,
+        reflectance_rows=reflectance_rows,
+        valid_mask_rows=valid_mask_rows,
+        sample_ids=sample_ids,
+        output_mode=args.output_mode,
+        target_sensor=args.target_sensor or None,
+        k=args.k,
+        min_valid_bands=args.min_valid_bands,
+    )
+    output_path = Path(args.output)
+    written_rows, output_columns = _write_batch_mapping_output(
+        mapper,
+        result,
+        output_mode=args.output_mode,
+        target_sensor=args.target_sensor or None,
+        output_path=output_path,
+    )
+
+    payload: dict[str, object] = {
+        "source_sensor": args.source_sensor,
+        "target_sensor": args.target_sensor or None,
+        "output_mode": args.output_mode,
+        "output_path": str(output_path),
+        "output_columns": list(output_columns),
+        "sample_count": len(result.results),
+        "written_rows": written_rows,
+    }
+    if args.diagnostics_output:
+        diagnostics_path = Path(args.diagnostics_output)
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        diagnostics_path.write_text(json.dumps(result.to_summary_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        payload["diagnostics_output"] = str(diagnostics_path)
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
     report = benchmark_mapping(
         Path(args.prepared_root),
@@ -438,6 +712,21 @@ def build_parser() -> argparse.ArgumentParser:
     map_parser.add_argument("--min-valid-bands", type=int, default=1)
     map_parser.add_argument("--output", required=True)
     map_parser.set_defaults(func=cmd_map_reflectance)
+
+    batch_map_parser = subparsers.add_parser(
+        "map-reflectance-batch",
+        help="Map multiple source-sensor reflectance samples from one CSV input file.",
+    )
+    batch_map_parser.add_argument("--prepared-root", required=True)
+    batch_map_parser.add_argument("--source-sensor", required=True)
+    batch_map_parser.add_argument("--target-sensor", default="")
+    batch_map_parser.add_argument("--input", required=True)
+    batch_map_parser.add_argument("--output-mode", choices=list(SUPPORTED_OUTPUT_MODES), required=True)
+    batch_map_parser.add_argument("--k", type=int, default=10)
+    batch_map_parser.add_argument("--min-valid-bands", type=int, default=1)
+    batch_map_parser.add_argument("--output", required=True)
+    batch_map_parser.add_argument("--diagnostics-output", default="")
+    batch_map_parser.set_defaults(func=cmd_map_reflectance_batch)
 
     benchmark_parser = subparsers.add_parser(
         "benchmark-mapping",
