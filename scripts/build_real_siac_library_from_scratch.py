@@ -212,7 +212,10 @@ def main() -> int:
     )
     parser.add_argument("--raw-sources-root", default="build/local_sources_full_raw")
     parser.add_argument("--pipeline-root", default="build/real_siac_pipeline_full_raw")
-    parser.add_argument("--output-root", default="build/siac_spectral_library_real_full_raw_no_ghisacasia")
+    parser.add_argument(
+        "--output-root",
+        default="build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37",
+    )
     parser.add_argument("--exclude-source-ids", default="ghisacasia_v001,understory_estonia_czech")
     parser.add_argument("--exclude-spectra-csv", default="manifests/siac_excluded_spectra.csv")
     parser.add_argument("--max-per-source", type=int, default=100)

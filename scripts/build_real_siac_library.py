@@ -10,7 +10,7 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run the cache-first end-to-end SIAC build using the canonical full pipeline driver."
+        description="Run the canonical end-to-end SIAC build with cache fallback for existing raw source trees."
     )
     parser.add_argument("--manifest", default="manifests/sources.csv")
     parser.add_argument("--manual-root", default="build/mannual_download_data")
@@ -18,11 +18,11 @@ def main() -> int:
         "--fallback-raw-roots",
         default="build/local_sources_full_raw,build/local_sources_vegetation_all,build/local_sources",
     )
-    parser.add_argument("--raw-sources-root", default="build/local_sources_full_raw_e2e_cached")
-    parser.add_argument("--pipeline-root", default="build/real_siac_pipeline_e2e_cached")
+    parser.add_argument("--raw-sources-root", default="build/local_sources_full_raw_cached")
+    parser.add_argument("--pipeline-root", default="build/real_siac_pipeline_full_raw_cached")
     parser.add_argument(
         "--output-root",
-        default="build/siac_spectral_library_e2e_cached_no_ghisacasia_no_understory_no_santa37",
+        default="build/siac_spectral_library_real_full_raw_cached_no_ghisacasia_no_understory_no_santa37",
     )
     parser.add_argument("--exclude-source-ids", default="ghisacasia_v001,understory_estonia_czech")
     parser.add_argument("--exclude-spectra-csv", default="manifests/siac_excluded_spectra.csv")
