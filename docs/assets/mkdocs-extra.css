@@ -1,31 +1,31 @@
 :root {
-  --sl-hero-start: #17324d;
-  --sl-hero-end: #0f2434;
-  --sl-accent: #d78f2c;
+  --sl-hero-start: #0f4c5c;
+  --sl-hero-end: #17302b;
+  --sl-accent: #93b941;
   --sl-card-bg: rgba(255, 255, 255, 0.78);
 }
 
 [data-md-color-scheme="default"] {
-  --md-primary-fg-color: #17324d;
-  --md-accent-fg-color: #c67c1e;
-  --md-typeset-a-color: #0f609b;
+  --md-primary-fg-color: #0f766e;
+  --md-accent-fg-color: #7aa52f;
+  --md-typeset-a-color: #0d6b74;
 }
 
 [data-md-color-scheme="slate"] {
-  --md-primary-fg-color: #0f2434;
-  --md-accent-fg-color: #f0b04d;
+  --md-primary-fg-color: #0f5b56;
+  --md-accent-fg-color: #9dd36a;
 }
 
 .md-main {
   background:
-    radial-gradient(circle at top left, rgba(215, 143, 44, 0.16), transparent 28%),
+    radial-gradient(circle at top left, rgba(147, 185, 65, 0.16), transparent 28%),
     linear-gradient(180deg, rgba(245, 241, 230, 0.55) 0%, rgba(255, 255, 255, 0) 32%);
 }
 
 [data-md-color-scheme="slate"] .md-main {
   background:
-    radial-gradient(circle at top left, rgba(240, 176, 77, 0.09), transparent 24%),
-    linear-gradient(180deg, rgba(23, 50, 77, 0.28) 0%, rgba(15, 36, 52, 0) 30%);
+    radial-gradient(circle at top left, rgba(157, 211, 106, 0.09), transparent 24%),
+    linear-gradient(180deg, rgba(15, 76, 92, 0.28) 0%, rgba(23, 48, 43, 0) 30%);
 }
 
 .md-typeset h1,
@@ -42,7 +42,7 @@
 }
 
 .md-typeset h2 {
-  border-top: 1px solid rgba(23, 50, 77, 0.12);
+  border-top: 1px solid rgba(15, 76, 92, 0.12);
   margin-top: 2.6rem;
   padding-top: 1.25rem;
 }
@@ -58,7 +58,7 @@
 
 .md-typeset table:not([class]) {
   border-radius: 0.9rem;
-  box-shadow: 0 16px 30px rgba(16, 42, 67, 0.08);
+  box-shadow: 0 16px 30px rgba(15, 76, 92, 0.08);
   overflow: hidden;
 }
 
@@ -68,7 +68,7 @@
 
 .md-typeset img {
   border-radius: 0.85rem;
-  box-shadow: 0 18px 34px rgba(16, 42, 67, 0.16);
+  box-shadow: 0 18px 34px rgba(15, 76, 92, 0.16);
 }
 
 .hero {
@@ -82,7 +82,7 @@
 }
 
 .hero::after {
-  background: radial-gradient(circle at top right, rgba(244, 189, 95, 0.28), transparent 30%);
+  background: radial-gradient(circle at top right, rgba(171, 214, 86, 0.24), transparent 30%);
   content: "";
   inset: 0;
   pointer-events: none;
@@ -95,7 +95,7 @@
 }
 
 .hero__eyebrow {
-  color: #f2d19d;
+  color: #d5efb2;
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -123,18 +123,18 @@
 }
 
 .hero .md-button--primary {
-  background: #f0b04d;
-  border-color: #f0b04d;
-  color: #132a3d;
+  background: #a8d45e;
+  border-color: #a8d45e;
+  color: #17302b;
 }
 
 .grid.cards > ul > li,
 .md-typeset .grid.cards > ul > li {
   backdrop-filter: blur(10px);
   background: var(--sl-card-bg);
-  border: 1px solid rgba(23, 50, 77, 0.08);
+  border: 1px solid rgba(15, 76, 92, 0.08);
   border-radius: 1rem;
-  box-shadow: 0 14px 30px rgba(16, 42, 67, 0.08);
+  box-shadow: 0 14px 30px rgba(15, 76, 92, 0.08);
 }
 
 [data-md-color-scheme="slate"] .grid.cards > ul > li,
@@ -158,7 +158,7 @@
 
 .page-links a {
   background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(23, 50, 77, 0.08);
+  border: 1px solid rgba(15, 76, 92, 0.08);
   border-radius: 0.9rem;
   color: inherit;
   display: block;
@@ -186,7 +186,7 @@
 
 .fact-grid > div {
   background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(23, 50, 77, 0.08);
+  border: 1px solid rgba(15, 76, 92, 0.08);
   border-radius: 0.95rem;
   padding: 1rem;
 }

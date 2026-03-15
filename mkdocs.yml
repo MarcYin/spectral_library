@@ -25,14 +25,14 @@ theme:
     code: IBM Plex Mono
   palette:
     - scheme: default
-      primary: blue grey
-      accent: amber
+      primary: teal
+      accent: lime
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: blue grey
-      accent: amber
+      primary: teal
+      accent: light green
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
