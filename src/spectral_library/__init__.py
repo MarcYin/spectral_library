@@ -1,3 +1,27 @@
-__all__ = ["__version__"]
+from ._version import __version__
+from .mapping import (
+    MappingInputError,
+    MappingResult,
+    PreparedLibraryCompatibilityError,
+    PreparedLibraryManifest,
+    PreparedLibraryValidationError,
+    SensorSRFSchema,
+    SpectralLibraryError,
+    SpectralMapper,
+    benchmark_mapping,
+    prepare_mapping_library,
+)
 
-__version__ = "0.1.0"
+__all__ = [
+    "__version__",
+    "MappingInputError",
+    "MappingResult",
+    "PreparedLibraryCompatibilityError",
+    "PreparedLibraryManifest",
+    "PreparedLibraryValidationError",
+    "SensorSRFSchema",
+    "SpectralLibraryError",
+    "SpectralMapper",
+    "benchmark_mapping",
+    "prepare_mapping_library",
+]
