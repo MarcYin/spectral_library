@@ -1117,8 +1117,12 @@ The repository example focuses on these semantic bands:
 - `swir1`
 - `swir2`
 
+The mathematical explanation for the retrieval model, target-sensor simulation,
+and overlap blending is in
+[`docs/theory.md`](theory.md).
+
 The full example bundle lives in
-[`examples/official_mapping`](../examples/official_mapping/README.md).
+[`docs/example_bundle.md`](example_bundle.md).
 
 ## Official Sources
 
