@@ -34,6 +34,9 @@ for its public Python API, CLI, and prepared-runtime contract.
 
 - Package metadata is now aligned to the public distribution name
   `spectral-library`
+- The repository software is now distributed under the MIT License, while
+  referenced third-party datasets and derived artifacts remain subject to
+  their own upstream terms
 - Runtime dependencies are separated from optional internal-build and
   acceleration dependencies
 - Batch mapping now performs batched segment retrieval work internally instead

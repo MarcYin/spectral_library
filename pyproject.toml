@@ -7,7 +7,7 @@ name = "spectral-library"
 version = "0.1.0"
 description = "Spectral library build, preparation, and retrieval-based mapping toolkit."
 readme = "README.md"
-license = "LicenseRef-Proprietary"
+license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.9"
 authors = [

@@ -12,6 +12,7 @@ The public names are:
 - distribution: `spectral-library`
 - import package: `spectral_library`
 - CLI: `spectral-library`
+- license: `MIT` for repository software and repository-authored docs
 
 ## Start Here
 
