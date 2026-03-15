@@ -1,18 +1,146 @@
-# SIAC Spectral Library Build System
+# Spectral Library
 
-This repository builds a curated SIAC-oriented spectral library from a mixed set
-of public, cached, and manually seeded hyperspectral sources. The pipeline does
-four things end to end:
+`spectral-library` is a Python package and CLI for:
+
+1. building curated SIAC spectral-library exports from heterogeneous source
+   datasets,
+2. preparing row-aligned runtime artifacts for spectral mapping,
+3. mapping source-sensor reflectance to target sensors or reconstructed
+   hyperspectral outputs with a retrieval-based workflow.
+
+The public names for the current package are:
+
+- distribution: `spectral-library`
+- import package: `spectral_library`
+- CLI: `spectral-library`
+
+## Quickstart
+
+Install the package from this repository in a Python `3.9+` environment:
+
+```bash
+python3 -m pip install .
+```
+
+When the package is published, the distribution name is `spectral-library`.
+
+Prepare a mapping runtime from a SIAC export plus one or more sensor SRF JSON
+definitions:
+
+```bash
+spectral-library prepare-mapping-library \
+  --siac-root build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37 \
+  --srf-root path/to/srfs \
+  --source-sensor SENSOR_A \
+  --output-root build/mapping_runtime
+```
+
+Validate the prepared runtime and verify its checksums:
+
+```bash
+spectral-library validate-prepared-library \
+  --prepared-root build/mapping_runtime
+```
+
+Map source reflectance to a target sensor:
+
+```bash
+spectral-library map-reflectance \
+  --prepared-root build/mapping_runtime \
+  --source-sensor SENSOR_A \
+  --target-sensor SENSOR_B \
+  --input path/to/source_reflectance.csv \
+  --output-mode target_sensor \
+  --k 10 \
+  --output path/to/mapped_reflectance.csv
+```
+
+Benchmark retrieval-based mapping against a regression baseline:
+
+```bash
+spectral-library benchmark-mapping \
+  --prepared-root build/mapping_runtime \
+  --source-sensor SENSOR_A \
+  --target-sensor SENSOR_B \
+  --report path/to/benchmark.json
+```
+
+The `map-reflectance` input CSV accepts either:
+
+- long format with `band_id,reflectance[,valid]`
+- wide format with one row and one column per source band id
+
+## Python API
+
+```python
+from pathlib import Path
+
+from spectral_library import SpectralMapper, prepare_mapping_library, validate_prepared_library
+
+prepare_mapping_library(
+    siac_root=Path("build/siac_library"),
+    srf_root=Path("path/to/srfs"),
+    output_root=Path("build/mapping_runtime"),
+    source_sensors=["SENSOR_A"],
+)
+
+validate_prepared_library(Path("build/mapping_runtime"))
+
+mapper = SpectralMapper(Path("build/mapping_runtime"))
+result = mapper.map_reflectance(
+    source_sensor="SENSOR_A",
+    reflectance={"blue": 0.12, "nir": 0.34, "swir1": 0.27},
+    output_mode="full_spectrum",
+    k=10,
+)
+```
+
+## Sensor SRF JSON
+
+Each sensor JSON file in `--srf-root` should define one sensor:
+
+```json
+{
+  "sensor_id": "SENSOR_A",
+  "bands": [
+    {
+      "band_id": "blue",
+      "segment": "vnir",
+      "wavelength_nm": [445.0, 450.0, 455.0],
+      "rsr": [0.2, 1.0, 0.2]
+    }
+  ]
+}
+```
+
+Band support must stay inside its declared segment:
+
+- `vnir`: `400-1000 nm`
+- `swir`: `900-2500 nm`
+
+## Prepared Runtime Layout
+
+The prepared runtime root contains the public on-disk contract for mapping:
+
+- `manifest.json`
+- `mapping_metadata.parquet`
+- `hyperspectral_vnir.npy`
+- `hyperspectral_swir.npy`
+- `source_<sensor_id>_vnir.npy`
+- `source_<sensor_id>_swir.npy`
+- `sensor_schema.json`
+- `checksums.json`
+
+## Internal Build System
+
+The repository also retains the internal end-to-end SIAC build pipeline used to
+produce the canonical library export. That build system:
 
 1. fetches or reuses raw source assets,
 2. normalizes them onto a shared `400-2500 nm` / `1 nm` reflectance grid,
 3. applies source-aware QA, filtering, and repair stages,
 4. exports a SIAC package with spectra, metadata, prototypes, diagnostics, and
    review plots.
-
-The codebase started as a manifest-driven scaffold. It now contains a working
-end-to-end build with source-specific parser rules, repair stages, export-time
-exclusions, and QA review outputs.
 
 ## Canonical Build
 
