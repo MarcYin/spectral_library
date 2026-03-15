@@ -25,6 +25,9 @@ for its public Python API, CLI, and prepared-runtime contract.
   checks and schema-compatibility errors
 - Public quickstart documentation in
   [`docs/mapping_quickstart.md`](docs/mapping_quickstart.md)
+- Public docs index, CLI reference, Python API reference, prepared-runtime
+  contract guide, and official-source MODIS/Sentinel-2A/Landsat 8/Landsat 9
+  examples with generated visuals
 - Internal pipeline reference in
   [`docs/internal_build_pipeline.md`](docs/internal_build_pipeline.md)
 - Release contract tests, package smoke tooling, and GitHub Actions workflows

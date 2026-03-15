@@ -16,8 +16,18 @@ The public names are:
 
 ## Start Here
 
+- public docs index:
+  [`docs/index.md`](docs/index.md)
 - public install and usage guide:
   [`docs/mapping_quickstart.md`](docs/mapping_quickstart.md)
+- official MODIS, Sentinel-2A, Landsat 8, and Landsat 9 examples:
+  [`docs/official_sensor_examples.md`](docs/official_sensor_examples.md)
+- public CLI reference:
+  [`docs/cli_reference.md`](docs/cli_reference.md)
+- public Python API reference:
+  [`docs/python_api_reference.md`](docs/python_api_reference.md)
+- prepared-runtime layout and compatibility contract:
+  [`docs/prepared_runtime_contract.md`](docs/prepared_runtime_contract.md)
 - internal SIAC build-system reference:
   [`docs/internal_build_pipeline.md`](docs/internal_build_pipeline.md)
 - mapping design:
@@ -41,6 +51,9 @@ internal-build dependencies:
 ```bash
 python3 -m pip install ".[internal-build]"
 ```
+
+This extra is also required if you want to regenerate the bundled official
+sensor example assets with `scripts/build_official_mapping_examples.py`.
 
 ## Minimal Example
 
@@ -88,3 +101,9 @@ spectral-library map-reflectance-batch \
 The detailed quickstart, supported CSV layouts, Python API examples, SRF JSON
 schema, and prepared-runtime contract are documented in
 [`docs/mapping_quickstart.md`](docs/mapping_quickstart.md).
+
+For reproducible cross-sensor examples built from official MODIS, Sentinel-2A,
+Landsat 8, and Landsat 9 response functions, see
+[`docs/official_sensor_examples.md`](docs/official_sensor_examples.md) and the
+bundled example assets in
+[`examples/official_mapping`](examples/official_mapping/README.md).

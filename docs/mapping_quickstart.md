@@ -8,6 +8,14 @@ This guide covers the public package surface for `spectral-library`:
 - mapping batches of samples,
 - using the Python API.
 
+Additional public docs:
+
+- [`index.md`](index.md)
+- [`official_sensor_examples.md`](official_sensor_examples.md)
+- [`cli_reference.md`](cli_reference.md)
+- [`python_api_reference.md`](python_api_reference.md)
+- [`prepared_runtime_contract.md`](prepared_runtime_contract.md)
+
 ## Package Identity
 
 - distribution: `spectral-library`

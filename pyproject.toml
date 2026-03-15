@@ -46,7 +46,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/MarcYin/spectral_library"
 Repository = "https://github.com/MarcYin/spectral_library"
-Documentation = "https://github.com/MarcYin/spectral_library/tree/main/docs"
+Documentation = "https://github.com/MarcYin/spectral_library/blob/main/docs/index.md"
 Issues = "https://github.com/MarcYin/spectral_library/issues"
 Changelog = "https://github.com/MarcYin/spectral_library/blob/main/CHANGELOG.md"
 
