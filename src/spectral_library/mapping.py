@@ -7,6 +7,7 @@ import math
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -280,7 +281,23 @@ class PreparedLibraryManifest:
 
     @classmethod
     def from_json(cls, path: Path) -> "PreparedLibraryManifest":
-        return cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        payload = _read_json_document(
+            path,
+            error_factory=PreparedLibraryValidationError,
+            document_name=path.name,
+        )
+        if not isinstance(payload, dict):
+            raise PreparedLibraryValidationError(
+                f"{path.name} must contain a JSON object.",
+                context={"path": str(path)},
+            )
+        try:
+            return cls.from_dict(payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PreparedLibraryValidationError(
+                f"{path.name} is missing required fields or contains invalid values.",
+                context={"path": str(path)},
+            ) from exc
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -460,7 +477,11 @@ def _simulate_segment_matrix(
 
 
 def _load_sensor_payloads(path: Path) -> list[Mapping[str, object]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = _read_json_document(
+        path,
+        error_factory=SensorSchemaError,
+        document_name=path.name,
+    )
     if isinstance(payload, dict) and "sensors" in payload:
         sensors = payload["sensors"]
         if not isinstance(sensors, list):
@@ -607,6 +628,165 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _read_json_document(
+    path: Path,
+    *,
+    error_factory: type[SpectralLibraryError],
+    document_name: str,
+) -> object:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise error_factory(
+            f"Could not read {document_name}.",
+            context={"path": str(path)},
+        ) from exc
+    try:
+        return json.loads(text)
+    except JSONDecodeError as exc:
+        raise error_factory(
+            f"{document_name} is not valid JSON.",
+            context={"path": str(path)},
+        ) from exc
+
+
+def _required_runtime_file_names(manifest: PreparedLibraryManifest) -> tuple[str, ...]:
+    stable_files = [
+        "manifest.json",
+        "mapping_metadata.parquet",
+        SEGMENT_FILE_NAMES["vnir"],
+        SEGMENT_FILE_NAMES["swir"],
+        "sensor_schema.json",
+        "checksums.json",
+    ]
+    stable_files.extend(f"source_{sensor_id}_{segment}.npy" for sensor_id in manifest.source_sensors for segment in SEGMENTS)
+    return tuple(stable_files)
+
+
+def _validate_manifest_compatibility(manifest: PreparedLibraryManifest) -> None:
+    current_major = PREPARED_SCHEMA_VERSION.split(".", 1)[0]
+    prepared_major = manifest.schema_version.split(".", 1)[0]
+    if current_major != prepared_major:
+        raise PreparedLibraryCompatibilityError(
+            "Prepared mapping runtime schema major version is incompatible with this package.",
+            context={
+                "prepared_schema_version": manifest.schema_version,
+                "expected_schema_version": PREPARED_SCHEMA_VERSION,
+            },
+        )
+
+
+def _load_prepared_manifest(prepared_root: Path) -> PreparedLibraryManifest:
+    manifest_path = prepared_root / "manifest.json"
+    if not manifest_path.exists():
+        raise PreparedLibraryValidationError(
+            "Prepared mapping runtime is missing manifest.json.",
+            context={"prepared_root": str(prepared_root)},
+        )
+
+    payload = _read_json_document(
+        manifest_path,
+        error_factory=PreparedLibraryValidationError,
+        document_name="manifest.json",
+    )
+    if not isinstance(payload, dict):
+        raise PreparedLibraryValidationError(
+            "manifest.json must contain a JSON object.",
+            context={"path": str(manifest_path)},
+        )
+
+    try:
+        manifest = PreparedLibraryManifest.from_dict(payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PreparedLibraryValidationError(
+            "manifest.json is missing required fields or contains invalid values.",
+            context={"path": str(manifest_path)},
+        ) from exc
+
+    if not manifest.source_sensors:
+        raise PreparedLibraryValidationError(
+            "manifest.json must declare at least one source sensor.",
+            context={"path": str(manifest_path)},
+        )
+    if len(set(manifest.source_sensors)) != len(manifest.source_sensors):
+        raise PreparedLibraryValidationError(
+            "manifest.json source_sensors must be unique.",
+            context={"path": str(manifest_path)},
+        )
+    if manifest.row_count < 1:
+        raise PreparedLibraryValidationError(
+            "manifest.json row_count must be at least 1.",
+            context={"path": str(manifest_path), "row_count": manifest.row_count},
+        )
+    unsupported_modes = [mode for mode in manifest.supported_output_modes if mode not in SUPPORTED_OUTPUT_MODES]
+    if unsupported_modes:
+        raise PreparedLibraryValidationError(
+            "manifest.json contains unsupported output modes.",
+            context={"path": str(manifest_path), "unsupported_output_modes": unsupported_modes},
+        )
+    if len(manifest.vnir_wavelength_range_nm) != 2 or len(manifest.swir_wavelength_range_nm) != 2:
+        raise PreparedLibraryValidationError(
+            "manifest.json wavelength ranges must contain exactly two values.",
+            context={"path": str(manifest_path)},
+        )
+    try:
+        dtype_np = np.dtype(manifest.array_dtype)
+    except TypeError as exc:
+        raise PreparedLibraryValidationError(
+            "manifest.json array_dtype is not a valid NumPy dtype.",
+            context={"path": str(manifest_path), "array_dtype": manifest.array_dtype},
+        ) from exc
+    if dtype_np.kind != "f":
+        raise PreparedLibraryValidationError(
+            "manifest.json array_dtype must be floating-point.",
+            context={"path": str(manifest_path), "array_dtype": manifest.array_dtype},
+        )
+
+    required_checksum_files = {
+        file_name for file_name in _required_runtime_file_names(manifest) if file_name not in {"manifest.json", "checksums.json"}
+    }
+    missing_checksum_files = sorted(required_checksum_files - set(manifest.file_checksums))
+    if missing_checksum_files:
+        raise PreparedLibraryValidationError(
+            "manifest.json file_checksums is missing required runtime files.",
+            context={"path": str(manifest_path), "missing_files": missing_checksum_files},
+        )
+    return manifest
+
+
+def _load_checksums_payload(prepared_root: Path) -> dict[str, object]:
+    checksums_path = prepared_root / "checksums.json"
+    if not checksums_path.exists():
+        raise PreparedLibraryValidationError(
+            "Prepared mapping runtime is missing checksums.json.",
+            context={"prepared_root": str(prepared_root)},
+        )
+    payload = _read_json_document(
+        checksums_path,
+        error_factory=PreparedLibraryValidationError,
+        document_name="checksums.json",
+    )
+    if not isinstance(payload, dict):
+        raise PreparedLibraryValidationError(
+            "checksums.json must contain a JSON object.",
+            context={"path": str(checksums_path)},
+        )
+    files_payload = payload.get("files")
+    if not isinstance(files_payload, dict):
+        raise PreparedLibraryValidationError(
+            "checksums.json must contain a files object.",
+            context={"path": str(checksums_path)},
+        )
+    return payload
+
+
+def _expected_runtime_checksums(manifest: PreparedLibraryManifest, manifest_path: Path) -> dict[str, str]:
+    return {
+        **manifest.file_checksums,
+        manifest_path.name: _sha256_file(manifest_path),
+    }
+
+
 def prepare_mapping_library(
     siac_root: Path,
     srf_root: Path,
@@ -705,17 +885,23 @@ def prepare_mapping_library(
     return manifest
 
 
+def validate_prepared_library(
+    prepared_root: Path,
+    *,
+    verify_checksums: bool = True,
+) -> PreparedLibraryManifest:
+    prepared_root = Path(prepared_root)
+    mapper = SpectralMapper(prepared_root, verify_checksums=verify_checksums)
+    return mapper.manifest
+
+
 class SpectralMapper:
-    def __init__(self, prepared_root: Path) -> None:
+    def __init__(self, prepared_root: Path, *, verify_checksums: bool = False) -> None:
         self.prepared_root = Path(prepared_root)
-        manifest_path = self.prepared_root / "manifest.json"
-        if not manifest_path.exists():
-            raise PreparedLibraryValidationError(
-                "Prepared mapping runtime is missing manifest.json.",
-                context={"prepared_root": str(self.prepared_root)},
-            )
-        self.manifest = PreparedLibraryManifest.from_json(manifest_path)
-        self._validate_manifest_compatibility()
+        self.manifest = _load_prepared_manifest(self.prepared_root)
+        _validate_manifest_compatibility(self.manifest)
+        self._validate_required_runtime_files()
+        self._validate_checksums(verify_checksums=verify_checksums)
 
         self._sensor_schemas = self._load_prepared_sensor_schemas()
         self._row_ids = self._load_row_ids()
@@ -726,48 +912,64 @@ class SpectralMapper:
 
         self._validate_prepared_layout()
 
-    def _validate_manifest_compatibility(self) -> None:
-        current_major = PREPARED_SCHEMA_VERSION.split(".", 1)[0]
-        prepared_major = self.manifest.schema_version.split(".", 1)[0]
-        if current_major != prepared_major:
-            raise PreparedLibraryCompatibilityError(
-                "Prepared mapping runtime schema major version is incompatible with this package.",
-                context={
-                    "prepared_schema_version": self.manifest.schema_version,
-                    "expected_schema_version": PREPARED_SCHEMA_VERSION,
-                },
-            )
+    def _validate_required_runtime_files(self) -> None:
+        for file_name in _required_runtime_file_names(self.manifest):
+            if not (self.prepared_root / file_name).exists():
+                raise PreparedLibraryValidationError(
+                    "Prepared mapping runtime is missing a required file.",
+                    context={"prepared_root": str(self.prepared_root), "file_name": file_name},
+                )
+
+    def _validate_checksums(self, *, verify_checksums: bool) -> None:
+        checksums_payload = _load_checksums_payload(self.prepared_root)
+        recorded_checksums = checksums_payload["files"]
+        manifest_path = self.prepared_root / "manifest.json"
+        expected_checksums = _expected_runtime_checksums(self.manifest, manifest_path)
+        for file_name, expected_checksum in expected_checksums.items():
+            if recorded_checksums.get(file_name) != expected_checksum:
+                raise PreparedLibraryValidationError(
+                    "checksums.json does not match the manifest checksum records.",
+                    context={"prepared_root": str(self.prepared_root), "file_name": file_name},
+                )
+            if verify_checksums:
+                actual_checksum = _sha256_file(self.prepared_root / file_name)
+                if actual_checksum != expected_checksum:
+                    raise PreparedLibraryValidationError(
+                        "Prepared mapping runtime checksum verification failed.",
+                        context={"prepared_root": str(self.prepared_root), "file_name": file_name},
+                    )
 
     def _load_prepared_sensor_schemas(self) -> dict[str, SensorSRFSchema]:
         sensor_schema_path = self.prepared_root / "sensor_schema.json"
-        if not sensor_schema_path.exists():
-            raise PreparedLibraryValidationError(
-                "Prepared mapping runtime is missing sensor_schema.json.",
-                context={"prepared_root": str(self.prepared_root)},
-            )
         schemas: dict[str, SensorSRFSchema] = {}
         for payload in _load_sensor_payloads(sensor_schema_path):
             schema = SensorSRFSchema.from_dict(payload)
+            if schema.sensor_id in schemas:
+                raise PreparedLibraryValidationError(
+                    "sensor_schema.json contains duplicate sensor_id values.",
+                    context={"prepared_root": str(self.prepared_root), "sensor_id": schema.sensor_id},
+                )
             schemas[schema.sensor_id] = schema
         return schemas
 
     def _load_row_ids(self) -> tuple[str, ...]:
         metadata_path = self.prepared_root / "mapping_metadata.parquet"
-        if not metadata_path.exists():
-            raise PreparedLibraryValidationError(
-                "Prepared mapping runtime is missing mapping_metadata.parquet.",
-                context={"prepared_root": str(self.prepared_root)},
-            )
         connection = duckdb.connect()
         try:
-            rows = connection.execute(
-                """
-                SELECT row_index, source_id, spectrum_id
-                FROM read_parquet(?)
-                ORDER BY row_index
-                """,
-                [str(metadata_path)],
-            ).fetchall()
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT row_index, source_id, spectrum_id, sample_name
+                    FROM read_parquet(?)
+                    ORDER BY row_index
+                    """,
+                    [str(metadata_path)],
+                ).fetchall()
+            except duckdb.Error as exc:
+                raise PreparedLibraryValidationError(
+                    "mapping_metadata.parquet is missing required row-alignment columns.",
+                    context={"prepared_root": str(self.prepared_root), "path": str(metadata_path)},
+                ) from exc
         finally:
             connection.close()
 
@@ -776,7 +978,27 @@ class SpectralMapper:
                 "Prepared mapping metadata row count does not match manifest row_count.",
                 context={"metadata_rows": len(rows), "manifest_row_count": self.manifest.row_count},
             )
-        return tuple(f"{row[1]}:{row[2]}" for row in rows)
+        try:
+            row_indices = [int(row[0]) for row in rows]
+        except (TypeError, ValueError) as exc:
+            raise PreparedLibraryValidationError(
+                "mapping_metadata.parquet row_index values must be integers.",
+                context={"prepared_root": str(self.prepared_root), "path": str(metadata_path)},
+            ) from exc
+        expected_row_indices = list(range(self.manifest.row_count))
+        if row_indices != expected_row_indices:
+            raise PreparedLibraryValidationError(
+                "mapping_metadata.parquet row_index values must be unique and contiguous from 0 to row_count - 1.",
+                context={"prepared_root": str(self.prepared_root), "path": str(metadata_path)},
+            )
+
+        row_ids = tuple(f"{row[1]}:{row[2]}:{row[3]}" for row in rows)
+        if len(set(row_ids)) != len(row_ids):
+            raise PreparedLibraryValidationError(
+                "mapping_metadata.parquet contains duplicate prepared row identities.",
+                context={"prepared_root": str(self.prepared_root), "path": str(metadata_path)},
+            )
+        return row_ids
 
     def _validate_prepared_layout(self) -> None:
         for segment in SEGMENTS:
@@ -818,22 +1040,27 @@ class SpectralMapper:
 
     def _load_hyperspectral(self, segment: str) -> np.ndarray:
         if segment not in self._hyperspectral_cache:
-            self._hyperspectral_cache[segment] = np.load(
-                self.prepared_root / SEGMENT_FILE_NAMES[segment],
-                mmap_mode="r",
-            )
+            path = self.prepared_root / SEGMENT_FILE_NAMES[segment]
+            try:
+                self._hyperspectral_cache[segment] = np.load(path, mmap_mode="r")
+            except (OSError, ValueError) as exc:
+                raise PreparedLibraryValidationError(
+                    "Prepared hyperspectral array could not be loaded.",
+                    context={"prepared_root": str(self.prepared_root), "path": str(path), "segment": segment},
+                ) from exc
         return self._hyperspectral_cache[segment]
 
     def _load_source_matrix(self, source_sensor: str, segment: str) -> np.ndarray:
         key = (source_sensor, segment)
         if key not in self._source_matrix_cache:
             path = self.prepared_root / f"source_{source_sensor}_{segment}.npy"
-            if not path.exists():
+            try:
+                self._source_matrix_cache[key] = np.load(path, mmap_mode="r")
+            except (OSError, ValueError) as exc:
                 raise PreparedLibraryValidationError(
-                    "Prepared mapping runtime is missing a source retrieval matrix.",
+                    "Prepared source retrieval matrix could not be loaded.",
                     context={"path": str(path), "source_sensor": source_sensor, "segment": segment},
-                )
-            self._source_matrix_cache[key] = np.load(path, mmap_mode="r")
+                ) from exc
         return self._source_matrix_cache[key]
 
     def _band_response(self, sensor_id: str, band: SensorBandDefinition, *, segment_only: bool) -> np.ndarray:

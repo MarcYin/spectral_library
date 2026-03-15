@@ -10,6 +10,7 @@ from .mapping import (
     SpectralMapper,
     benchmark_mapping,
     prepare_mapping_library,
+    validate_prepared_library,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "SpectralMapper",
     "benchmark_mapping",
     "prepare_mapping_library",
+    "validate_prepared_library",
 ]

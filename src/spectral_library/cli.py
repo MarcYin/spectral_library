@@ -12,7 +12,14 @@ from .build_db import assemble_catalog
 from .coverage_filter import filter_normalized_by_coverage
 from .fetchers import get_fetcher
 from .manifest import filter_sources, load_manifest, manifest_sha256, split_csv_arg
-from .mapping import SUPPORTED_OUTPUT_MODES, SpectralLibraryError, SpectralMapper, benchmark_mapping, prepare_mapping_library
+from .mapping import (
+    SUPPORTED_OUTPUT_MODES,
+    SpectralLibraryError,
+    SpectralMapper,
+    benchmark_mapping,
+    prepare_mapping_library,
+    validate_prepared_library,
+)
 from .normalize import normalize_sources
 from .quality_plots import generate_quality_plots
 from .siac import build_siac_library
@@ -389,9 +396,22 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate_prepared_library(args: argparse.Namespace) -> int:
+    manifest = validate_prepared_library(
+        Path(args.prepared_root),
+        verify_checksums=not args.no_verify_checksums,
+    )
+    payload = manifest.to_dict()
+    payload["prepared_root"] = str(Path(args.prepared_root))
+    payload["checksums_verified"] = not args.no_verify_checksums
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spectral-library")
     parser.add_argument("--json-errors", action="store_true", help="Emit machine-readable JSON errors.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     prepare_mapping_parser = subparsers.add_parser(
@@ -431,6 +451,14 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--random-seed", type=int, default=0)
     benchmark_parser.add_argument("--report", required=True)
     benchmark_parser.set_defaults(func=cmd_benchmark_mapping)
+
+    validate_parser = subparsers.add_parser(
+        "validate-prepared-library",
+        help="Validate a prepared mapping runtime root and optionally verify its checksums.",
+    )
+    validate_parser.add_argument("--prepared-root", required=True)
+    validate_parser.add_argument("--no-verify-checksums", action="store_true")
+    validate_parser.set_defaults(func=cmd_validate_prepared_library)
 
     plan_parser = subparsers.add_parser("plan-matrix", help="Create a GitHub Actions matrix from the manifest.")
     plan_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))

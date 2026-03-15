@@ -24,6 +24,7 @@ from spectral_library import (
     benchmark_mapping,
     cli,
     prepare_mapping_library,
+    validate_prepared_library,
 )
 from spectral_library.mapping import PreparedLibraryBuildError, SensorSchemaError
 
@@ -232,8 +233,8 @@ class MappingWorkflowTests(unittest.TestCase):
             )
 
             self.assertTrue(np.allclose(result.target_reflectance, np.array([0.80, 0.20])))
-            self.assertEqual(result.neighbor_ids_by_segment["vnir"], ("fixture_source:vnir_high",))
-            self.assertEqual(result.neighbor_ids_by_segment["swir"], ("fixture_source:vnir_high",))
+            self.assertEqual(result.neighbor_ids_by_segment["vnir"], ("fixture_source:vnir_high:vnir_high",))
+            self.assertEqual(result.neighbor_ids_by_segment["swir"], ("fixture_source:vnir_high:vnir_high",))
 
     def test_full_spectrum_output_blends_vnir_and_swir_segment_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -247,8 +248,8 @@ class MappingWorkflowTests(unittest.TestCase):
                 k=1,
             )
 
-            self.assertEqual(result.neighbor_ids_by_segment["vnir"], ("fixture_source:vnir_high",))
-            self.assertEqual(result.neighbor_ids_by_segment["swir"], ("fixture_source:swir_high",))
+            self.assertEqual(result.neighbor_ids_by_segment["vnir"], ("fixture_source:vnir_high:vnir_high",))
+            self.assertEqual(result.neighbor_ids_by_segment["swir"], ("fixture_source:swir_high:swir_high",))
             self.assertIsNotNone(result.reconstructed_full_spectrum)
             full_spectrum = result.reconstructed_full_spectrum
             assert full_spectrum is not None
@@ -378,8 +379,14 @@ class MappingWorkflowTests(unittest.TestCase):
                 candidate_row_indices=[0, 1],
             )
 
-            self.assertEqual(set(result.neighbor_ids_by_segment["vnir"]), {"fixture_source:base", "fixture_source:vnir_high"})
-            self.assertEqual(set(result.neighbor_ids_by_segment["swir"]), {"fixture_source:base", "fixture_source:vnir_high"})
+            self.assertEqual(
+                set(result.neighbor_ids_by_segment["vnir"]),
+                {"fixture_source:base:base", "fixture_source:vnir_high:vnir_high"},
+            )
+            self.assertEqual(
+                set(result.neighbor_ids_by_segment["swir"]),
+                {"fixture_source:base:base", "fixture_source:vnir_high:vnir_high"},
+            )
 
     def test_map_reflectance_validates_shapes_and_required_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -826,6 +833,11 @@ class MappingValidationTests(unittest.TestCase):
                 SpectralMapper(fixture["prepared_root"])
 
             fixture, _ = _prepare_fixture(root)
+            os.remove(fixture["prepared_root"] / "checksums.json")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(root)
             mapper = SpectralMapper(fixture["prepared_root"])
             with self.assertRaises(SensorSchemaError):
                 mapper.get_sensor_schema("missing")
@@ -839,6 +851,71 @@ class MappingValidationTests(unittest.TestCase):
 
             fixture, _ = _prepare_fixture(Path(tmpdir))
             np.save(fixture["prepared_root"] / "source_sensor_a_swir.npy", np.zeros((4, 2), dtype=np.float32))
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+    def test_validate_prepared_library_verifies_checksums_and_can_skip_them(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, manifest = _prepare_fixture(Path(tmpdir))
+
+            validated = validate_prepared_library(fixture["prepared_root"])
+            self.assertEqual(validated.to_dict(), manifest.to_dict())
+
+            checksums_path = fixture["prepared_root"] / "checksums.json"
+            checksums_payload = json.loads(checksums_path.read_text(encoding="utf-8"))
+            checksums_payload["files"]["manifest.json"] = "0" * 64
+            checksums_path.write_text(json.dumps(checksums_payload, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryValidationError):
+                validate_prepared_library(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            os.remove(fixture["prepared_root"] / "checksums.json")
+            with self.assertRaises(PreparedLibraryValidationError):
+                validate_prepared_library(fixture["prepared_root"], verify_checksums=False)
+
+    def test_prepared_runtime_rejects_malformed_manifest_and_row_index_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+
+            manifest_path = fixture["prepared_root"] / "manifest.json"
+            manifest_path.write_text("{not json}\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            del manifest_payload["row_count"]
+            manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            connection = duckdb.connect()
+            try:
+                relation = connection.execute(
+                    "SELECT * FROM read_parquet(?) ORDER BY row_index",
+                    [str(fixture["prepared_root"] / "mapping_metadata.parquet")],
+                )
+                rows = relation.fetchall()
+                columns = [description[0] for description in relation.description]
+            finally:
+                connection.close()
+            row_dicts = [dict(zip(columns, row)) for row in rows]
+            row_dicts[1]["row_index"] = 3
+            temp_csv = fixture["prepared_root"] / "mapping_metadata_broken.csv"
+            _write_csv(temp_csv, columns, row_dicts)
+            connection = duckdb.connect()
+            try:
+                connection.execute(
+                    f"""
+                    COPY (
+                      SELECT * FROM read_csv_auto('{str(temp_csv).replace("'", "''")}', HEADER=TRUE, SAMPLE_SIZE=-1)
+                    ) TO '{str(fixture["prepared_root"] / "mapping_metadata.parquet").replace("'", "''")}' (FORMAT PARQUET)
+                    """
+                )
+            finally:
+                connection.close()
+            temp_csv.unlink()
             with self.assertRaises(PreparedLibraryValidationError):
                 SpectralMapper(fixture["prepared_root"])
 
@@ -1183,6 +1260,33 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(payload["command"], "map-reflectance")
             self.assertEqual(payload["error_code"], "invalid_input_csv")
 
+    def test_validate_prepared_library_command_and_version_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, manifest = _prepare_fixture(root)
+            input_path = root / "invalid_query.csv"
+            output_path = root / "invalid_output.csv"
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "validate-prepared-library",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["row_count"], manifest.row_count)
+            self.assertTrue(payload["checksums_verified"])
+
+            version_stdout = io.StringIO()
+            with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
+                cli.main_with_args(["--version"])
+            self.assertEqual(version_exit.exception.code, 0)
+            self.assertIn("0.1.0", version_stdout.getvalue())
+
             _write_csv(
                 input_path,
                 ["band_id", "reflectance"],
@@ -1221,6 +1325,23 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(payload["message"], "Input reflectance CSV values must be numeric.")
             self.assertEqual(payload["context"]["band_id"], "blue")
             self.assertEqual(payload["context"]["path"], str(input_path))
+
+            os.remove(fixture["prepared_root"] / "checksums.json")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                skip_exit = cli.main_with_args(
+                    [
+                        "--json-errors",
+                        "validate-prepared-library",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--no-verify-checksums",
+                    ]
+                )
+            self.assertEqual(skip_exit, 2)
+            payload = json.loads(stderr.getvalue())
+            self.assertEqual(payload["command"], "validate-prepared-library")
+            self.assertEqual(payload["error_code"], "invalid_prepared_library")
 
 
 if __name__ == "__main__":
