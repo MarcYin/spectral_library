@@ -46,11 +46,14 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/MarcYin/spectral_library"
 Repository = "https://github.com/MarcYin/spectral_library"
-Documentation = "https://github.com/MarcYin/spectral_library/blob/main/docs/index.md"
+Documentation = "https://marcyin.github.io/spectral_library/"
 Issues = "https://github.com/MarcYin/spectral_library/issues"
 Changelog = "https://github.com/MarcYin/spectral_library/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+docs = [
+  "markdown>=3.7",
+]
 internal-build = [
   "matplotlib>=3.8.0",
   "netCDF4>=1.7.0",
@@ -63,6 +66,7 @@ accel = [
 dev = [
   "build>=1.2.2",
   "coverage>=7.6.0",
+  "markdown>=3.7",
   "matplotlib>=3.8.0",
   "netCDF4>=1.7.0",
   "openpyxl>=3.1.0",

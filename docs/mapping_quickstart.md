@@ -16,6 +16,9 @@ Additional public docs:
 - [`python_api_reference.md`](python_api_reference.md)
 - [`prepared_runtime_contract.md`](prepared_runtime_contract.md)
 
+Published site:
+[https://marcyin.github.io/spectral_library/](https://marcyin.github.io/spectral_library/)
+
 ## Package Identity
 
 - distribution: `spectral-library`
@@ -41,6 +44,8 @@ Optional dependency groups:
 
 - `.[internal-build]`
   for the retained normalization, plotting, and SIAC-build commands
+- `.[docs]`
+  for the static documentation site and GitHub Pages build path
 - `.[accel]`
   for optional Rust-backed smoothing utilities used by internal scripts
 - `.[dev]`

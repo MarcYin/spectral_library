@@ -16,6 +16,8 @@ The public names are:
 
 ## Start Here
 
+- published docs site:
+  [https://marcyin.github.io/spectral_library/](https://marcyin.github.io/spectral_library/)
 - public docs index:
   [`docs/index.md`](docs/index.md)
 - public install and usage guide:
@@ -45,6 +47,8 @@ python3 -m pip install .
 
 Supported Python versions in CI are `3.9`, `3.10`, `3.11`, and `3.12`.
 
+The same documentation set is published to GitHub Pages from this repository.
+
 For the retained internal normalization and QA commands, install the optional
 internal-build dependencies:
 
@@ -54,6 +58,12 @@ python3 -m pip install ".[internal-build]"
 
 This extra is also required if you want to regenerate the bundled official
 sensor example assets with `scripts/build_official_mapping_examples.py`.
+
+For the static documentation site and GitHub Pages build path, install:
+
+```bash
+python3 -m pip install ".[docs]"
+```
 
 ## Minimal Example
 

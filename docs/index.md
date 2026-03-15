@@ -5,6 +5,9 @@
 - the public mapping package and CLI you can install and use directly
 - the retained internal build pipeline that creates SIAC-style source data
 
+Published site:
+[https://marcyin.github.io/spectral_library/](https://marcyin.github.io/spectral_library/)
+
 Start with these public pages:
 
 - [Mapping Quickstart](mapping_quickstart.md)
