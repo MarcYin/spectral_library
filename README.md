@@ -19,31 +19,31 @@ exclusions, and QA review outputs.
 The current canonical build kept in `build/` is:
 
 - pipeline root:
-  - `build/real_siac_pipeline_e2e_cached_20260312`
+  - `build/real_siac_pipeline_full_raw`
 - final SIAC package:
-  - `build/siac_spectral_library_e2e_cached_20260312_no_ghisacasia_no_understory_no_santa37`
+  - `build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37`
 
 Current package summary from the latest end-to-end run:
 
-- total exported spectra: `72,816`
-- labeled spectra: `69,686`
-- unlabeled spectra: `3,130`
-- package source rows: `26`
-- exported spectral sources: `24`
+- total exported spectra: `77,125`
+- labeled spectra: `71,193`
+- unlabeled spectra: `5,932`
+- package source rows: `28`
+- exported spectral sources: `26`
 - excluded source IDs: `ghisacasia_v001`, `understory_estonia_czech`
 - excluded individual spectra: `37` `santa_barbara_urban_reflectance` spectra
-- suspicious spectra after the final review pass: `177` (`0.24%`)
+- suspicious spectra after the final review pass: `187` (`0.24%`)
 
 Latest top-level QA outputs:
 
 - normalized QA:
-  - `build/real_siac_pipeline_e2e_cached_20260312/11_source_artifacts_fixed/plots/quality`
+  - `build/real_siac_pipeline_full_raw/11_source_artifacts_fixed/plots/quality`
 - landcover QA:
-  - `build/real_siac_pipeline_e2e_cached_20260312/11_source_artifacts_fixed/landcover_analysis/plots`
+  - `build/real_siac_pipeline_full_raw/11_source_artifacts_fixed/landcover_analysis/plots`
 - SIAC package plots:
-  - `build/siac_spectral_library_e2e_cached_20260312_no_ghisacasia_no_understory_no_santa37/plots`
+  - `build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37/plots`
 - suspicious-spectrum review:
-  - `build/siac_spectral_library_e2e_cached_20260312_no_ghisacasia_no_understory_no_santa37/full_review`
+  - `build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37/full_review`
 
 ## Repository Structure
 
@@ -71,9 +71,9 @@ The canonical end-to-end driver is:
 ```bash
 MPLCONFIGDIR=build/.mplconfig PYTHONPATH=src python3 scripts/build_real_siac_library_from_scratch.py \
   --fallback-raw-roots build/local_sources_full_raw,build/local_sources_vegetation_all,build/local_sources \
-  --raw-sources-root build/local_sources_full_raw_e2e_cached_20260312 \
-  --pipeline-root build/real_siac_pipeline_e2e_cached_20260312 \
-  --output-root build/siac_spectral_library_e2e_cached_20260312_no_ghisacasia_no_understory_no_santa37
+  --raw-sources-root build/local_sources_full_raw \
+  --pipeline-root build/real_siac_pipeline_full_raw \
+  --output-root build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37
 ```
 
 The driver executes the following stages.
@@ -92,8 +92,9 @@ Behavior:
 - only falls back to live fetch when a source is not already cached
 - records one fetch log per source under `00_fetch_logs/`
 
-In the current retained build, the full raw source set was satisfied from cache
-plus manual bundles, so the end-to-end rerun did not need fresh downloads.
+In the current retained build, the full raw source set was rebuilt from scratch
+using the public source inventory plus the manual bundles in
+`build/mannual_download_data`.
 
 ### 1. Raw Normalization
 
@@ -383,7 +384,7 @@ Command:
 
 Output:
 
-- `build/siac_spectral_library_e2e_cached_20260312_no_ghisacasia_no_understory_no_santa37`
+- `build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37`
 
 Export behavior:
 
@@ -414,7 +415,7 @@ What it does:
 
 Latest review result:
 
-- suspicious spectra: `177`
+- suspicious spectra: `187`
 - suspicious fraction: `0.24%`
 
 Current largest remaining sources:
@@ -623,6 +624,9 @@ Cached rebuild from existing source trees:
 MPLCONFIGDIR=build/.mplconfig PYTHONPATH=src python3 scripts/build_real_siac_library.py
 ```
 
+By default this cache-first wrapper writes to separate `_cached` roots under
+`build/`, so it does not overwrite the retained canonical full-raw build.
+
 ## Current Limitations
 
 - `ghisacasia_v001` is still excluded from exported spectra because the source
@@ -643,7 +647,9 @@ MPLCONFIGDIR=build/.mplconfig PYTHONPATH=src python3 scripts/build_real_siac_lib
   - `manifests/siac_excluded_spectra.csv`
 - scale verification log:
   - `docs/scale_factor_verification.md`
+- suspicious-source review:
+  - `docs/remaining_suspicious_source_review_20260315.md`
 - latest pipeline summary:
-  - `build/real_siac_pipeline_e2e_cached_20260312/build_summary.json`
+  - `build/real_siac_pipeline_full_raw/build_summary.json`
 - latest package summary:
-  - `build/siac_spectral_library_e2e_cached_20260312_no_ghisacasia_no_understory_no_santa37/build_summary.json`
+  - `build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37/build_summary.json`
