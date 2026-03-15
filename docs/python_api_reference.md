@@ -1,6 +1,8 @@
 # Python API Reference
 
-The stable public imports are:
+This page documents the stable public imports for `spectral-library`.
+
+## Stable Imports
 
 ```python
 from spectral_library import (
@@ -19,9 +21,11 @@ from spectral_library import (
 )
 ```
 
-## `prepare_mapping_library(...)`
+## Public Workflow
 
-Build the prepared runtime used by retrieval-based mapping.
+### 1. `prepare_mapping_library(...)`
+
+Build the prepared runtime used by mapping.
 
 ```python
 from pathlib import Path
@@ -42,10 +46,10 @@ Returns:
 
 Raises:
 
-- `PreparedLibraryBuildError` through the base type `SpectralLibraryError`
-- `SensorSchemaError` through the base type `SpectralLibraryError`
+- `PreparedLibraryBuildError` via `SpectralLibraryError`
+- `SensorSchemaError` via `SpectralLibraryError`
 
-## `validate_prepared_library(...)`
+### 2. `validate_prepared_library(...)`
 
 Validate the runtime layout and optionally verify checksums.
 
@@ -69,7 +73,7 @@ Raises:
 - `PreparedLibraryValidationError`
 - `PreparedLibraryCompatibilityError`
 
-## `SpectralMapper`
+### 3. `SpectralMapper`
 
 Load a prepared runtime and serve mapping requests.
 
@@ -83,14 +87,13 @@ mapper = SpectralMapper(Path("build/official_mapping_runtime"), verify_checksums
 
 Public methods:
 
-- `get_sensor_schema(sensor_id)`
-  return the loaded `SensorSRFSchema`
-- `map_reflectance(...)`
-  map one query to a target sensor or spectral output
-- `map_reflectance_batch(...)`
-  map many samples from one call
+| Method | Purpose |
+| --- | --- |
+| `get_sensor_schema(sensor_id)` | return the loaded `SensorSRFSchema` |
+| `map_reflectance(...)` | map one source observation |
+| `map_reflectance_batch(...)` | map many observations in one call |
 
-### Single-Sample Example
+## Single-Sample Example
 
 ```python
 from pathlib import Path
@@ -114,7 +117,7 @@ result = mapper.map_reflectance(
 )
 ```
 
-### Batch Example
+## Batch Example
 
 ```python
 from spectral_library import SpectralMapper
@@ -138,19 +141,19 @@ batch = mapper.map_reflectance_batch(
 
 ### `MappingResult`
 
-Fields:
-
-- `target_reflectance`
-- `target_band_ids`
-- `reconstructed_vnir`
-- `reconstructed_swir`
-- `reconstructed_full_spectrum`
-- `reconstructed_wavelength_nm`
-- `neighbor_ids_by_segment`
-- `neighbor_distances_by_segment`
-- `segment_outputs`
-- `segment_valid_band_counts`
-- `diagnostics`
+| Field | Meaning |
+| --- | --- |
+| `target_reflectance` | mapped target reflectance values, when applicable |
+| `target_band_ids` | target band ids paired with `target_reflectance` |
+| `reconstructed_vnir` | reconstructed `400-1000 nm` segment |
+| `reconstructed_swir` | reconstructed `900-2500 nm` segment |
+| `reconstructed_full_spectrum` | overlap-blended `400-2500 nm` reconstruction |
+| `reconstructed_wavelength_nm` | wavelength grid for the requested spectral output |
+| `neighbor_ids_by_segment` | retrieved library row ids for each segment |
+| `neighbor_distances_by_segment` | neighbor distances for each segment |
+| `segment_outputs` | successful segment reconstructions |
+| `segment_valid_band_counts` | number of valid source bands used per segment |
+| `diagnostics` | stable diagnostic payload |
 
 Helper:
 
@@ -158,18 +161,18 @@ Helper:
 
 ### `BatchMappingResult`
 
-Fields:
-
-- `sample_ids`
-- `results`
+| Field | Meaning |
+| --- | --- |
+| `sample_ids` | output sample ids in order |
+| `results` | per-sample `MappingResult` values |
 
 Helper:
 
 - `to_summary_dict()`
 
-## Public Errors
+## Public Error Types
 
-All public mapping failures inherit from `SpectralLibraryError`.
+All public errors inherit from `SpectralLibraryError`.
 
 Common subclasses:
 
@@ -177,18 +180,31 @@ Common subclasses:
 - `PreparedLibraryCompatibilityError`
 - `MappingInputError`
 
-Each public error includes:
+Every public error carries:
 
 - `code`
 - `message`
 - `context`
 - `to_dict(...)`
 
-## Sensor Schemas
+## Public Data Models
 
-`SensorSRFSchema` is the public in-memory representation of a sensor JSON
-document. The JSON contract and prepared-runtime layout are documented in
+### `PreparedLibraryManifest`
+
+Represents the stable prepared-runtime manifest returned by:
+
+- `prepare_mapping_library(...)`
+- `validate_prepared_library(...)`
+
+### `SensorSRFSchema`
+
+Represents one public sensor JSON schema in memory.
+
+The runtime format itself is documented in
 [Prepared Runtime Contract](prepared_runtime_contract.md).
 
-For the mathematical model behind retrieval, target-sensor simulation, and the
-benchmark baseline, see [Mathematical Foundations](theory.md).
+## Related Docs
+
+- [Getting Started](mapping_quickstart.md)
+- [Mathematical Foundations](theory.md)
+- [Prepared Runtime Contract](prepared_runtime_contract.md)

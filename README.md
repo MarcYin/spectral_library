@@ -18,26 +18,22 @@ The public names are:
 
 - published docs site:
   [https://marcyin.github.io/spectral_library/](https://marcyin.github.io/spectral_library/)
-- public docs index:
+- overview:
   [`docs/index.md`](docs/index.md)
-- public install and usage guide:
+- getting started:
   [`docs/mapping_quickstart.md`](docs/mapping_quickstart.md)
-- mathematical foundations and retrieval theory:
+- mathematical foundations:
   [`docs/theory.md`](docs/theory.md)
-- official MODIS, Sentinel-2A, Landsat 8, and Landsat 9 examples:
+- official sensor examples:
   [`docs/official_sensor_examples.md`](docs/official_sensor_examples.md)
 - public CLI reference:
   [`docs/cli_reference.md`](docs/cli_reference.md)
 - public Python API reference:
   [`docs/python_api_reference.md`](docs/python_api_reference.md)
-- prepared-runtime layout and compatibility contract:
+- prepared-runtime contract:
   [`docs/prepared_runtime_contract.md`](docs/prepared_runtime_contract.md)
-- internal SIAC build-system reference:
-  [`docs/internal_build_pipeline.md`](docs/internal_build_pipeline.md)
-- mapping design:
-  [`docs/spectral_mapping_usage_plan.md`](docs/spectral_mapping_usage_plan.md)
-- production release design:
-  [`docs/production_release_standard_plan.md`](docs/production_release_standard_plan.md)
+- internal maintainer docs:
+  [`docs/internal_overview.md`](docs/internal_overview.md)
 
 ## Install
 

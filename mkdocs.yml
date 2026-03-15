@@ -6,6 +6,7 @@ repo_name: MarcYin/spectral_library
 docs_dir: docs
 site_dir: build/docs-site
 use_directory_urls: false
+edit_uri: edit/main/docs/
 exclude_docs: |
   github-actions.md
   metadata_only_actual_links.md
@@ -17,34 +18,73 @@ exclude_docs: |
 hooks:
   - docs/mkdocs_hooks.py
 theme:
-  name: mkdocs
+  name: material
+  language: en
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue grey
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
 nav:
   - Home: index.md
-  - Quickstart: mapping_quickstart.md
-  - Mathematical Foundations: theory.md
-  - Official Sensor Examples: official_sensor_examples.md
-  - Example Bundle: example_bundle.md
-  - CLI Reference: cli_reference.md
-  - Python API: python_api_reference.md
-  - Prepared Runtime Contract: prepared_runtime_contract.md
-  - Release Notes:
-      - "0.1.0": releases/0.1.0.md
-  - Release Process: release_process.md
-  - Internal Build Pipeline: internal_build_pipeline.md
-  - Mapping Design: spectral_mapping_usage_plan.md
-  - Release Design: production_release_standard_plan.md
+  - Start Here:
+      - Getting Started: mapping_quickstart.md
+      - Official Sensor Examples: official_sensor_examples.md
+  - Concepts:
+      - Mathematical Foundations: theory.md
+      - Prepared Runtime Contract: prepared_runtime_contract.md
+      - Example Bundle: example_bundle.md
+  - Reference:
+      - CLI Reference: cli_reference.md
+      - Python API Reference: python_api_reference.md
+  - Project:
+      - Release Process: release_process.md
+      - Release Notes:
+          - "0.1.0": releases/0.1.0.md
+  - Internal:
+      - Internal Docs Overview: internal_overview.md
+      - Internal Build Pipeline: internal_build_pipeline.md
+      - Mapping Design: spectral_mapping_usage_plan.md
+      - Release Design: production_release_standard_plan.md
 plugins:
   - search
 markdown_extensions:
   - admonition
   - attr_list
+  - md_in_html
+  - def_list
   - tables
   - toc:
       permalink: true
   - pymdownx.arithmatex:
       generic: true
+  - pymdownx.details
+  - pymdownx.highlight
   - pymdownx.inlinehilite
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
 extra_css:
   - assets/mkdocs-extra.css
 extra_javascript:

@@ -9,12 +9,10 @@ from mkdocs.structure.files import File, Files
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STATIC_GLOB_ROOTS = (
     ("examples/official_mapping", {"README.md"}),
-    ("tests", set()),
 )
 COPIED_FILES = ("LICENSE", "CNAME")
 LINK_REWRITES = {
     "../examples/": "examples/",
-    "../tests/": "tests/",
 }
 
 

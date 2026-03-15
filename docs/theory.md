@@ -1,14 +1,41 @@
 # Mathematical Foundations
 
-This page explains the theory behind the public mapping package and the equations
-implemented by `spectral-library`.
+This page explains the model that `spectral-library` implements.
 
-It complements:
+It answers four questions:
 
-- [Mapping Quickstart](mapping_quickstart.md) for usage
+1. how sensor bands are simulated from hyperspectral library rows
+2. how nearest neighbors are retrieved segment by segment
+3. how target-sensor reflectance is produced from the retrieved spectra
+4. how the regression benchmark is defined
+
+Use this page together with:
+
+- [Getting Started](mapping_quickstart.md) for the workflow
 - [Python API Reference](python_api_reference.md) for the public objects
-- [Prepared Runtime Contract](prepared_runtime_contract.md) for the on-disk
-  runtime standard
+- [Prepared Runtime Contract](prepared_runtime_contract.md) for the runtime
+  standard
+
+## Model Summary
+
+<div class="grid cards" markdown>
+
+- __Forward model__
+
+  Every sensor band is simulated by integrating hyperspectral reflectance
+  against a normalized resampled SRF.
+
+- __Retrieval model__
+
+  Each segment uses nearest-neighbor search in source-sensor feature space,
+  then averages the matched hyperspectral rows.
+
+- __Output model__
+
+  Retrieved hyperspectral segments are either convolved to a target sensor or
+  blended into a full `400-2500 nm` spectrum.
+
+</div>
 
 ## Problem Setup
 

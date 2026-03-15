@@ -12,7 +12,7 @@ This page summarizes the production release workflow for `spectral-library`.
 2. Add a new entry to
    [`CHANGELOG.md`](https://github.com/MarcYin/spectral_library/blob/main/CHANGELOG.md).
 3. Add release notes under `docs/releases/<version>.md`.
-4. Run the full test suite and package build:
+4. Run:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
@@ -29,7 +29,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-## What CI Does
+## CI Responsibilities
 
 The tagged release workflow:
 
@@ -37,7 +37,7 @@ The tagged release workflow:
 2. installs each artifact in a clean environment
 3. runs public CLI smoke tests
 4. publishes to PyPI through trusted publishing
-5. creates the GitHub release with the matching release-notes document
+5. creates the GitHub release using the matching release-notes file
 
 The docs site is published separately from pushes to `main` through the GitHub
 Pages workflow.

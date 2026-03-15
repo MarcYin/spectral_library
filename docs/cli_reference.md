@@ -6,14 +6,14 @@ The public CLI entry point is:
 spectral-library
 ```
 
-Global options:
+## Global Options
 
-- `--version`
-  print the package version and exit
-- `--json-errors`
-  emit machine-readable JSON errors to `stderr`
+| Option | Meaning |
+| --- | --- |
+| `--version` | print the package version and exit |
+| `--json-errors` | emit machine-readable JSON errors to `stderr` |
 
-## Public Mapping Commands
+## Public Commands
 
 ### `prepare-mapping-library`
 
@@ -21,21 +21,18 @@ Build the prepared runtime used by mapping.
 
 Required arguments:
 
-- `--siac-root`
-  path to the SIAC-style export with
-  `tabular/siac_spectra_metadata.csv` and
-  `tabular/siac_normalized_spectra.csv`
-- `--srf-root`
-  directory containing one or more sensor SRF JSON files
-- `--source-sensor`
-  one or more source sensor ids to precompute as source-query arrays
-- `--output-root`
-  output directory for the prepared runtime
+| Flag | Meaning |
+| --- | --- |
+| `--siac-root` | SIAC-style export root containing metadata and normalized spectra tables |
+| `--srf-root` | directory containing sensor SRF JSON files |
+| `--source-sensor` | one or more source sensor ids to precompute |
+| `--output-root` | output directory for the prepared runtime |
 
 Optional arguments:
 
-- `--dtype`
-  floating-point array dtype, default `float32`
+| Flag | Meaning |
+| --- | --- |
+| `--dtype` | floating-point output dtype, default `float32` |
 
 ### `validate-prepared-library`
 
@@ -43,55 +40,57 @@ Validate a prepared runtime root.
 
 Required arguments:
 
-- `--prepared-root`
-  runtime root created by `prepare-mapping-library`
+| Flag | Meaning |
+| --- | --- |
+| `--prepared-root` | runtime root created by `prepare-mapping-library` |
 
 Optional arguments:
 
-- `--no-verify-checksums`
-  skip file hashing while still requiring the full runtime layout
+| Flag | Meaning |
+| --- | --- |
+| `--no-verify-checksums` | skip file hashing while still requiring the full runtime layout |
 
 ### `map-reflectance`
 
-Map one sample from a source sensor either to a target sensor or to a
-reconstructed spectral output.
+Map one sample from a source sensor to a target sensor or to a reconstructed
+spectral output.
 
 Required arguments:
 
-- `--prepared-root`
-- `--source-sensor`
-- `--input`
-- `--output-mode`
-  one of `target_sensor`, `vnir_spectrum`, `swir_spectrum`,
-  `full_spectrum`
-- `--output`
+| Flag | Meaning |
+| --- | --- |
+| `--prepared-root` | prepared runtime root |
+| `--source-sensor` | source sensor id |
+| `--input` | single-sample CSV |
+| `--output-mode` | one of `target_sensor`, `vnir_spectrum`, `swir_spectrum`, `full_spectrum` |
+| `--output` | output CSV path |
 
-Conditionally required arguments:
+Conditionally required:
 
-- `--target-sensor`
-  required when `--output-mode target_sensor`
+| Flag | Meaning |
+| --- | --- |
+| `--target-sensor` | required when `--output-mode target_sensor` |
 
 Optional arguments:
 
-- `--k`
-  number of nearest neighbors, default `10`
-- `--min-valid-bands`
-  minimum valid source bands per segment, default `1`
+| Flag | Meaning |
+| --- | --- |
+| `--k` | nearest-neighbor count, default `10` |
+| `--min-valid-bands` | minimum valid source bands per segment, default `1` |
 
-Input CSV layouts:
+Single-sample input layouts:
 
-- long format:
-  `band_id,reflectance[,valid]`
-- wide format:
-  one row, one source-band column per band id, optional `valid_<band_id>`
-  columns
+| Layout | Columns |
+| --- | --- |
+| long | `band_id,reflectance[,valid]` |
+| wide | one row with one source-band column per band id, optional `valid_<band_id>` columns |
 
-Output CSV layouts:
+Single-sample outputs:
 
-- `target_sensor`:
-  `band_id,segment,reflectance`
-- spectral outputs:
-  `wavelength_nm,reflectance`
+| Output mode | CSV shape |
+| --- | --- |
+| `target_sensor` | `band_id,segment,reflectance` |
+| spectral outputs | `wavelength_nm,reflectance` |
 
 ### `map-reflectance-batch`
 
@@ -99,74 +98,89 @@ Map many samples from one CSV.
 
 Required arguments:
 
-- `--prepared-root`
-- `--source-sensor`
-- `--input`
-- `--output-mode`
-- `--output`
+| Flag | Meaning |
+| --- | --- |
+| `--prepared-root` | prepared runtime root |
+| `--source-sensor` | source sensor id |
+| `--input` | batch CSV |
+| `--output-mode` | public output mode |
+| `--output` | output CSV path |
 
-Conditionally required arguments:
+Conditionally required:
 
-- `--target-sensor`
-  required when `--output-mode target_sensor`
+| Flag | Meaning |
+| --- | --- |
+| `--target-sensor` | required when `--output-mode target_sensor` |
 
 Optional arguments:
 
-- `--k`
-- `--min-valid-bands`
-- `--diagnostics-output`
-  JSON summary output for the batch
+| Flag | Meaning |
+| --- | --- |
+| `--k` | nearest-neighbor count |
+| `--min-valid-bands` | minimum valid source bands per segment |
+| `--diagnostics-output` | optional JSON summary path |
 
-Input CSV layouts:
+Batch input layouts:
 
-- long format:
-  `sample_id,band_id,reflectance[,valid]`
-- wide format:
-  `sample_id` plus one column per source band and optional
-  `valid_<band_id>` columns
+| Layout | Columns |
+| --- | --- |
+| long | `sample_id,band_id,reflectance[,valid]` |
+| wide | `sample_id` plus one column per source band and optional `valid_<band_id>` columns |
 
-Output CSV layouts:
+Batch outputs:
 
-- `target_sensor`:
-  one row per sample with `sample_id` plus one column per target band
-- spectral outputs:
-  one row per sample with `sample_id` plus `nm_<wavelength>` columns
+| Output mode | CSV shape |
+| --- | --- |
+| `target_sensor` | one row per sample, `sample_id` plus one column per target band |
+| spectral outputs | one row per sample, `sample_id` plus `nm_<wavelength>` columns |
 
 ### `benchmark-mapping`
 
-Benchmark retrieval-based mapping against the regression baseline.
+Benchmark retrieval against the regression baseline.
 
 Required arguments:
 
-- `--prepared-root`
-- `--source-sensor`
-- `--target-sensor`
-- `--report`
+| Flag | Meaning |
+| --- | --- |
+| `--prepared-root` | prepared runtime root |
+| `--source-sensor` | source sensor id |
+| `--target-sensor` | target sensor id |
+| `--report` | JSON output path |
 
 Optional arguments:
 
-- `--k`
-  default `10`
-- `--test-fraction`
-  default `0.2`
-- `--random-seed`
-  default `0`
+| Flag | Meaning |
+| --- | --- |
+| `--k` | nearest-neighbor count, default `10` |
+| `--test-fraction` | held-out fraction, default `0.2` |
+| `--random-seed` | split seed, default `0` |
 
-## Public Input Contracts
+## Error Behavior
 
-Sensor JSON files are documented in [Mapping Quickstart](mapping_quickstart.md)
-and [Prepared Runtime Contract](prepared_runtime_contract.md).
+Public commands provide:
 
-The mathematical model behind the CLI outputs is documented in
-[Mathematical Foundations](theory.md).
+- non-zero exit codes on failure
+- human-readable errors by default
+- JSON error envelopes with `--json-errors`
 
-Example inputs and outputs using official MODIS, Sentinel-2A, Landsat 8, and
-Landsat 9 responses are in
-[Official Sensor Examples](official_sensor_examples.md).
+The error envelope includes:
 
-## Retained Internal Commands
+- `error_code`
+- `message`
+- `command`
+- `context`
 
-The CLI still ships internal data-acquisition and SIAC-build commands:
+## Related Docs
+
+- [Getting Started](mapping_quickstart.md)
+- [Mathematical Foundations](theory.md)
+- [Prepared Runtime Contract](prepared_runtime_contract.md)
+- [Official Sensor Examples](official_sensor_examples.md)
+
+## Internal Commands
+
+The CLI still ships retained internal commands for source acquisition and SIAC
+build workflows:
 
 - `plan-matrix`
 - `fetch-source`
@@ -178,6 +192,5 @@ The CLI still ships internal data-acquisition and SIAC-build commands:
 - `filter-coverage`
 - `build-siac-library`
 
-Those commands are documented in
-[Internal Build Pipeline](internal_build_pipeline.md) because they are not part
-of the stable public mapping contract.
+Those are documented in [Internal Build Pipeline](internal_build_pipeline.md)
+because they are not part of the stable public mapping contract.

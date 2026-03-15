@@ -1,122 +1,204 @@
-body {
+:root {
+  --sl-hero-start: #17324d;
+  --sl-hero-end: #0f2434;
+  --sl-accent: #d78f2c;
+  --sl-card-bg: rgba(255, 255, 255, 0.78);
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #17324d;
+  --md-accent-fg-color: #c67c1e;
+  --md-typeset-a-color: #0f609b;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0f2434;
+  --md-accent-fg-color: #f0b04d;
+}
+
+.md-main {
   background:
-    radial-gradient(circle at top left, rgba(226, 186, 89, 0.16), transparent 22%),
-    linear-gradient(180deg, #f5f1e6 0%, #ffffff 34%);
+    radial-gradient(circle at top left, rgba(215, 143, 44, 0.16), transparent 28%),
+    linear-gradient(180deg, rgba(245, 241, 230, 0.55) 0%, rgba(255, 255, 255, 0) 32%);
 }
 
-.container {
-  max-width: 1240px;
+[data-md-color-scheme="slate"] .md-main {
+  background:
+    radial-gradient(circle at top left, rgba(240, 176, 77, 0.09), transparent 24%),
+    linear-gradient(180deg, rgba(23, 50, 77, 0.28) 0%, rgba(15, 36, 52, 0) 30%);
 }
 
-.navbar {
-  background: linear-gradient(90deg, #18344a 0%, #0f2434 100%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+  letter-spacing: -0.02em;
+  line-height: 1.12;
 }
 
-.navbar-brand,
-.navbar-nav > li > a {
-  text-shadow: none;
-}
-
-.navbar-brand {
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.bs-sidebar.affix,
-.bs-sidebar.affix-bottom,
-.bs-sidebar.affix-top {
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid #d7e1ea;
-  border-radius: 0.75rem;
-  box-shadow: 0 12px 28px rgba(16, 42, 67, 0.08);
-  padding: 0.75rem 0;
-}
-
-.bs-sidebar .nav > li > a {
-  color: #17324d;
-}
-
-.bs-sidebar .nav > .active > a,
-.bs-sidebar .nav > .active:hover > a,
-.bs-sidebar .nav > .active:focus > a {
-  border-left-color: #c2712d;
-  color: #102a43;
-  font-weight: 600;
-}
-
-h1,
-h2,
-h3,
-h4 {
-  color: #102a43;
-  line-height: 1.15;
-}
-
-h1 {
-  font-size: clamp(2.2rem, 4vw, 3.2rem);
+.md-typeset h1 {
+  font-size: clamp(2.3rem, 4vw, 3.5rem);
   margin-bottom: 1rem;
 }
 
-h2 {
-  border-top: 1px solid #d9e2ec;
-  margin-top: 2.3rem;
-  padding-top: 1.2rem;
+.md-typeset h2 {
+  border-top: 1px solid rgba(23, 50, 77, 0.12);
+  margin-top: 2.6rem;
+  padding-top: 1.25rem;
 }
 
-p,
-li {
+[data-md-color-scheme="slate"] .md-typeset h2 {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.md-typeset p,
+.md-typeset li {
   line-height: 1.72;
 }
 
-a {
-  color: #0f609b;
-}
-
-code,
-pre {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-}
-
-code {
-  background: #eef4f8;
-  border-radius: 0.25rem;
-  color: #0b395b;
-  padding: 0.12rem 0.3rem;
-}
-
-pre {
-  background: #102a43;
-  border: 0;
-  border-radius: 0.75rem;
-  box-shadow: 0 16px 32px rgba(16, 42, 67, 0.12);
-  color: #f0f4f8;
-  padding: 1rem 1.1rem;
-}
-
-pre code {
-  background: transparent;
-  color: inherit;
-  padding: 0;
-}
-
-table {
-  background: #ffffff;
-  border-radius: 0.75rem;
+.md-typeset table:not([class]) {
+  border-radius: 0.9rem;
+  box-shadow: 0 16px 30px rgba(16, 42, 67, 0.08);
   overflow: hidden;
-  box-shadow: 0 10px 24px rgba(16, 42, 67, 0.06);
 }
 
-img {
-  border-radius: 0.75rem;
-  box-shadow: 0 16px 30px rgba(16, 42, 67, 0.14);
+.md-typeset pre > code {
+  border-radius: 0.8rem;
 }
 
-.arithmatex {
-  overflow-x: auto;
+.md-typeset img {
+  border-radius: 0.85rem;
+  box-shadow: 0 18px 34px rgba(16, 42, 67, 0.16);
 }
 
-.arithmatex + p,
-.arithmatex + ul {
-  margin-top: 1rem;
+.hero {
+  background: linear-gradient(135deg, var(--sl-hero-start) 0%, var(--sl-hero-end) 100%);
+  border-radius: 1.2rem;
+  color: #f7f2e8;
+  margin: 0 0 2rem;
+  overflow: hidden;
+  padding: 2rem 2rem 1.75rem;
+  position: relative;
+}
+
+.hero::after {
+  background: radial-gradient(circle at top right, rgba(244, 189, 95, 0.28), transparent 30%);
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hero__eyebrow {
+  color: #f2d19d;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  margin: 0 0 0.6rem;
+  text-transform: uppercase;
+}
+
+.hero__title {
+  color: #fffaf1;
+  font-size: clamp(2.3rem, 5vw, 3.8rem);
+  line-height: 1;
+  margin: 0 0 0.9rem;
+}
+
+.hero__lead {
+  font-size: 1.08rem;
+  margin: 0 0 1.25rem;
+  max-width: 46rem;
+}
+
+.hero .md-button {
+  border-radius: 999px;
+  margin-right: 0.6rem;
+  margin-top: 0.3rem;
+}
+
+.hero .md-button--primary {
+  background: #f0b04d;
+  border-color: #f0b04d;
+  color: #132a3d;
+}
+
+.grid.cards > ul > li,
+.md-typeset .grid.cards > ul > li {
+  backdrop-filter: blur(10px);
+  background: var(--sl-card-bg);
+  border: 1px solid rgba(23, 50, 77, 0.08);
+  border-radius: 1rem;
+  box-shadow: 0 14px 30px rgba(16, 42, 67, 0.08);
+}
+
+[data-md-color-scheme="slate"] .grid.cards > ul > li,
+[data-md-color-scheme="slate"] .md-typeset .grid.cards > ul > li {
+  background: rgba(30, 42, 56, 0.8);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.section-intro {
+  color: var(--md-default-fg-color--light);
+  font-size: 1.02rem;
+  max-width: 50rem;
+}
+
+.page-links {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin: 1.5rem 0 2rem;
+}
+
+.page-links a {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(23, 50, 77, 0.08);
+  border-radius: 0.9rem;
+  color: inherit;
+  display: block;
+  padding: 1rem 1.1rem;
+  text-decoration: none;
+}
+
+[data-md-color-scheme="slate"] .page-links a {
+  background: rgba(30, 42, 56, 0.8);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.page-links a strong {
+  color: var(--md-typeset-a-color);
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.fact-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 1.5rem 0 2rem;
+}
+
+.fact-grid > div {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(23, 50, 77, 0.08);
+  border-radius: 0.95rem;
+  padding: 1rem;
+}
+
+[data-md-color-scheme="slate"] .fact-grid > div {
+  background: rgba(30, 42, 56, 0.8);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.fact-grid strong {
+  color: var(--md-typeset-a-color);
+  display: block;
+  font-size: 1.2rem;
+  margin-bottom: 0.2rem;
 }

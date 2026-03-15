@@ -1,47 +1,54 @@
 # Prepared Runtime Contract
 
-The prepared runtime is the stable on-disk contract used by
+The prepared runtime is the stable on-disk artifact consumed by
 `SpectralMapper`.
+
+If you are producing, validating, or distributing prepared runtimes, this page
+defines the public contract.
 
 ## Required Root Layout
 
 Every prepared runtime root must contain:
 
-- `manifest.json`
-- `mapping_metadata.parquet`
-- `hyperspectral_vnir.npy`
-- `hyperspectral_swir.npy`
-- `sensor_schema.json`
-- `checksums.json`
-- `source_<sensor_id>_vnir.npy`
-- `source_<sensor_id>_swir.npy`
+| File | Purpose |
+| --- | --- |
+| `manifest.json` | top-level runtime metadata |
+| `mapping_metadata.parquet` | row-aligned metadata table |
+| `hyperspectral_vnir.npy` | hyperspectral `400-1000 nm` array |
+| `hyperspectral_swir.npy` | hyperspectral `900-2500 nm` array |
+| `sensor_schema.json` | packaged sensor schema document |
+| `checksums.json` | SHA-256 digest manifest |
+| `source_<sensor_id>_vnir.npy` | precomputed source-sensor VNIR matrix |
+| `source_<sensor_id>_swir.npy` | precomputed source-sensor SWIR matrix |
 
-The source-array files are required for every source sensor listed in the
-manifest.
+The `source_<sensor_id>_*` files are required for every source sensor listed in
+the manifest.
 
-## Manifest Fields
+## `manifest.json`
 
-`manifest.json` contains:
+Required fields:
 
-- `schema_version`
-- `package_version`
-- `source_siac_root`
-- `source_siac_build_id`
-- `prepared_at`
-- `source_sensors`
-- `supported_output_modes`
-- `row_count`
-- `vnir_wavelength_range_nm`
-- `swir_wavelength_range_nm`
-- `array_dtype`
-- `file_checksums`
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | prepared-runtime schema version |
+| `package_version` | package version that created the runtime |
+| `source_siac_root` | original SIAC root path |
+| `source_siac_build_id` | deterministic source-build digest |
+| `prepared_at` | timestamp for runtime creation |
+| `source_sensors` | source sensor ids precomputed in the runtime |
+| `supported_output_modes` | public output modes available to mapping |
+| `row_count` | number of row-aligned spectra |
+| `vnir_wavelength_range_nm` | VNIR segment bounds |
+| `swir_wavelength_range_nm` | SWIR segment bounds |
+| `array_dtype` | stored array dtype |
+| `file_checksums` | files included in checksum validation |
 
 Additive optional fields are allowed in minor releases. Renames, removals, or
 required-field changes require a major version change.
 
-## Sensor Schema File
+## `sensor_schema.json`
 
-`sensor_schema.json` contains:
+The packaged sensor schema document contains:
 
 - `schema_version`
 - `canonical_wavelength_grid`
@@ -65,18 +72,20 @@ Each sensor entry follows the public `SensorSRFSchema` JSON shape:
 
 Band rules:
 
-- `band_id` must be unique within one sensor
-- `segment` must be `vnir` or `swir`
-- `wavelength_nm` must be strictly increasing
-- `rsr` must contain at least one positive value
-- positive support must remain inside the declared segment bounds
+| Rule | Meaning |
+| --- | --- |
+| unique `band_id` | no duplicates within one sensor |
+| valid `segment` | must be `vnir` or `swir` |
+| increasing `wavelength_nm` | wavelengths must be strictly increasing |
+| positive SRF support | at least one positive SRF sample |
+| segment-bounded support | positive support must stay within the declared segment |
 
 Segment bounds:
 
 - `vnir`: `400-1000 nm`
 - `swir`: `900-2500 nm`
 
-## Checksums
+## `checksums.json`
 
 `checksums.json` is part of the required runtime layout.
 
@@ -85,9 +94,14 @@ It stores:
 - `schema_version`
 - `files`
 
-`files` maps file names to SHA-256 digests. Validation can skip hashing with
-`verify_checksums=False` or `--no-verify-checksums`, but the checksum document
-itself is still required.
+`files` maps file names to SHA-256 digests.
+
+Validation can skip hashing with:
+
+- `verify_checksums=False`
+- `spectral-library validate-prepared-library --no-verify-checksums`
+
+But the checksum document itself is still required.
 
 ## Validation Rules
 
@@ -96,12 +110,12 @@ itself is still required.
 
 - manifest readability and schema compatibility
 - presence of all required root files
-- prepared-array readability
+- array readability
 - sensor-schema readability
 - row-index continuity and uniqueness in `mapping_metadata.parquet`
 - checksum integrity when hashing is enabled
 
-## Output Modes
+## Stable Output Modes
 
 Prepared runtimes currently support these stable output modes:
 
@@ -120,5 +134,12 @@ The stable `1.x` public contract covers:
 - the prepared-runtime manifest schema version
 - the stable output-mode names
 
-Repository contract tests covering these guarantees are in
-[`tests/test_release_contracts.py`](../tests/test_release_contracts.py).
+Repository contract coverage for this standard lives in the public repo at:
+
+- [tests/test_release_contracts.py](https://github.com/MarcYin/spectral_library/blob/main/tests/test_release_contracts.py)
+
+## Related Docs
+
+- [Getting Started](mapping_quickstart.md)
+- [Python API Reference](python_api_reference.md)
+- [Mathematical Foundations](theory.md)

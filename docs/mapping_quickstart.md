@@ -1,61 +1,49 @@
-# Mapping Quickstart
+# Getting Started
 
-This guide covers the public package surface for `spectral-library`:
+This guide is the fastest path from installation to a working mapping run.
 
-- preparing a mapping runtime,
-- validating the prepared runtime,
-- mapping one sample,
-- mapping batches of samples,
-- using the Python API.
+It covers the public package workflow:
 
-Additional public docs:
+1. install the package
+2. prepare a runtime
+3. validate the runtime
+4. map one sample
+5. map a batch
+6. call the Python API directly
 
-- [`index.md`](index.md)
-- [`theory.md`](theory.md)
-- [`official_sensor_examples.md`](official_sensor_examples.md)
-- [`cli_reference.md`](cli_reference.md)
-- [`python_api_reference.md`](python_api_reference.md)
-- [`prepared_runtime_contract.md`](prepared_runtime_contract.md)
+## Before You Start
 
-Published site:
-[https://marcyin.github.io/spectral_library/](https://marcyin.github.io/spectral_library/)
+You need:
 
-## Package Identity
+- Python `3.9` or newer
+- a SIAC-style spectral export with:
+  - `tabular/siac_spectra_metadata.csv`
+  - `tabular/siac_normalized_spectra.csv`
+- one or more sensor SRF JSON definitions
 
-- distribution: `spectral-library`
-- import package: `spectral_library`
-- CLI: `spectral-library`
+If you want a complete repository example, use the official-source bundle
+documented in [Official Sensor Examples](official_sensor_examples.md).
 
-## Install
+## Step 1: Install
 
-Install from this repository in a Python `3.9+` environment:
+Install the package from the repository:
 
 ```bash
 python3 -m pip install .
 ```
 
-Supported Python versions in CI are:
+Optional extras:
 
-- `3.9`
-- `3.10`
-- `3.11`
-- `3.12`
+| Extra | Use when |
+| --- | --- |
+| `.[docs]` | building the MkDocs site or GitHub Pages output |
+| `.[internal-build]` | regenerating official examples or running retained SIAC-build tooling |
+| `.[accel]` | using optional Rust-backed smoothing utilities |
+| `.[dev]` | running tests and release tooling |
 
-Optional dependency groups:
+## Step 2: Prepare A Runtime
 
-- `.[internal-build]`
-  for the retained normalization, plotting, and SIAC-build commands
-- `.[docs]`
-  for the MkDocs site and GitHub Pages build path
-- `.[accel]`
-  for optional Rust-backed smoothing utilities used by internal scripts
-- `.[dev]`
-  for test and release tooling
-
-## Prepare A Mapping Runtime
-
-Build a prepared runtime from a SIAC export plus one or more sensor SRF JSON
-definitions:
+Build the prepared runtime once for the source sensors you care about.
 
 ```bash
 spectral-library prepare-mapping-library \
@@ -65,16 +53,26 @@ spectral-library prepare-mapping-library \
   --output-root build/mapping_runtime
 ```
 
-## Validate The Prepared Runtime
+What this does:
 
-Validate the runtime root and verify checksums:
+- loads and validates the sensor SRF definitions
+- precomputes source-sensor simulation matrices
+- writes row-aligned hyperspectral arrays and metadata
+- emits `manifest.json`, `sensor_schema.json`, and `checksums.json`
+
+The runtime format is documented in
+[Prepared Runtime Contract](prepared_runtime_contract.md).
+
+## Step 3: Validate The Runtime
+
+Run validation before serving mappings or publishing a prepared runtime:
 
 ```bash
 spectral-library validate-prepared-library \
   --prepared-root build/mapping_runtime
 ```
 
-Skip file hashing but still require the full runtime layout:
+Skip checksum hashing, but still require the full runtime layout:
 
 ```bash
 spectral-library validate-prepared-library \
@@ -82,9 +80,9 @@ spectral-library validate-prepared-library \
   --no-verify-checksums
 ```
 
-## Map One Sample
+## Step 4: Map A Single Sample
 
-Map source reflectance to a target sensor:
+Map one source observation to a target sensor:
 
 ```bash
 spectral-library map-reflectance \
@@ -109,14 +107,16 @@ spectral-library map-reflectance \
   --output path/to/reconstructed_spectrum.csv
 ```
 
-Single-sample input CSV formats:
+Single-sample input layouts:
 
-- long format with `band_id,reflectance[,valid]`
-- wide format with one row and one column per source band id
+| Layout | Columns |
+| --- | --- |
+| long | `band_id,reflectance[,valid]` |
+| wide | one row with one column per source band, optional `valid_<band_id>` columns |
 
-## Map A Batch
+## Step 5: Map A Batch
 
-Map multiple samples from one CSV:
+Map many samples from one CSV:
 
 ```bash
 spectral-library map-reflectance-batch \
@@ -130,35 +130,24 @@ spectral-library map-reflectance-batch \
   --diagnostics-output path/to/mapped_batch_diagnostics.json
 ```
 
-Batch input CSV formats:
+Batch input layouts:
 
-- long format with `sample_id,band_id,reflectance[,valid]`
-- wide format with one row per sample, optional `sample_id`, one column per
-  source band id, and optional `valid_<band_id>` columns
+| Layout | Columns |
+| --- | --- |
+| long | `sample_id,band_id,reflectance[,valid]` |
+| wide | one row per sample, optional `sample_id`, one column per source band, optional `valid_<band_id>` columns |
 
-Batch output CSV formats:
+Batch outputs:
 
-- `target_sensor`: one row per sample, `sample_id` plus one column per target
-  band
-- `vnir_spectrum`, `swir_spectrum`, `full_spectrum`: one row per sample,
-  `sample_id` plus `nm_<wavelength>` columns
+| Output mode | Shape |
+| --- | --- |
+| `target_sensor` | `sample_id` plus one column per target band |
+| `vnir_spectrum` / `swir_spectrum` / `full_spectrum` | `sample_id` plus `nm_<wavelength>` columns |
 
-If a target-sensor batch sample only maps one segment successfully, unmapped
-target-band columns are left blank for that sample.
+If only one target segment maps successfully, the missing target-band cells are
+left blank in the batch CSV.
 
-## Benchmark Mapping
-
-Benchmark the retrieval workflow against the regression baseline:
-
-```bash
-spectral-library benchmark-mapping \
-  --prepared-root build/mapping_runtime \
-  --source-sensor SENSOR_A \
-  --target-sensor SENSOR_B \
-  --report path/to/benchmark.json
-```
-
-## Python API
+## Step 6: Use The Python API
 
 ```python
 from pathlib import Path
@@ -176,29 +165,20 @@ validate_prepared_library(Path("build/mapping_runtime"))
 
 mapper = SpectralMapper(Path("build/mapping_runtime"))
 
-single_result = mapper.map_reflectance(
+result = mapper.map_reflectance(
     source_sensor="SENSOR_A",
     reflectance={"blue": 0.12, "nir": 0.34, "swir1": 0.27},
     output_mode="full_spectrum",
     k=10,
 )
-
-batch_result = mapper.map_reflectance_batch(
-    source_sensor="SENSOR_A",
-    sample_ids=["sample_a", "sample_b"],
-    reflectance_rows=[
-        {"blue": 0.12, "nir": 0.34, "swir1": 0.27},
-        {"blue": 0.18, "nir": 0.29, "swir1": 0.22},
-    ],
-    output_mode="target_sensor",
-    target_sensor="SENSOR_B",
-    k=10,
-)
 ```
 
-## Sensor SRF JSON
+For the stable imports and result objects, see
+[Python API Reference](python_api_reference.md).
 
-Each sensor JSON file in `--srf-root` should define one sensor:
+## Sensor SRF JSON Shape
+
+Each file in `--srf-root` defines one sensor:
 
 ```json
 {
@@ -219,29 +199,13 @@ Band support must stay inside its declared segment:
 - `vnir`: `400-1000 nm`
 - `swir`: `900-2500 nm`
 
-## Prepared Runtime Layout
+## Where To Go Next
 
-The prepared runtime root is the public on-disk contract used by mapping:
-
-- `manifest.json`
-- `mapping_metadata.parquet`
-- `hyperspectral_vnir.npy`
-- `hyperspectral_swir.npy`
-- `source_<sensor_id>_vnir.npy`
-- `source_<sensor_id>_swir.npy`
-- `sensor_schema.json`
-- `checksums.json`
-
-## Compatibility Policy
-
-The stable `1.x` public contract covers:
-
-- the Python API entry points documented in this guide
-- the CLI commands documented in this guide
-- the prepared-runtime schema version and required root layout
-- the stable output modes:
-  `target_sensor`, `vnir_spectrum`, `swir_spectrum`, `full_spectrum`
-
-Additive optional parameters and additive manifest fields are allowed in minor
-releases. Renames, removals, required-parameter additions, or schema-breaking
-prepared-runtime changes require a major version.
+- [Official Sensor Examples](official_sensor_examples.md)
+  for end-to-end MODIS, Sentinel-2A, Landsat 8, and Landsat 9 runs
+- [Mathematical Foundations](theory.md)
+  for the retrieval equations behind the outputs
+- [CLI Reference](cli_reference.md)
+  for every public command and flag
+- [Prepared Runtime Contract](prepared_runtime_contract.md)
+  for the stable on-disk runtime rules
