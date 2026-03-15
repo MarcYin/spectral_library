@@ -417,6 +417,43 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertTrue(np.allclose(result.results[0].target_reflectance, np.array([0.80, 0.20])))
             self.assertTrue(np.allclose(result.results[1].target_reflectance, np.array([0.10, 0.90])))
 
+    def test_map_reflectance_batch_matches_single_sample_results_for_array_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+
+            mapper = SpectralMapper(fixture["prepared_root"])
+            batch = mapper.map_reflectance_batch(
+                source_sensor="sensor_a",
+                reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                sample_ids=["alpha", "beta"],
+                output_mode="full_spectrum",
+                k=1,
+            )
+            single_alpha = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance=[0.80, 0.20],
+                valid_mask=[True, True],
+                output_mode="full_spectrum",
+                k=1,
+            )
+            single_beta = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance=[0.10, 0.90],
+                valid_mask=[True, True],
+                output_mode="full_spectrum",
+                k=1,
+            )
+
+            self.assertEqual(batch.results[0].neighbor_ids_by_segment, single_alpha.neighbor_ids_by_segment)
+            self.assertEqual(batch.results[1].neighbor_ids_by_segment, single_beta.neighbor_ids_by_segment)
+            assert batch.results[0].reconstructed_full_spectrum is not None
+            assert batch.results[1].reconstructed_full_spectrum is not None
+            assert single_alpha.reconstructed_full_spectrum is not None
+            assert single_beta.reconstructed_full_spectrum is not None
+            self.assertTrue(np.allclose(batch.results[0].reconstructed_full_spectrum, single_alpha.reconstructed_full_spectrum))
+            self.assertTrue(np.allclose(batch.results[1].reconstructed_full_spectrum, single_beta.reconstructed_full_spectrum))
+
     def test_map_reflectance_batch_validates_shapes_and_attaches_sample_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))

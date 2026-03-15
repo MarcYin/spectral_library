@@ -1,0 +1,110 @@
+name: Package Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: PYTHONPATH=src python -m unittest discover -s tests
+
+  build-and-smoke:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python scripts/build_distribution.py
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-dist
+          path: dist/*
+
+      - name: Create smoke fixture
+        run: python scripts/create_mapping_smoke_fixture.py --output-root "${RUNNER_TEMP}/mapping-smoke"
+
+      - name: Install wheel in clean environment
+        run: |
+          python -m venv .venv-smoke
+          . .venv-smoke/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install "$(find dist -name '*.whl' -print -quit)"
+
+      - name: Run package smoke checks
+        run: |
+          . .venv-smoke/bin/activate
+          python - <<'PY'
+          import spectral_library
+
+          expected = {
+              "BatchMappingResult",
+              "MappingResult",
+              "PreparedLibraryManifest",
+              "SensorSRFSchema",
+              "SpectralMapper",
+              "benchmark_mapping",
+              "prepare_mapping_library",
+              "validate_prepared_library",
+          }
+          missing = sorted(expected - set(spectral_library.__all__))
+          if missing:
+              raise SystemExit(f"Missing public exports: {missing}")
+          PY
+          spectral-library --help >/dev/null
+          spectral-library prepare-mapping-library \
+            --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
+            --srf-root "${RUNNER_TEMP}/mapping-smoke/srfs" \
+            --source-sensor sensor_a \
+            --output-root "${RUNNER_TEMP}/mapping-smoke/prepared"
+          spectral-library validate-prepared-library \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared"
+          spectral-library map-reflectance \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
+            --source-sensor sensor_a \
+            --target-sensor sensor_b \
+            --input "${RUNNER_TEMP}/mapping-smoke/query_single.csv" \
+            --output-mode target_sensor \
+            --k 1 \
+            --output "${RUNNER_TEMP}/mapping-smoke/mapped.csv"
+          spectral-library map-reflectance-batch \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
+            --source-sensor sensor_a \
+            --target-sensor sensor_b \
+            --input "${RUNNER_TEMP}/mapping-smoke/query_batch.csv" \
+            --output-mode target_sensor \
+            --k 1 \
+            --output "${RUNNER_TEMP}/mapping-smoke/mapped_batch.csv" \
+            --diagnostics-output "${RUNNER_TEMP}/mapping-smoke/mapped_batch_diagnostics.json"

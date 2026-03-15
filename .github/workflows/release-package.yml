@@ -1,0 +1,157 @@
+name: Release Package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python scripts/build_distribution.py
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: dist/*
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact-type: ["wheel", "sdist"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Create smoke fixture
+        run: python scripts/create_mapping_smoke_fixture.py --output-root "${RUNNER_TEMP}/mapping-smoke"
+
+      - name: Install artifact in clean environment
+        run: |
+          python -m venv .venv-release-smoke
+          . .venv-release-smoke/bin/activate
+          python -m pip install --upgrade pip
+          if [ "${{ matrix.artifact-type }}" = "wheel" ]; then
+            python -m pip install "$(find dist -name '*.whl' -print -quit)"
+          else
+            python -m pip install "$(find dist -name '*.tar.gz' -print -quit)"
+          fi
+
+      - name: Run release smoke workflow
+        run: |
+          . .venv-release-smoke/bin/activate
+          python - <<'PY'
+          import spectral_library
+          import spectral_library as sl
+
+          expected = {
+              "BatchMappingResult",
+              "MappingResult",
+              "PreparedLibraryManifest",
+              "SensorSRFSchema",
+              "SpectralMapper",
+              "benchmark_mapping",
+              "prepare_mapping_library",
+              "validate_prepared_library",
+          }
+          missing = sorted(expected - set(sl.__all__))
+          if missing:
+              raise SystemExit(f"Missing public exports: {missing}")
+          PY
+          spectral-library --help >/dev/null
+          spectral-library prepare-mapping-library \
+            --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
+            --srf-root "${RUNNER_TEMP}/mapping-smoke/srfs" \
+            --source-sensor sensor_a \
+            --output-root "${RUNNER_TEMP}/mapping-smoke/prepared"
+          spectral-library validate-prepared-library \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared"
+          spectral-library map-reflectance \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
+            --source-sensor sensor_a \
+            --target-sensor sensor_b \
+            --input "${RUNNER_TEMP}/mapping-smoke/query_single.csv" \
+            --output-mode target_sensor \
+            --k 1 \
+            --output "${RUNNER_TEMP}/mapping-smoke/mapped.csv"
+          spectral-library map-reflectance-batch \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
+            --source-sensor sensor_a \
+            --target-sensor sensor_b \
+            --input "${RUNNER_TEMP}/mapping-smoke/query_batch.csv" \
+            --output-mode target_sensor \
+            --k 1 \
+            --output "${RUNNER_TEMP}/mapping-smoke/mapped_batch.csv" \
+            --diagnostics-output "${RUNNER_TEMP}/mapping-smoke/mapped_batch_diagnostics.json"
+
+  publish-pypi:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: smoke
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment:
+      name: pypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-github-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Resolve release notes path
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes_path="docs/releases/${version}.md"
+          test -f "${notes_path}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "notes_path=${notes_path}" >> "${GITHUB_OUTPUT}"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.notes.outputs.notes_path }}
+          files: dist/*
+          name: spectral-library ${{ steps.notes.outputs.version }}

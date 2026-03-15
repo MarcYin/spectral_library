@@ -459,6 +459,14 @@ def _ensure_supported_output_mode(output_mode: str) -> None:
         )
 
 
+def _validate_mapping_request(output_mode: str, *, k: int, min_valid_bands: int) -> None:
+    _ensure_supported_output_mode(output_mode)
+    if k < 1:
+        raise MappingInputError("k must be at least 1.", context={"k": k})
+    if min_valid_bands < 1:
+        raise MappingInputError("min_valid_bands must be at least 1.", context={"min_valid_bands": min_valid_bands})
+
+
 def _normalized_source_sensors(source_sensors: Sequence[str]) -> list[str]:
     normalized: list[str] = []
     for sensor_id in source_sensors:
@@ -492,6 +500,23 @@ def _sha256_paths(paths: Sequence[Path]) -> str:
                     break
                 digest.update(chunk)
     return digest.hexdigest()
+
+
+def _ordered_neighbor_rows(
+    distances: np.ndarray,
+    candidate_row_indices: np.ndarray,
+    *,
+    k: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    neighbor_count = min(int(k), int(candidate_row_indices.size))
+    if neighbor_count <= 0:
+        raise MappingInputError("k must be at least 1.", context={"k": k})
+    if neighbor_count == candidate_row_indices.size:
+        local_top = np.arange(candidate_row_indices.size)
+    else:
+        local_top = np.argpartition(distances, neighbor_count - 1)[:neighbor_count]
+    ordered_local = local_top[np.lexsort((candidate_row_indices[local_top], distances[local_top]))]
+    return candidate_row_indices[ordered_local], np.asarray(distances[ordered_local], dtype=np.float64)
 
 
 def _resample_band_response(band: SensorBandDefinition, *, segment_only: bool) -> np.ndarray:
@@ -1195,17 +1220,11 @@ class SpectralMapper:
         candidate_matrix = np.asarray(source_matrix[candidate_row_indices][:, valid_indices], dtype=np.float64)
         query_vector = query_values[valid_indices]
         distances = np.sqrt(np.mean((candidate_matrix - query_vector) ** 2, axis=1))
-
-        neighbor_count = min(int(k), int(candidate_row_indices.size))
-        if neighbor_count <= 0:
-            raise MappingInputError("k must be at least 1.", context={"k": k})
-        if neighbor_count == candidate_row_indices.size:
-            local_top = np.arange(candidate_row_indices.size)
-        else:
-            local_top = np.argpartition(distances, neighbor_count - 1)[:neighbor_count]
-        ordered_local = local_top[np.lexsort((candidate_row_indices[local_top], distances[local_top]))]
-        neighbor_indices = candidate_row_indices[ordered_local]
-        neighbor_distances = distances[ordered_local]
+        neighbor_indices, neighbor_distances = _ordered_neighbor_rows(
+            distances,
+            candidate_row_indices,
+            k=k,
+        )
 
         reconstructed = np.asarray(
             np.mean(self._load_hyperspectral(segment)[neighbor_indices], axis=0),
@@ -1220,6 +1239,88 @@ class SpectralMapper:
             neighbor_indices=neighbor_indices,
             neighbor_ids=tuple(self._row_ids[index] for index in neighbor_indices),
             neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
+        )
+
+    def _retrieve_segment_batch(
+        self,
+        *,
+        source_sensor: str,
+        segment: str,
+        query_values: np.ndarray,
+        valid_mask: np.ndarray,
+        k: int,
+        min_valid_bands: int,
+        candidate_row_indices: np.ndarray,
+    ) -> tuple[_SegmentRetrieval, ...]:
+        source_schema = self.get_sensor_schema(source_sensor)
+        query_band_ids = tuple(band.band_id for band in source_schema.bands_for_segment(segment))
+        source_matrix = self._load_source_matrix(source_sensor, segment)
+        if source_matrix.shape[1] != len(query_band_ids):
+            raise PreparedLibraryValidationError(
+                "Prepared source matrix width does not match the source sensor schema.",
+                context={"source_sensor": source_sensor, "segment": segment},
+            )
+
+        retrievals: list[_SegmentRetrieval | None] = [None] * int(query_values.shape[0])
+        candidate_matrix = np.asarray(source_matrix[candidate_row_indices], dtype=np.float64)
+        segment_hyperspectral = np.asarray(self._load_hyperspectral(segment), dtype=np.float64)
+        valid_patterns, inverse = np.unique(valid_mask, axis=0, return_inverse=True)
+
+        for pattern_index, pattern in enumerate(valid_patterns):
+            batch_indices = np.flatnonzero(inverse == pattern_index)
+            valid_band_count = int(pattern.sum())
+            if valid_band_count < min_valid_bands:
+                for batch_index in batch_indices:
+                    retrievals[int(batch_index)] = _SegmentRetrieval(
+                        segment=segment,
+                        valid_band_count=valid_band_count,
+                        query_band_ids=query_band_ids,
+                        success=False,
+                        reason="insufficient_valid_bands",
+                    )
+                continue
+
+            valid_indices = np.flatnonzero(pattern)
+            candidate_valid = candidate_matrix[:, valid_indices]
+            query_group = np.asarray(query_values[batch_indices][:, valid_indices], dtype=np.float64)
+            candidate_sq = np.sum(candidate_valid**2, axis=1, dtype=np.float64)[None, :]
+            query_sq = np.sum(query_group**2, axis=1, dtype=np.float64)[:, None]
+            cross = query_group @ candidate_valid.T
+            mean_squared = np.maximum((query_sq + candidate_sq - 2.0 * cross) / float(valid_band_count), 0.0)
+            group_distances = np.sqrt(mean_squared, dtype=np.float64)
+
+            for local_index, batch_index in enumerate(batch_indices):
+                neighbor_indices, neighbor_distances = _ordered_neighbor_rows(
+                    group_distances[local_index],
+                    candidate_row_indices,
+                    k=k,
+                )
+                reconstructed = np.asarray(
+                    np.mean(segment_hyperspectral[neighbor_indices], axis=0),
+                    dtype=np.float64,
+                )
+                retrievals[int(batch_index)] = _SegmentRetrieval(
+                    segment=segment,
+                    valid_band_count=valid_band_count,
+                    query_band_ids=query_band_ids,
+                    success=True,
+                    reconstructed=reconstructed,
+                    neighbor_indices=neighbor_indices,
+                    neighbor_ids=tuple(self._row_ids[index] for index in neighbor_indices),
+                    neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
+                )
+
+        return tuple(
+            retrieval
+            if retrieval is not None
+            else _SegmentRetrieval(
+                segment=segment,
+                valid_band_count=0,
+                query_band_ids=query_band_ids,
+                success=False,
+                reason="insufficient_valid_bands",
+            )
+            for retrieval in retrievals
         )
 
     def _simulate_target_sensor(
@@ -1261,48 +1362,21 @@ class SpectralMapper:
             )
         return np.unique(candidate)
 
-    def _map_reflectance_internal(
+    def _build_mapping_result(
         self,
         *,
         source_sensor: str,
-        reflectance: Sequence[float] | Mapping[str, float],
-        valid_mask: Sequence[bool] | Mapping[str, bool] | None,
-        output_mode: str,
         target_sensor: str | None,
+        output_mode: str,
         k: int,
-        min_valid_bands: int,
-        candidate_row_indices: Sequence[int] | None,
+        segment_retrievals: Mapping[str, _SegmentRetrieval],
     ) -> MappingResult:
-        _ensure_supported_output_mode(output_mode)
-        if k < 1:
-            raise MappingInputError("k must be at least 1.", context={"k": k})
-        if min_valid_bands < 1:
-            raise MappingInputError("min_valid_bands must be at least 1.", context={"min_valid_bands": min_valid_bands})
-
-        source_schema = self.get_sensor_schema(source_sensor)
-        query_values, query_valid_mask = self._coerce_query(source_schema, reflectance, valid_mask)
-        candidate_rows = self._candidate_rows(candidate_row_indices)
-
-        segment_retrievals: dict[str, _SegmentRetrieval] = {}
         segment_outputs: dict[str, np.ndarray] = {}
         segment_valid_band_counts: dict[str, int] = {}
         neighbor_ids_by_segment: dict[str, tuple[str, ...]] = {}
         neighbor_distances_by_segment: dict[str, np.ndarray] = {}
 
-        for segment in SEGMENTS:
-            segment_indices = [index for index, band in enumerate(source_schema.bands) if band.segment == segment]
-            segment_values = query_values[segment_indices]
-            segment_valid = query_valid_mask[segment_indices]
-            retrieval = self._retrieve_segment(
-                source_sensor=source_sensor,
-                segment=segment,
-                query_values=segment_values,
-                valid_mask=segment_valid,
-                k=k,
-                min_valid_bands=min_valid_bands,
-                candidate_row_indices=candidate_rows,
-            )
-            segment_retrievals[segment] = retrieval
+        for segment, retrieval in segment_retrievals.items():
             segment_valid_band_counts[segment] = retrieval.valid_band_count
             neighbor_ids_by_segment[segment] = retrieval.neighbor_ids
             neighbor_distances_by_segment[segment] = retrieval.neighbor_distances
@@ -1382,6 +1456,47 @@ class SpectralMapper:
             diagnostics=diagnostics,
         )
 
+    def _map_reflectance_internal(
+        self,
+        *,
+        source_sensor: str,
+        reflectance: Sequence[float] | Mapping[str, float],
+        valid_mask: Sequence[bool] | Mapping[str, bool] | None,
+        output_mode: str,
+        target_sensor: str | None,
+        k: int,
+        min_valid_bands: int,
+        candidate_row_indices: Sequence[int] | None,
+    ) -> MappingResult:
+        _validate_mapping_request(output_mode, k=k, min_valid_bands=min_valid_bands)
+
+        source_schema = self.get_sensor_schema(source_sensor)
+        query_values, query_valid_mask = self._coerce_query(source_schema, reflectance, valid_mask)
+        candidate_rows = self._candidate_rows(candidate_row_indices)
+
+        segment_retrievals: dict[str, _SegmentRetrieval] = {}
+        for segment in SEGMENTS:
+            segment_indices = [index for index, band in enumerate(source_schema.bands) if band.segment == segment]
+            segment_values = query_values[segment_indices]
+            segment_valid = query_valid_mask[segment_indices]
+            retrieval = self._retrieve_segment(
+                source_sensor=source_sensor,
+                segment=segment,
+                query_values=segment_values,
+                valid_mask=segment_valid,
+                k=k,
+                min_valid_bands=min_valid_bands,
+                candidate_row_indices=candidate_rows,
+            )
+            segment_retrievals[segment] = retrieval
+        return self._build_mapping_result(
+            source_sensor=source_sensor,
+            target_sensor=target_sensor,
+            output_mode=output_mode,
+            k=k,
+            segment_retrievals=segment_retrievals,
+        )
+
     def map_reflectance(
         self,
         *,
@@ -1416,6 +1531,7 @@ class SpectralMapper:
         k: int = 10,
         min_valid_bands: int = 1,
     ) -> BatchMappingResult:
+        _validate_mapping_request(output_mode, k=k, min_valid_bands=min_valid_bands)
         if isinstance(reflectance_rows, Mapping):
             raise MappingInputError("map_reflectance_batch requires a batch of samples, not a single mapping.")
 
@@ -1459,21 +1575,46 @@ class SpectralMapper:
         else:
             raise MappingInputError("valid_mask_rows must be a two-dimensional array or a sequence of per-sample masks.")
 
-        results: list[MappingResult] = []
+        source_schema = self.get_sensor_schema(source_sensor)
+        query_values_batch = np.empty((len(batch_rows), len(source_schema.bands)), dtype=np.float64)
+        query_valid_mask_batch = np.empty((len(batch_rows), len(source_schema.bands)), dtype=bool)
         for sample_index, (sample_id, reflectance, valid_mask) in enumerate(
             zip(normalized_sample_ids, batch_rows, batch_valid_masks)
         ):
             try:
+                query_values, query_valid_mask = self._coerce_query(source_schema, reflectance, valid_mask)
+            except SpectralLibraryError as error:
+                raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
+            query_values_batch[sample_index] = query_values
+            query_valid_mask_batch[sample_index] = query_valid_mask
+
+        candidate_rows = self._candidate_rows(None)
+        segment_retrievals_by_segment: dict[str, tuple[_SegmentRetrieval, ...]] = {}
+        for segment in SEGMENTS:
+            segment_indices = [index for index, band in enumerate(source_schema.bands) if band.segment == segment]
+            segment_retrievals_by_segment[segment] = self._retrieve_segment_batch(
+                source_sensor=source_sensor,
+                segment=segment,
+                query_values=query_values_batch[:, segment_indices],
+                valid_mask=query_valid_mask_batch[:, segment_indices],
+                k=k,
+                min_valid_bands=min_valid_bands,
+                candidate_row_indices=candidate_rows,
+            )
+
+        results: list[MappingResult] = []
+        for sample_index, sample_id in enumerate(normalized_sample_ids):
+            try:
+                sample_retrievals = {
+                    segment: segment_retrievals_by_segment[segment][sample_index] for segment in SEGMENTS
+                }
                 results.append(
-                    self._map_reflectance_internal(
+                    self._build_mapping_result(
                         source_sensor=source_sensor,
-                        reflectance=reflectance,
-                        valid_mask=valid_mask,
-                        output_mode=output_mode,
                         target_sensor=target_sensor,
+                        output_mode=output_mode,
                         k=k,
-                        min_valid_bands=min_valid_bands,
-                        candidate_row_indices=None,
+                        segment_retrievals=sample_retrievals,
                     )
                 )
             except SpectralLibraryError as error:

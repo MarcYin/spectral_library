@@ -7,14 +7,65 @@ name = "spectral-library"
 version = "0.1.0"
 description = "Spectral library build, preparation, and retrieval-based mapping toolkit."
 readme = "README.md"
+license = "LicenseRef-Proprietary"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
+authors = [
+  {name = "Marc Yin"},
+]
+maintainers = [
+  {name = "Marc Yin"},
+]
+keywords = [
+  "hyperspectral",
+  "multispectral",
+  "reflectance",
+  "remote-sensing",
+  "spectral-library",
+  "spectral-mapping",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: GIS",
+]
 dependencies = [
   "duckdb>=1.1.0",
+  "numpy>=1.24.0",
+  "pandas>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/MarcYin/spectral_library"
+Repository = "https://github.com/MarcYin/spectral_library"
+Documentation = "https://github.com/MarcYin/spectral_library/tree/main/docs"
+Issues = "https://github.com/MarcYin/spectral_library/issues"
+Changelog = "https://github.com/MarcYin/spectral_library/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+internal-build = [
   "matplotlib>=3.8.0",
   "netCDF4>=1.7.0",
-  "numpy>=1.24.0",
   "openpyxl>=3.1.0",
-  "pandas>=2.0.0",
+  "rdata>=0.11.0",
+]
+accel = [
+  "whitsmooth-rust>=0.1.3",
+]
+dev = [
+  "build>=1.2.2",
+  "coverage>=7.6.0",
+  "matplotlib>=3.8.0",
+  "netCDF4>=1.7.0",
+  "openpyxl>=3.1.0",
   "rdata>=0.11.0",
   "whitsmooth-rust>=0.1.3",
 ]
