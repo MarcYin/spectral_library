@@ -1099,30 +1099,24 @@ def _render_official_sensor_examples_doc(
     return f"""{GENERATED_DOC_BANNER}
 # Official Sensor Examples
 
-This page documents the bundled cross-sensor example runtime built from
-official relative spectral response sources for:
+This page shows the bundled cross-sensor example runtime built from official
+relative spectral response sources for Terra MODIS, Sentinel-2A MSI, Landsat 8
+OLI, and Landsat 9 OLI.
 
-- Terra MODIS
-- Sentinel-2A MSI
-- Landsat 8 OLI
-- Landsat 9 OLI
+It is the fastest way to see what the public package does with real sensor SRFs
+before you prepare your own runtime.
 
-The repository example focuses on these semantic bands:
+<div class="fact-grid">
+  <div><strong>4 sensors</strong><span>MODIS, Sentinel-2A, Landsat 8, Landsat 9</span></div>
+  <div><strong>7 semantic bands</strong><span>`ultra_blue`, `blue`, `green`, `red`, `nir`, `swir1`, `swir2`</span></div>
+  <div><strong>Scored subset</strong><span>{", ".join(COMPARABLE_PAIRWISE_BANDS)}</span></div>
+  <div><strong>Regenerated</strong><span>{generated_at_utc[:10]} UTC</span></div>
+</div>
 
-- `ultra_blue`
-- `blue`
-- `green`
-- `red`
-- `nir`
-- `swir1`
-- `swir2`
+Related pages:
 
-The mathematical explanation for the retrieval model, target-sensor simulation,
-and overlap blending is in
-[`docs/theory.md`](theory.md).
-
-The full example bundle lives in
-[`docs/example_bundle.md`](example_bundle.md).
+- [Mathematical Foundations](theory.md)
+- [Official Example Bundle](example_bundle.md)
 
 ## Official Sources
 
@@ -1136,6 +1130,13 @@ and SHA-256 hashes are stored in
 Recorded upstream artifacts for this commit:
 
 {chr(10).join(artifact_summary_lines)}
+
+## What The Example Demonstrates
+
+- target-sensor mapping between MODIS, Sentinel-2A, Landsat 8, and Landsat 9
+- batch mapping from one CSV input
+- full-spectrum reconstruction over `400-2500 nm`
+- provenance tracking for official SRF inputs
 
 ## Band Correspondence
 
@@ -1206,7 +1207,7 @@ The full pairwise summary, including `evaluated_band_ids` and
 `evaluated_band_count`, is in
 [`examples/official_mapping/results/metrics/pairwise_band_metrics.csv`](../examples/official_mapping/results/metrics/pairwise_band_metrics.csv).
 
-## Single-Sample Example Runs
+## Single-Sample Mapping Runs
 
 MODIS Terra to Sentinel-2A:
 
@@ -1261,7 +1262,7 @@ Reference output:
 Reference diagnostics:
 [`examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch_diagnostics.json`](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch_diagnostics.json)
 
-## Full-Spectrum Example
+## Full-Spectrum Reconstruction
 
 Reconstruct the full `400-2500 nm` spectrum from the Sentinel-2A query:
 

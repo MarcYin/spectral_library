@@ -109,7 +109,7 @@ class OfficialExamplesTests(unittest.TestCase):
         self.assertIn(f"`{float(highest['mean_abs_error']):.4f}` for {highest['source_label']} -> {highest['target_label']}", doc_text)
         self.assertIn("common comparable subset", doc_text)
         self.assertIn(f"`{float(modis_rows[0]['reflectance']):.4f}`", doc_text)
-        self.assertIn("[`docs/theory.md`](theory.md)", doc_text)
+        self.assertIn("[Mathematical Foundations](theory.md)", doc_text)
         self.assertIn("spectral-library prepare-mapping-library \\\n  --siac-root", doc_text)
         self.assertIn("spectral-library map-reflectance-batch \\\n  --prepared-root", doc_text)
 
