@@ -1,0 +1,112 @@
+{
+  "pairs": [
+    {
+      "source_sensor": "modis_terra",
+      "target_sensor": "sentinel2a_msi",
+      "source_label": "MODIS Terra",
+      "target_label": "Sentinel-2A",
+      "mean_abs_error": 0.016975672443727278,
+      "rmse": 0.02219257361323393,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "modis_terra",
+      "target_sensor": "landsat8_oli",
+      "source_label": "MODIS Terra",
+      "target_label": "Landsat 8",
+      "mean_abs_error": 0.01686477123706738,
+      "rmse": 0.02209081948756969,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "modis_terra",
+      "target_sensor": "landsat9_oli",
+      "source_label": "MODIS Terra",
+      "target_label": "Landsat 9",
+      "mean_abs_error": 0.01686814511306962,
+      "rmse": 0.0220959511248265,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "sentinel2a_msi",
+      "target_sensor": "modis_terra",
+      "source_label": "Sentinel-2A",
+      "target_label": "MODIS Terra",
+      "mean_abs_error": 0.018066858630409594,
+      "rmse": 0.023321807017696927,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "sentinel2a_msi",
+      "target_sensor": "landsat8_oli",
+      "source_label": "Sentinel-2A",
+      "target_label": "Landsat 8",
+      "mean_abs_error": 0.01686477123706738,
+      "rmse": 0.02209081948756969,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "sentinel2a_msi",
+      "target_sensor": "landsat9_oli",
+      "source_label": "Sentinel-2A",
+      "target_label": "Landsat 9",
+      "mean_abs_error": 0.01686814511306962,
+      "rmse": 0.0220959511248265,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "landsat8_oli",
+      "target_sensor": "modis_terra",
+      "source_label": "Landsat 8",
+      "target_label": "MODIS Terra",
+      "mean_abs_error": 0.01770415151365698,
+      "rmse": 0.023062490583929517,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "landsat8_oli",
+      "target_sensor": "sentinel2a_msi",
+      "source_label": "Landsat 8",
+      "target_label": "Sentinel-2A",
+      "mean_abs_error": 0.01667379920124482,
+      "rmse": 0.021945286619849267,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "landsat8_oli",
+      "target_sensor": "landsat9_oli",
+      "source_label": "Landsat 8",
+      "target_label": "Landsat 9",
+      "mean_abs_error": 0.01654026212370621,
+      "rmse": 0.02180747821769838,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "landsat9_oli",
+      "target_sensor": "modis_terra",
+      "source_label": "Landsat 9",
+      "target_label": "MODIS Terra",
+      "mean_abs_error": 0.01770415151365698,
+      "rmse": 0.023062490583929517,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "landsat9_oli",
+      "target_sensor": "sentinel2a_msi",
+      "source_label": "Landsat 9",
+      "target_label": "Sentinel-2A",
+      "mean_abs_error": 0.01667379920124482,
+      "rmse": 0.021945286619849267,
+      "sample_count": 3
+    },
+    {
+      "source_sensor": "landsat9_oli",
+      "target_sensor": "landsat8_oli",
+      "source_label": "Landsat 9",
+      "target_label": "Landsat 8",
+      "mean_abs_error": 0.01654070985152474,
+      "rmse": 0.0218085670434216,
+      "sample_count": 3
+    }
+  ]
+}

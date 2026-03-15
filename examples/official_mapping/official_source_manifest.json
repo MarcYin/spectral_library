@@ -1,0 +1,208 @@
+{
+  "retrieved_on": "2026-03-15",
+  "description": "Official-source band subsets used for the documentation and mapping examples.",
+  "sensors": [
+    {
+      "sensor_id": "modis_terra",
+      "display_name": "Terra MODIS",
+      "source_agency": "NASA MCST",
+      "source_document": "Terra_RSR_in-band.xlsx",
+      "source_url": "https://mcst.gsfc.nasa.gov/sites/default/files/file_attachments/Terra_RSR_in-band.xlsx",
+      "source_note": "Official Terra MODIS in-band relative spectral response workbook.",
+      "selected_bands": [
+        {
+          "band_id": "blue",
+          "official_band": "Band 3",
+          "segment": "vnir",
+          "description": "Blue"
+        },
+        {
+          "band_id": "green",
+          "official_band": "Band 4",
+          "segment": "vnir",
+          "description": "Green"
+        },
+        {
+          "band_id": "red",
+          "official_band": "Band 1",
+          "segment": "vnir",
+          "description": "Red"
+        },
+        {
+          "band_id": "nir",
+          "official_band": "Band 2",
+          "segment": "vnir",
+          "description": "Near infrared"
+        },
+        {
+          "band_id": "swir1",
+          "official_band": "Band 6",
+          "segment": "swir",
+          "description": "Shortwave infrared 1"
+        },
+        {
+          "band_id": "swir2",
+          "official_band": "Band 7",
+          "segment": "swir",
+          "description": "Shortwave infrared 2"
+        }
+      ]
+    },
+    {
+      "sensor_id": "sentinel2a_msi",
+      "display_name": "Sentinel-2A MSI",
+      "source_agency": "ESA Copernicus",
+      "source_document": "COPE-GSEG-EOPG-TN-15-0007 - Sentinel-2 Spectral Response Functions 2024 - 4.0.xlsx",
+      "source_url": "https://sentiwiki.copernicus.eu/__attachments/1692737/COPE-GSEG-EOPG-TN-15-0007%20-%20Sentinel-2%20Spectral%20Response%20Functions%202024%20-%204.0.xlsx",
+      "source_note": "Official Sentinel-2 spectral response workbook; the examples use the S2A sheet.",
+      "selected_bands": [
+        {
+          "band_id": "ultra_blue",
+          "official_band": "B1",
+          "segment": "vnir",
+          "description": "Coastal aerosol / ultra blue"
+        },
+        {
+          "band_id": "blue",
+          "official_band": "B2",
+          "segment": "vnir",
+          "description": "Blue"
+        },
+        {
+          "band_id": "green",
+          "official_band": "B3",
+          "segment": "vnir",
+          "description": "Green"
+        },
+        {
+          "band_id": "red",
+          "official_band": "B4",
+          "segment": "vnir",
+          "description": "Red"
+        },
+        {
+          "band_id": "nir",
+          "official_band": "B8",
+          "segment": "vnir",
+          "description": "Near infrared"
+        },
+        {
+          "band_id": "swir1",
+          "official_band": "B11",
+          "segment": "swir",
+          "description": "Shortwave infrared 1"
+        },
+        {
+          "band_id": "swir2",
+          "official_band": "B12",
+          "segment": "swir",
+          "description": "Shortwave infrared 2"
+        }
+      ]
+    },
+    {
+      "sensor_id": "landsat8_oli",
+      "display_name": "Landsat 8 OLI",
+      "source_agency": "USGS",
+      "source_document": "Spectral Characteristics Viewer band JSON",
+      "source_url": "https://landsat.usgs.gov/spectral-characteristics-viewer",
+      "source_note": "Official USGS Spectral Characteristics Viewer JSON for Landsat 8 OLI/TIRS reflective bands 1-7.",
+      "selected_bands": [
+        {
+          "band_id": "ultra_blue",
+          "official_band": "Band 1",
+          "segment": "vnir",
+          "description": "Coastal aerosol / ultra blue"
+        },
+        {
+          "band_id": "blue",
+          "official_band": "Band 2",
+          "segment": "vnir",
+          "description": "Blue"
+        },
+        {
+          "band_id": "green",
+          "official_band": "Band 3",
+          "segment": "vnir",
+          "description": "Green"
+        },
+        {
+          "band_id": "red",
+          "official_band": "Band 4",
+          "segment": "vnir",
+          "description": "Red"
+        },
+        {
+          "band_id": "nir",
+          "official_band": "Band 5",
+          "segment": "vnir",
+          "description": "Near infrared"
+        },
+        {
+          "band_id": "swir1",
+          "official_band": "Band 6",
+          "segment": "swir",
+          "description": "Shortwave infrared 1"
+        },
+        {
+          "band_id": "swir2",
+          "official_band": "Band 7",
+          "segment": "swir",
+          "description": "Shortwave infrared 2"
+        }
+      ]
+    },
+    {
+      "sensor_id": "landsat9_oli",
+      "display_name": "Landsat 9 OLI",
+      "source_agency": "USGS",
+      "source_document": "Spectral Characteristics Viewer band JSON",
+      "source_url": "https://landsat.usgs.gov/spectral-characteristics-viewer",
+      "source_note": "Official USGS Spectral Characteristics Viewer JSON for Landsat 9 OLI/TIRS reflective bands 1-7.",
+      "selected_bands": [
+        {
+          "band_id": "ultra_blue",
+          "official_band": "Band 1",
+          "segment": "vnir",
+          "description": "Coastal aerosol / ultra blue"
+        },
+        {
+          "band_id": "blue",
+          "official_band": "Band 2",
+          "segment": "vnir",
+          "description": "Blue"
+        },
+        {
+          "band_id": "green",
+          "official_band": "Band 3",
+          "segment": "vnir",
+          "description": "Green"
+        },
+        {
+          "band_id": "red",
+          "official_band": "Band 4",
+          "segment": "vnir",
+          "description": "Red"
+        },
+        {
+          "band_id": "nir",
+          "official_band": "Band 5",
+          "segment": "vnir",
+          "description": "Near infrared"
+        },
+        {
+          "band_id": "swir1",
+          "official_band": "Band 6",
+          "segment": "swir",
+          "description": "Shortwave infrared 1"
+        },
+        {
+          "band_id": "swir2",
+          "official_band": "Band 7",
+          "segment": "swir",
+          "description": "Shortwave infrared 2"
+        }
+      ]
+    }
+  ]
+}

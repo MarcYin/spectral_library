@@ -1,0 +1,13 @@
+source_sensor,target_sensor,source_label,target_label,mean_abs_error,rmse,sample_count
+modis_terra,sentinel2a_msi,MODIS Terra,Sentinel-2A,0.016975672443727278,0.02219257361323393,3
+modis_terra,landsat8_oli,MODIS Terra,Landsat 8,0.01686477123706738,0.02209081948756969,3
+modis_terra,landsat9_oli,MODIS Terra,Landsat 9,0.01686814511306962,0.0220959511248265,3
+sentinel2a_msi,modis_terra,Sentinel-2A,MODIS Terra,0.018066858630409594,0.023321807017696927,3
+sentinel2a_msi,landsat8_oli,Sentinel-2A,Landsat 8,0.01686477123706738,0.02209081948756969,3
+sentinel2a_msi,landsat9_oli,Sentinel-2A,Landsat 9,0.01686814511306962,0.0220959511248265,3
+landsat8_oli,modis_terra,Landsat 8,MODIS Terra,0.01770415151365698,0.023062490583929517,3
+landsat8_oli,sentinel2a_msi,Landsat 8,Sentinel-2A,0.01667379920124482,0.021945286619849267,3
+landsat8_oli,landsat9_oli,Landsat 8,Landsat 9,0.01654026212370621,0.02180747821769838,3
+landsat9_oli,modis_terra,Landsat 9,MODIS Terra,0.01770415151365698,0.023062490583929517,3
+landsat9_oli,sentinel2a_msi,Landsat 9,Sentinel-2A,0.01667379920124482,0.021945286619849267,3
+landsat9_oli,landsat8_oli,Landsat 9,Landsat 8,0.01654070985152474,0.0218085670434216,3
