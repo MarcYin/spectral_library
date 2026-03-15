@@ -8,10 +8,12 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import duckdb
 import numpy as np
 
+import spectral_library.mapping as mapping_module
 from spectral_library import (
     MappingInputError,
     PreparedLibraryCompatibilityError,
@@ -452,17 +454,57 @@ class MappingWorkflowTests(unittest.TestCase):
             with self.assertRaises(MappingInputError):
                 benchmark_mapping(fixture["prepared_root"], "sensor_a", "sensor_b", test_fraction=0.0)
 
-            manifest_payload = json.loads((fixture["prepared_root"] / "manifest.json").read_text(encoding="utf-8"))
-            manifest_payload["row_count"] = 1
-            (fixture["prepared_root"] / "manifest.json").write_text(
-                json.dumps(manifest_payload, indent=2) + "\n",
-                encoding="utf-8",
+            one_row_root = Path(tmpdir) / "one_row"
+            one_row_fixture = _build_fixture(one_row_root)
+            metadata_path = one_row_fixture["siac_root"] / "tabular" / "siac_spectra_metadata.csv"
+            spectra_path = one_row_fixture["siac_root"] / "tabular" / "siac_normalized_spectra.csv"
+            with metadata_path.open("r", encoding="utf-8", newline="") as handle:
+                metadata_rows = list(csv.DictReader(handle))
+            with spectra_path.open("r", encoding="utf-8", newline="") as handle:
+                spectra_rows = list(csv.DictReader(handle))
+            _write_csv(metadata_path, list(metadata_rows[0].keys()), metadata_rows[:1])
+            _write_csv(spectra_path, list(spectra_rows[0].keys()), spectra_rows[:1])
+            prepare_mapping_library(
+                one_row_fixture["siac_root"],
+                one_row_fixture["srf_root"],
+                one_row_fixture["prepared_root"],
+                ["sensor_a"],
             )
-            with self.assertRaises(PreparedLibraryValidationError):
-                benchmark_mapping(fixture["prepared_root"], "sensor_a", "sensor_b", test_fraction=0.5)
+            with self.assertRaises(MappingInputError):
+                benchmark_mapping(one_row_fixture["prepared_root"], "sensor_a", "sensor_b", test_fraction=0.5)
+
+    def test_benchmark_mapping_handles_high_test_fraction_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            report = benchmark_mapping(
+                fixture["prepared_root"],
+                "sensor_a",
+                "sensor_b",
+                k=1,
+                test_fraction=0.99,
+                random_seed=0,
+            )
+            self.assertEqual(report["train_rows"], 1)
+            self.assertEqual(report["test_rows"], 3)
 
 
 class MappingValidationTests(unittest.TestCase):
+    def test_base_error_to_dict_and_string(self) -> None:
+        error = mapping_module.SpectralLibraryError("example", "Example error", context={"a": 1})
+        self.assertEqual(str(error), "Example error")
+        self.assertEqual(error.to_dict(command="map-reflectance")["command"], "map-reflectance")
+        self.assertEqual(error.to_dict()["context"], {"a": 1})
+
+    def test_optional_float_and_output_mode_helpers_validate_inputs(self) -> None:
+        self.assertIsNone(mapping_module._optional_float(None))
+        self.assertIsNone(mapping_module._optional_float(""))
+        self.assertEqual(mapping_module._optional_float("1.5"), 1.5)
+        with self.assertRaises(MappingInputError):
+            mapping_module._ensure_supported_output_mode("unknown")
+        self.assertEqual(mapping_module._normalized_source_sensors(["sensor_a", "sensor_a", " sensor_b "]), ["sensor_a", "sensor_b"])
+        with self.assertRaises(PreparedLibraryBuildError):
+            mapping_module._normalized_source_sensors([])
+
     def test_sensor_schema_round_trip_and_band_sorting(self) -> None:
         schema = SensorSRFSchema.from_dict(
             {
@@ -481,6 +523,102 @@ class MappingValidationTests(unittest.TestCase):
         self.assertEqual(schema.band_ids(), ("b1",))
         self.assertEqual(schema.bands[0].wavelength_nm, (445.0, 450.0, 455.0))
         self.assertEqual(schema.to_dict()["sensor_id"], "sorted_sensor")
+
+    def test_sensor_schema_validation_is_detailed(self) -> None:
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition(
+                band_id="",
+                segment="vnir",
+                wavelength_nm=(445.0,),
+                rsr=(1.0,),
+            )
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition(
+                band_id="b1",
+                segment="mid",
+                wavelength_nm=(445.0,),
+                rsr=(1.0,),
+            )
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition(
+                band_id="b1",
+                segment="vnir",
+                wavelength_nm=(445.0, 450.0),
+                rsr=(1.0,),
+            )
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition(
+                band_id="b1",
+                segment="vnir",
+                wavelength_nm=(),
+                rsr=(),
+            )
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition(
+                band_id="b1",
+                segment="vnir",
+                wavelength_nm=(445.0,),
+                rsr=(float("nan"),),
+            )
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition(
+                band_id="b1",
+                segment="vnir",
+                wavelength_nm=(450.0, 445.0),
+                rsr=(1.0, 0.5),
+            )
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition(
+                band_id="b1",
+                segment="vnir",
+                wavelength_nm=(445.0,),
+                rsr=(0.0,),
+            )
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition(
+                band_id="b1",
+                segment="vnir",
+                wavelength_nm=(1200.0,),
+                rsr=(1.0,),
+            )
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition.from_dict({})
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition.from_dict({"band_id": "b1"})
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition.from_dict({"band_id": "b1", "segment": "vnir"})
+
+        band = mapping_module.SensorBandDefinition.from_dict(
+            {
+                "band_id": "b1",
+                "segment": "vnir",
+                "wavelength_nm": [445.0, 450.0],
+                "rsr": [0.2, 1.0],
+                "center_nm": 450.0,
+                "fwhm_nm": 10.0,
+                "support_min_nm": "",
+                "support_max_nm": "",
+            }
+        )
+        band_payload = band.to_dict()
+        self.assertEqual(band_payload["center_nm"], 450.0)
+        self.assertEqual(band_payload["fwhm_nm"], 10.0)
+        self.assertIn("support_min_nm", band_payload)
+        self.assertIn("support_max_nm", band_payload)
+        valid_schema = SensorSRFSchema(sensor_id="s_valid", bands=(band,))
+
+        with self.assertRaises(SensorSchemaError):
+            SensorSRFSchema(sensor_id="", bands=(band,))
+        with self.assertRaises(SensorSchemaError):
+            SensorSRFSchema(sensor_id="s1", bands=())
+        with self.assertRaises(SensorSchemaError):
+            SensorSRFSchema(sensor_id="s1", bands=(band, band))
+        with self.assertRaises(SensorSchemaError):
+            SensorSRFSchema.from_dict({"bands": []})
+        with self.assertRaises(SensorSchemaError):
+            SensorSRFSchema.from_dict({"sensor_id": "s1"})
+        with self.assertRaises(SensorSchemaError):
+            valid_schema.bands_for_segment("bad")
 
     def test_prepare_mapping_library_rejects_invalid_dtype_and_missing_source_sensor(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -531,6 +669,45 @@ class MappingValidationTests(unittest.TestCase):
                     ["sensor_a"],
                 )
 
+    def test_load_sensor_schemas_and_payload_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with self.assertRaises(SensorSchemaError):
+                mapping_module.load_sensor_schemas(root / "missing")
+
+            empty_root = root / "empty"
+            empty_root.mkdir()
+            with self.assertRaises(SensorSchemaError):
+                mapping_module.load_sensor_schemas(empty_root)
+
+            bad_payload_path = root / "bad_payload.json"
+            bad_payload_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+            with self.assertRaises(SensorSchemaError):
+                mapping_module._load_sensor_payloads(bad_payload_path)
+
+            non_list_path = root / "non_list.json"
+            non_list_path.write_text(json.dumps({"sensors": {"bad": True}}), encoding="utf-8")
+            with self.assertRaises(SensorSchemaError):
+                mapping_module._load_sensor_payloads(non_list_path)
+
+            dup_root = root / "dup"
+            dup_root.mkdir()
+            payload = {
+                "sensor_id": "dup_sensor",
+                "bands": [
+                    {
+                        "band_id": "b1",
+                        "segment": "vnir",
+                        "wavelength_nm": [445.0, 450.0],
+                        "rsr": [0.2, 1.0],
+                    }
+                ],
+            }
+            (dup_root / "a.json").write_text(json.dumps(payload), encoding="utf-8")
+            (dup_root / "b.json").write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(SensorSchemaError):
+                mapping_module.load_sensor_schemas(dup_root)
+
     def test_prepare_mapping_library_rejects_missing_and_extra_siac_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture = _build_fixture(Path(tmpdir))
@@ -569,6 +746,53 @@ class MappingValidationTests(unittest.TestCase):
                     ["sensor_a"],
                 )
 
+    def test_load_siac_rows_validation_is_detailed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with self.assertRaises(PreparedLibraryBuildError):
+                mapping_module._load_siac_rows(root / "missing_metadata.csv", root / "missing_spectra.csv", dtype=np.dtype("float32"))
+
+            metadata_path = root / "metadata.csv"
+            spectra_path = root / "spectra.csv"
+            _write_csv(metadata_path, ["source_id", "spectrum_id", "sample_name"], [])
+            _write_csv(spectra_path, ["source_id", "spectrum_id", "sample_name", "nm_400"], [])
+            with self.assertRaises(PreparedLibraryBuildError):
+                mapping_module._load_siac_rows(metadata_path, spectra_path, dtype=np.dtype("float32"))
+
+            _write_csv(metadata_path, ["source_id", "spectrum_id"], [{"source_id": "s1", "spectrum_id": "a"}])
+            _write_csv(spectra_path, ["source_id", "spectrum_id", "sample_name", "nm_400"], [{"source_id": "s1", "spectrum_id": "a", "sample_name": "a", "nm_400": 0.1}])
+            with self.assertRaises(PreparedLibraryBuildError):
+                mapping_module._load_siac_rows(metadata_path, spectra_path, dtype=np.dtype("float32"))
+
+            _write_csv(metadata_path, ["source_id", "spectrum_id", "sample_name"], [{"source_id": "s1", "spectrum_id": "a", "sample_name": "a"}])
+            _write_csv(spectra_path, ["source_id", "spectrum_id", "sample_name"], [{"source_id": "s1", "spectrum_id": "a", "sample_name": "a"}])
+            with self.assertRaises(PreparedLibraryBuildError):
+                mapping_module._load_siac_rows(metadata_path, spectra_path, dtype=np.dtype("float32"))
+
+            bad_nm_columns = ["source_id", "spectrum_id", "sample_name", "nm_401", *[f"nm_{w}" for w in range(402, 2502)]]
+            bad_nm_row = {"source_id": "s1", "spectrum_id": "a", "sample_name": "a", **{column: 0.1 for column in bad_nm_columns[3:]}}
+            _write_csv(spectra_path, bad_nm_columns, [bad_nm_row])
+            with self.assertRaises(PreparedLibraryBuildError):
+                mapping_module._load_siac_rows(metadata_path, spectra_path, dtype=np.dtype("float32"))
+
+            full_row = {"source_id": "s1", "spectrum_id": "a", "sample_name": "a", **_spectrum_values(0.1, 0.1, 0.1)}
+            _write_csv(
+                spectra_path,
+                ["source_id", "spectrum_id", "sample_name", *NM_COLUMNS],
+                [full_row, full_row],
+            )
+            with self.assertRaises(PreparedLibraryBuildError):
+                mapping_module._load_siac_rows(metadata_path, spectra_path, dtype=np.dtype("float32"))
+
+            _write_csv(metadata_path, ["source_id", "spectrum_id", "sample_name"], [{"source_id": "s1", "spectrum_id": "missing", "sample_name": "missing"}])
+            _write_csv(
+                spectra_path,
+                ["source_id", "spectrum_id", "sample_name", *NM_COLUMNS],
+                [full_row],
+            )
+            with self.assertRaises(PreparedLibraryBuildError):
+                mapping_module._load_siac_rows(metadata_path, spectra_path, dtype=np.dtype("float32"))
+
     def test_spectral_mapper_rejects_incompatible_manifest_and_missing_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -585,6 +809,27 @@ class MappingValidationTests(unittest.TestCase):
             with self.assertRaises(PreparedLibraryValidationError):
                 SpectralMapper(fixture["prepared_root"])
 
+    def test_spectral_mapper_rejects_missing_prepared_files_and_unknown_sensor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(root / "missing")
+
+            fixture, _ = _prepare_fixture(root)
+            os.remove(fixture["prepared_root"] / "sensor_schema.json")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(root)
+            os.remove(fixture["prepared_root"] / "mapping_metadata.parquet")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(root)
+            mapper = SpectralMapper(fixture["prepared_root"])
+            with self.assertRaises(SensorSchemaError):
+                mapper.get_sensor_schema("missing")
+
     def test_spectral_mapper_rejects_shape_mismatches_in_prepared_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -596,6 +841,145 @@ class MappingValidationTests(unittest.TestCase):
             np.save(fixture["prepared_root"] / "source_sensor_a_swir.npy", np.zeros((4, 2), dtype=np.float32))
             with self.assertRaises(PreparedLibraryValidationError):
                 SpectralMapper(fixture["prepared_root"])
+
+    def test_internal_mapper_validation_branches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": float("nan"), "swir": float("nan")},
+                    output_mode="vnir_spectrum",
+                )
+
+            mapper._source_matrix_cache[("sensor_a", "vnir")] = np.zeros((mapper.manifest.row_count, 2), dtype=np.float64)
+            with self.assertRaises(PreparedLibraryValidationError):
+                mapper._retrieve_segment(
+                    source_sensor="sensor_a",
+                    segment="vnir",
+                    query_values=np.array([0.1]),
+                    valid_mask=np.array([True]),
+                    k=1,
+                    min_valid_bands=1,
+                    candidate_row_indices=np.array([0, 1], dtype=np.int64),
+                )
+
+            mapper = SpectralMapper(fixture["prepared_root"])
+            with self.assertRaises(MappingInputError):
+                mapper._retrieve_segment(
+                    source_sensor="sensor_a",
+                    segment="vnir",
+                    query_values=np.array([0.1]),
+                    valid_mask=np.array([True]),
+                    k=1,
+                    min_valid_bands=1,
+                    candidate_row_indices=np.array([], dtype=np.int64),
+                )
+
+            self.assertIs(mapper._source_queries("sensor_a"), mapper._source_queries("sensor_a"))
+            self.assertEqual(mapper._simulate_target_sensor("sensor_b", {})[1], ())
+            self.assertIsNone(mapper._simulate_target_sensor("sensor_b", {})[0])
+            self.assertGreater(mapper._band_response("sensor_b", mapper.get_sensor_schema("sensor_b").bands[0], segment_only=False).size, 601)
+
+            with patch.object(mapper, "_band_response", return_value=np.zeros(601, dtype=np.float64)):
+                with self.assertRaises(SensorSchemaError):
+                    mapper._simulate_target_sensor("sensor_b", {"vnir": np.ones(601, dtype=np.float64)})
+
+            with patch.object(mapping_module, "_resample_band_response", return_value=np.zeros(601, dtype=np.float64)):
+                with self.assertRaises(SensorSchemaError):
+                    mapping_module._simulate_segment_matrix(
+                        np.ones((2, 601), dtype=np.float32),
+                        mapper.get_sensor_schema("sensor_a").bands_for_segment("vnir"),
+                        dtype=np.dtype("float32"),
+                    )
+
+    def test_output_mode_validation_and_target_sensor_failures_are_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = _build_fixture(Path(tmpdir))
+            sensor_c = {
+                "sensor_id": "sensor_c",
+                "bands": [
+                    {
+                        "band_id": "only_swir",
+                        "segment": "swir",
+                        "wavelength_nm": [1695.0, 1700.0, 1705.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    }
+                ],
+            }
+            (fixture["srf_root"] / "sensor_c.json").write_text(json.dumps(sensor_c, indent=2) + "\n", encoding="utf-8")
+            prepare_mapping_library(
+                fixture["siac_root"],
+                fixture["srf_root"],
+                fixture["prepared_root"],
+                ["sensor_a"],
+            )
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.80, "swir": 0.90},
+                    valid_mask={"blue": False, "swir": True},
+                    output_mode="vnir_spectrum",
+                    k=1,
+                )
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.80, "swir": 0.90},
+                    valid_mask={"blue": True, "swir": False},
+                    output_mode="swir_spectrum",
+                    k=1,
+                )
+            with self.assertRaises(MappingInputError):
+                mapper._map_reflectance_internal(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.80, "swir": 0.90},
+                    valid_mask=None,
+                    output_mode="bad_mode",
+                    target_sensor=None,
+                    k=1,
+                    min_valid_bands=1,
+                    candidate_row_indices=None,
+                )
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.80, "swir": 0.90},
+                    valid_mask={"blue": True, "swir": False},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_c",
+                    k=1,
+                )
+
+    def test_benchmark_mapping_error_branches_are_exercised(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            target_band_count = len(mapper._simulate_full_sensor_matrix("sensor_b")[1])
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_map_reflectance_internal",
+                return_value=mapping_module.MappingResult(),
+            ):
+                with self.assertRaises(PreparedLibraryValidationError):
+                    benchmark_mapping(fixture["prepared_root"], "sensor_a", "sensor_b", k=1, test_fraction=0.5)
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_map_reflectance_internal",
+                return_value=mapping_module.MappingResult(
+                    target_reflectance=np.zeros(target_band_count, dtype=np.float64),
+                    reconstructed_vnir=np.zeros(len(mapping_module.VNIR_WAVELENGTHS), dtype=np.float64),
+                    reconstructed_swir=np.zeros(len(mapping_module.SWIR_WAVELENGTHS), dtype=np.float64),
+                ),
+            ):
+                with self.assertRaises(PreparedLibraryValidationError):
+                    benchmark_mapping(fixture["prepared_root"], "sensor_a", "sensor_b", k=1, test_fraction=0.5)
 
 
 class MappingCliTests(unittest.TestCase):
@@ -697,23 +1081,24 @@ class MappingCliTests(unittest.TestCase):
 
             _write_csv(input_path, ["blue", "swir"], [{"blue": 0.80, "swir": 0.90}])
 
-            exit_code = cli.main_with_args(
-                [
-                    "map-reflectance",
-                    "--prepared-root",
-                    str(fixture["prepared_root"]),
-                    "--source-sensor",
-                    "sensor_a",
-                    "--input",
-                    str(input_path),
-                    "--output-mode",
-                    "vnir_spectrum",
-                    "--k",
-                    "1",
-                    "--output",
-                    str(output_path),
-                ]
-            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = cli.main_with_args(
+                    [
+                        "map-reflectance",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "vnir_spectrum",
+                        "--k",
+                        "1",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
 
             self.assertEqual(exit_code, 0)
             with output_path.open("r", encoding="utf-8", newline="") as handle:
@@ -736,25 +1121,26 @@ class MappingCliTests(unittest.TestCase):
                     {"band_id": "swir", "reflectance": 0.90, "valid": "false"},
                 ],
             )
-            exit_code = cli.main_with_args(
-                [
-                    "map-reflectance",
-                    "--prepared-root",
-                    str(fixture["prepared_root"]),
-                    "--source-sensor",
-                    "sensor_a",
-                    "--target-sensor",
-                    "sensor_b",
-                    "--input",
-                    str(input_path),
-                    "--output-mode",
-                    "target_sensor",
-                    "--k",
-                    "1",
-                    "--output",
-                    str(output_path),
-                ]
-            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = cli.main_with_args(
+                    [
+                        "map-reflectance",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--target-sensor",
+                        "sensor_b",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "target_sensor",
+                        "--k",
+                        "1",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
 
             self.assertEqual(exit_code, 0)
             with output_path.open("r", encoding="utf-8", newline="") as handle:
