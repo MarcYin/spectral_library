@@ -11,6 +11,7 @@ This guide covers the public package surface for `spectral-library`:
 Additional public docs:
 
 - [`index.md`](index.md)
+- [`theory.md`](theory.md)
 - [`official_sensor_examples.md`](official_sensor_examples.md)
 - [`cli_reference.md`](cli_reference.md)
 - [`python_api_reference.md`](python_api_reference.md)
@@ -45,7 +46,7 @@ Optional dependency groups:
 - `.[internal-build]`
   for the retained normalization, plotting, and SIAC-build commands
 - `.[docs]`
-  for the static documentation site and GitHub Pages build path
+  for the MkDocs site and GitHub Pages build path
 - `.[accel]`
   for optional Rust-backed smoothing utilities used by internal scripts
 - `.[dev]`

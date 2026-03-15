@@ -28,8 +28,10 @@ for its public Python API, CLI, and prepared-runtime contract.
 - Public docs index, CLI reference, Python API reference, prepared-runtime
   contract guide, and official-source MODIS/Sentinel-2A/Landsat 8/Landsat 9
   examples with generated visuals
-- Static docs-site build tooling plus GitHub Pages deployment from this repo's
+- MkDocs documentation site with GitHub Pages deployment from this repo's
   GitHub Actions workflows
+- Mathematical foundations documentation covering the forward model,
+  segment-wise retrieval equations, overlap blending, and benchmark metrics
 - Internal pipeline reference in
   [`docs/internal_build_pipeline.md`](docs/internal_build_pipeline.md)
 - Release contract tests, package smoke tooling, and GitHub Actions workflows

@@ -1,0 +1,122 @@
+body {
+  background:
+    radial-gradient(circle at top left, rgba(226, 186, 89, 0.16), transparent 22%),
+    linear-gradient(180deg, #f5f1e6 0%, #ffffff 34%);
+}
+
+.container {
+  max-width: 1240px;
+}
+
+.navbar {
+  background: linear-gradient(90deg, #18344a 0%, #0f2434 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.navbar-brand,
+.navbar-nav > li > a {
+  text-shadow: none;
+}
+
+.navbar-brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.bs-sidebar.affix,
+.bs-sidebar.affix-bottom,
+.bs-sidebar.affix-top {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid #d7e1ea;
+  border-radius: 0.75rem;
+  box-shadow: 0 12px 28px rgba(16, 42, 67, 0.08);
+  padding: 0.75rem 0;
+}
+
+.bs-sidebar .nav > li > a {
+  color: #17324d;
+}
+
+.bs-sidebar .nav > .active > a,
+.bs-sidebar .nav > .active:hover > a,
+.bs-sidebar .nav > .active:focus > a {
+  border-left-color: #c2712d;
+  color: #102a43;
+  font-weight: 600;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: #102a43;
+  line-height: 1.15;
+}
+
+h1 {
+  font-size: clamp(2.2rem, 4vw, 3.2rem);
+  margin-bottom: 1rem;
+}
+
+h2 {
+  border-top: 1px solid #d9e2ec;
+  margin-top: 2.3rem;
+  padding-top: 1.2rem;
+}
+
+p,
+li {
+  line-height: 1.72;
+}
+
+a {
+  color: #0f609b;
+}
+
+code,
+pre {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+code {
+  background: #eef4f8;
+  border-radius: 0.25rem;
+  color: #0b395b;
+  padding: 0.12rem 0.3rem;
+}
+
+pre {
+  background: #102a43;
+  border: 0;
+  border-radius: 0.75rem;
+  box-shadow: 0 16px 32px rgba(16, 42, 67, 0.12);
+  color: #f0f4f8;
+  padding: 1rem 1.1rem;
+}
+
+pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+table {
+  background: #ffffff;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 10px 24px rgba(16, 42, 67, 0.06);
+}
+
+img {
+  border-radius: 0.75rem;
+  box-shadow: 0 16px 30px rgba(16, 42, 67, 0.14);
+}
+
+.arithmatex {
+  overflow-x: auto;
+}
+
+.arithmatex + p,
+.arithmatex + ul {
+  margin-top: 1rem;
+}

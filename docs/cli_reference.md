@@ -157,6 +157,9 @@ Optional arguments:
 Sensor JSON files are documented in [Mapping Quickstart](mapping_quickstart.md)
 and [Prepared Runtime Contract](prepared_runtime_contract.md).
 
+The mathematical model behind the CLI outputs is documented in
+[Mathematical Foundations](theory.md).
+
 Example inputs and outputs using official MODIS, Sentinel-2A, Landsat 8, and
 Landsat 9 responses are in
 [Official Sensor Examples](official_sensor_examples.md).

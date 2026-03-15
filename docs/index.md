@@ -16,6 +16,9 @@ Start with these public pages:
 - [Official Sensor Examples](official_sensor_examples.md)
   for reproducible MODIS, Sentinel-2A, Landsat 8, and Landsat 9 examples built
   from official RSR sources
+- [Mathematical Foundations](theory.md)
+  for the forward model, segment-wise retrieval equations, overlap blending,
+  and benchmark metrics used by the implementation
 - [CLI Reference](cli_reference.md)
   for the public commands, required flags, CSV layouts, and outputs
 - [Python API Reference](python_api_reference.md)
@@ -26,7 +29,7 @@ Start with these public pages:
 Reference and release pages:
 
 - [Release Notes 0.1.0](releases/0.1.0.md)
-- [Release Process](../RELEASE.md)
+- [Release Process](release_process.md)
 
 Internal and design pages:
 
@@ -36,6 +39,6 @@ Internal and design pages:
 
 Example data bundled in the repository:
 
-- [Official mapping example bundle](../examples/official_mapping/README.md)
+- [Official mapping example bundle](example_bundle.md)
   with official-source SRF JSON, a compact SIAC-style example library, example
   queries, generated outputs, and plot assets

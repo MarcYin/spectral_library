@@ -31,7 +31,7 @@ jobs:
           python -m pip install -e ".[docs]"
 
       - name: Build docs site
-        run: python scripts/build_docs_site.py --output-root build/docs-site
+        run: python -m mkdocs build --clean --config-file mkdocs.yml --site-dir build/docs-site
 
       - uses: actions/configure-pages@v5
 

@@ -189,3 +189,6 @@ Each public error includes:
 `SensorSRFSchema` is the public in-memory representation of a sensor JSON
 document. The JSON contract and prepared-runtime layout are documented in
 [Prepared Runtime Contract](prepared_runtime_contract.md).
+
+For the mathematical model behind retrieval, target-sensor simulation, and the
+benchmark baseline, see [Mathematical Foundations](theory.md).

@@ -1,0 +1,52 @@
+site_name: spectral-library
+site_description: Prepared spectral-library mapping, reconstruction, and official sensor examples.
+site_url: https://marcyin.github.io/spectral_library/
+repo_url: https://github.com/MarcYin/spectral_library
+repo_name: MarcYin/spectral_library
+docs_dir: docs
+site_dir: build/docs-site
+use_directory_urls: false
+exclude_docs: |
+  github-actions.md
+  metadata_only_actual_links.md
+  remaining_suspicious_repair_plan.md
+  remaining_suspicious_source_review_20260315.md
+  scale_factor_verification.md
+  specchio_access.md
+  vegetation_library_candidates.md
+hooks:
+  - docs/mkdocs_hooks.py
+theme:
+  name: mkdocs
+nav:
+  - Home: index.md
+  - Quickstart: mapping_quickstart.md
+  - Mathematical Foundations: theory.md
+  - Official Sensor Examples: official_sensor_examples.md
+  - Example Bundle: example_bundle.md
+  - CLI Reference: cli_reference.md
+  - Python API: python_api_reference.md
+  - Prepared Runtime Contract: prepared_runtime_contract.md
+  - Release Notes:
+      - "0.1.0": releases/0.1.0.md
+  - Release Process: release_process.md
+  - Internal Build Pipeline: internal_build_pipeline.md
+  - Mapping Design: spectral_mapping_usage_plan.md
+  - Release Design: production_release_standard_plan.md
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+extra_css:
+  - assets/mkdocs-extra.css
+extra_javascript:
+  - assets/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js

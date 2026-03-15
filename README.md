@@ -22,6 +22,8 @@ The public names are:
   [`docs/index.md`](docs/index.md)
 - public install and usage guide:
   [`docs/mapping_quickstart.md`](docs/mapping_quickstart.md)
+- mathematical foundations and retrieval theory:
+  [`docs/theory.md`](docs/theory.md)
 - official MODIS, Sentinel-2A, Landsat 8, and Landsat 9 examples:
   [`docs/official_sensor_examples.md`](docs/official_sensor_examples.md)
 - public CLI reference:
@@ -64,6 +66,8 @@ For the static documentation site and GitHub Pages build path, install:
 ```bash
 python3 -m pip install ".[docs]"
 ```
+
+The published docs site is built with MkDocs from [mkdocs.yml](mkdocs.yml).
 
 ## Minimal Example
 
