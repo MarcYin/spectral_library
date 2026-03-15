@@ -22,6 +22,22 @@ Install from this repository in a Python `3.9+` environment:
 python3 -m pip install .
 ```
 
+Supported Python versions in CI are:
+
+- `3.9`
+- `3.10`
+- `3.11`
+- `3.12`
+
+Optional dependency groups:
+
+- `.[internal-build]`
+  for the retained normalization, plotting, and SIAC-build commands
+- `.[accel]`
+  for optional Rust-backed smoothing utilities used by internal scripts
+- `.[dev]`
+  for test and release tooling
+
 ## Prepare A Mapping Runtime
 
 Build a prepared runtime from a SIAC export plus one or more sensor SRF JSON
@@ -201,3 +217,17 @@ The prepared runtime root is the public on-disk contract used by mapping:
 - `source_<sensor_id>_swir.npy`
 - `sensor_schema.json`
 - `checksums.json`
+
+## Compatibility Policy
+
+The stable `1.x` public contract covers:
+
+- the Python API entry points documented in this guide
+- the CLI commands documented in this guide
+- the prepared-runtime schema version and required root layout
+- the stable output modes:
+  `target_sensor`, `vnir_spectrum`, `swir_spectrum`, `full_spectrum`
+
+Additive optional parameters and additive manifest fields are allowed in minor
+releases. Renames, removals, required-parameter additions, or schema-breaking
+prepared-runtime changes require a major version.

@@ -32,6 +32,15 @@ Install from this repository in a Python `3.9+` environment:
 python3 -m pip install .
 ```
 
+Supported Python versions in CI are `3.9`, `3.10`, `3.11`, and `3.12`.
+
+For the retained internal normalization and QA commands, install the optional
+internal-build dependencies:
+
+```bash
+python3 -m pip install ".[internal-build]"
+```
+
 ## Minimal Example
 
 Prepare a mapping runtime:
