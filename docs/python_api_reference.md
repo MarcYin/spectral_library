@@ -33,7 +33,7 @@ from pathlib import Path
 from spectral_library import prepare_mapping_library
 
 manifest = prepare_mapping_library(
-    siac_root=Path("examples/official_mapping/siac"),
+    siac_root=Path("build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37"),
     srf_root=Path("examples/official_mapping/srfs"),
     output_root=Path("build/official_mapping_runtime"),
     source_sensors=["modis_terra", "sentinel2a_msi", "landsat8_oli", "landsat9_oli"],
@@ -101,7 +101,7 @@ import csv
 
 from spectral_library import SpectralMapper
 
-query_path = Path("examples/official_mapping/queries/single/dense_vegetation_modis_terra.csv")
+query_path = Path("examples/official_mapping/queries/single/blue_spruce_needles_modis_terra.csv")
 reflectance = {}
 with query_path.open("r", encoding="utf-8", newline="") as handle:
     for row in csv.DictReader(handle):
@@ -113,7 +113,6 @@ result = mapper.map_reflectance(
     reflectance=reflectance,
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
-    k=3,
 )
 ```
 
@@ -125,23 +124,23 @@ from spectral_library import SpectralMapper
 mapper = SpectralMapper(Path("build/official_mapping_runtime"))
 batch = mapper.map_reflectance_batch(
     source_sensor="landsat8_oli",
-    sample_ids=["dense_vegetation", "bright_soil", "turbid_water", "asphalt"],
+    sample_ids=["blue_spruce_needles", "pale_brown_silty_loam", "tap_water", "asphalt_road"],
     reflectance_rows=[
-        {"ultra_blue": 0.03511018, "blue": 0.04232701, "green": 0.08010689, "red": 0.02404218, "nir": 0.56492711, "swir1": 0.45158788, "swir2": 0.28757895},
-        {"ultra_blue": 0.16515787, "blue": 0.16991066, "green": 0.17936012, "red": 0.19055300, "nir": 0.21574854, "swir1": 0.33057901, "swir2": 0.34816245},
-        {"ultra_blue": 0.08220505, "blue": 0.08545536, "green": 0.09594336, "red": 0.09473721, "nir": 0.02853783, "swir1": 0.0, "swir2": 0.0},
-        {"ultra_blue": 0.05254817, "blue": 0.05482323, "green": 0.05978893, "red": 0.06668515, "nir": 0.08302571, "swir1": 0.10971880, "swir2": 0.13942782},
+        {"ultra_blue": 0.08565344, "blue": 0.08364366, "green": 0.10364797, "red": 0.06556322, "nir": 0.39777808, "swir1": 0.09562342, "swir2": 0.03500909},
+        {"ultra_blue": 0.05807071, "blue": 0.09366218, "green": 0.19350962, "red": 0.28368705, "nir": 0.36777489, "swir1": 0.48421241, "swir2": 0.45429637},
+        {"ultra_blue": 0.02863228, "blue": 0.02789226, "green": 0.02699205, "red": 0.02652986, "nir": 0.02617234, "swir1": 0.02100237, "swir2": 0.01889161},
+        {"ultra_blue": 0.06766724, "blue": 0.07308879, "green": 0.08826971, "red": 0.10323628, "nir": 0.12662063, "swir1": 0.19511989, "swir2": 0.21389012},
     ],
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
-    k=3,
 )
 ```
 
-The bundled example runtime keeps the full synthetic catalogue. The published
-CLI examples then self-exclude the matching `sample_name` for each query so the
-mapper cannot return the identical row as its own neighbor while still keeping
-the rest of the catalogue available.
+The public official examples in the docs use the external full SIAC library and
+exclude exact held-out rows in the CLI workflow with `--exclude-row-id` or the
+batch CSV `exclude_row_id` column. The Python examples above show the direct
+runtime calls themselves; if you need the exact held-out evaluation behavior,
+follow the CLI example inputs in [Official Sensor Examples](official_sensor_examples.md).
 
 ## Result Objects
 
@@ -152,7 +151,7 @@ the rest of the catalogue available.
 | `target_reflectance` | mapped target reflectance values, when applicable |
 | `target_band_ids` | target band ids paired with `target_reflectance` |
 | `reconstructed_vnir` | reconstructed `400-1000 nm` segment |
-| `reconstructed_swir` | reconstructed `900-2500 nm` segment |
+| `reconstructed_swir` | reconstructed `800-2500 nm` segment |
 | `reconstructed_full_spectrum` | overlap-blended `400-2500 nm` reconstruction |
 | `reconstructed_wavelength_nm` | wavelength grid for the requested spectral output |
 | `neighbor_ids_by_segment` | retrieved library row ids for each segment |

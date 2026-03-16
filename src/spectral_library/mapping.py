@@ -29,9 +29,9 @@ CANONICAL_START_NM = 400
 CANONICAL_END_NM = 2500
 VNIR_START_NM = 400
 VNIR_END_NM = 1000
-SWIR_START_NM = 900
+SWIR_START_NM = 800
 SWIR_END_NM = 2500
-FULL_BLEND_START_NM = 900
+FULL_BLEND_START_NM = 800
 FULL_BLEND_END_NM = 1000
 
 CANONICAL_WAVELENGTHS = np.arange(CANONICAL_START_NM, CANONICAL_END_NM + 1, dtype=np.int32)
@@ -430,24 +430,42 @@ def _segment_wavelengths(segment: str) -> np.ndarray:
 def _blend_overlap(vnir: np.ndarray, swir: np.ndarray) -> np.ndarray:
     overlap_wavelengths = np.arange(FULL_BLEND_START_NM, FULL_BLEND_END_NM + 1, dtype=np.float64)
     weights = (FULL_BLEND_END_NM - overlap_wavelengths) / (FULL_BLEND_END_NM - FULL_BLEND_START_NM)
-    return weights * vnir[500:601] + (1.0 - weights) * swir[:101]
+    vnir_overlap_start = FULL_BLEND_START_NM - VNIR_START_NM
+    swir_overlap_start = FULL_BLEND_START_NM - SWIR_START_NM
+    overlap_length = overlap_wavelengths.size
+    return (
+        weights * vnir[vnir_overlap_start : vnir_overlap_start + overlap_length]
+        + (1.0 - weights) * swir[swir_overlap_start : swir_overlap_start + overlap_length]
+    )
 
 
 def _assemble_full_spectrum(vnir: np.ndarray, swir: np.ndarray) -> np.ndarray:
     full = np.empty(FULL_WAVELENGTH_COUNT, dtype=np.float64)
-    full[:500] = vnir[:500]
-    full[500:601] = _blend_overlap(vnir, swir)
-    full[601:] = swir[101:]
+    blend_start = FULL_BLEND_START_NM - CANONICAL_START_NM
+    blend_stop = FULL_BLEND_END_NM - CANONICAL_START_NM + 1
+    swir_overlap_stop = FULL_BLEND_END_NM - SWIR_START_NM + 1
+    full[:blend_start] = vnir[:blend_start]
+    full[blend_start:blend_stop] = _blend_overlap(vnir, swir)
+    full[blend_stop:] = swir[swir_overlap_stop:]
     return full
 
 
 def _assemble_full_spectrum_batch(vnir: np.ndarray, swir: np.ndarray) -> np.ndarray:
     full = np.empty((vnir.shape[0], FULL_WAVELENGTH_COUNT), dtype=np.float64)
-    full[:, :500] = vnir[:, :500]
+    blend_start = FULL_BLEND_START_NM - CANONICAL_START_NM
+    blend_stop = FULL_BLEND_END_NM - CANONICAL_START_NM + 1
+    vnir_overlap_start = FULL_BLEND_START_NM - VNIR_START_NM
+    swir_overlap_start = FULL_BLEND_START_NM - SWIR_START_NM
+    swir_overlap_stop = FULL_BLEND_END_NM - SWIR_START_NM + 1
+    full[:, :blend_start] = vnir[:, :blend_start]
     overlap_wavelengths = np.arange(FULL_BLEND_START_NM, FULL_BLEND_END_NM + 1, dtype=np.float64)
     weights = (FULL_BLEND_END_NM - overlap_wavelengths) / (FULL_BLEND_END_NM - FULL_BLEND_START_NM)
-    full[:, 500:601] = weights * vnir[:, 500:601] + (1.0 - weights) * swir[:, :101]
-    full[:, 601:] = swir[:, 101:]
+    overlap_length = overlap_wavelengths.size
+    full[:, blend_start:blend_stop] = (
+        weights * vnir[:, vnir_overlap_start : vnir_overlap_start + overlap_length]
+        + (1.0 - weights) * swir[:, swir_overlap_start : swir_overlap_start + overlap_length]
+    )
+    full[:, blend_stop:] = swir[:, swir_overlap_stop:]
     return full
 
 
@@ -519,6 +537,24 @@ def _ordered_neighbor_rows(
     return candidate_row_indices[ordered_local], np.asarray(distances[ordered_local], dtype=np.float64)
 
 
+def _source_retrieval_bands(schema: SensorSRFSchema, segment: str) -> tuple[SensorBandDefinition, ...]:
+    if segment == "swir":
+        return tuple(
+            band
+            for band in schema.bands
+            if band.segment == "swir" or band.band_id == "nir"
+        )
+    return schema.bands_for_segment(segment)
+
+
+def _source_retrieval_band_indices(schema: SensorSRFSchema, segment: str) -> tuple[int, ...]:
+    return tuple(
+        index
+        for index, band in enumerate(schema.bands)
+        if band.segment == segment or (segment == "swir" and band.band_id == "nir")
+    )
+
+
 def _resample_band_response(band: SensorBandDefinition, *, segment_only: bool) -> np.ndarray:
     canonical = np.interp(
         CANONICAL_WAVELENGTHS.astype(np.float64),
@@ -548,6 +584,25 @@ def _simulate_segment_matrix(
                 context={"band_id": band.band_id, "segment": band.segment},
             )
         matrix[:, index] = (hyperspectral_segment @ response / denominator).astype(dtype, copy=False)
+    return matrix
+
+
+def _simulate_source_retrieval_matrix(
+    hyperspectral_full: np.ndarray,
+    bands: Sequence[SensorBandDefinition],
+    *,
+    dtype: np.dtype[Any],
+) -> np.ndarray:
+    matrix = np.empty((hyperspectral_full.shape[0], len(bands)), dtype=dtype)
+    for index, band in enumerate(bands):
+        response = _resample_band_response(band, segment_only=False)
+        denominator = float(response.sum())
+        if denominator <= 0:
+            raise SensorSchemaError(
+                "Resampled SRF support must remain positive.",
+                context={"band_id": band.band_id, "segment": band.segment},
+            )
+        matrix[:, index] = (hyperspectral_full @ response / denominator).astype(dtype, copy=False)
     return matrix
 
 
@@ -639,6 +694,7 @@ def _load_siac_rows(
             )
 
         spectra_by_key: dict[tuple[str, str, str], np.ndarray] = {}
+        canonical_wavelengths = np.asarray(expected_wavelengths, dtype=np.float64)
         for row in spectra_reader:
             key = (row["source_id"], row["spectrum_id"], row["sample_name"])
             if key in spectra_by_key:
@@ -646,7 +702,42 @@ def _load_siac_rows(
                     "Duplicate spectra rows were found while preparing the mapping library.",
                     context={"source_id": key[0], "spectrum_id": key[1], "sample_name": key[2]},
                 )
-            spectra_by_key[key] = np.asarray([float(row[column]) for column in nm_columns], dtype=dtype)
+            values: list[float] = []
+            for column in nm_columns:
+                cell = row.get(column)
+                if cell is None or str(cell).strip() == "":
+                    values.append(float("nan"))
+                    continue
+                try:
+                    values.append(float(cell))
+                except (TypeError, ValueError) as exc:
+                    raise PreparedLibraryBuildError(
+                        "SIAC normalized spectra nm_* values must be numeric when present.",
+                        context={
+                            "spectra_path": str(spectra_path),
+                            "source_id": key[0],
+                            "spectrum_id": key[1],
+                            "sample_name": key[2],
+                            "column": column,
+                            "value": cell,
+                        },
+                    ) from exc
+            spectrum = np.asarray(values, dtype=np.float64)
+            if np.isnan(spectrum).any():
+                valid = np.isfinite(spectrum)
+                if int(valid.sum()) < 2:
+                    raise PreparedLibraryBuildError(
+                        "SIAC normalized spectra rows with missing nm_* cells must contain at least two numeric values.",
+                        context={
+                            "spectra_path": str(spectra_path),
+                            "source_id": key[0],
+                            "spectrum_id": key[1],
+                            "sample_name": key[2],
+                            "missing_value_count": int(np.isnan(spectrum).sum()),
+                        },
+                    )
+                spectrum = np.interp(canonical_wavelengths, canonical_wavelengths[valid], spectrum[valid])
+            spectra_by_key[key] = np.asarray(spectrum, dtype=dtype)
 
     aligned_metadata_rows: list[dict[str, object]] = []
     hyperspectral = np.empty((len(metadata_rows), FULL_WAVELENGTH_COUNT), dtype=dtype)
@@ -898,9 +989,9 @@ def prepare_mapping_library(
     for sensor_id in source_sensor_ids:
         schema = sensors[sensor_id]
         for segment in SEGMENTS:
-            bands = schema.bands_for_segment(segment)
-            segment_matrix = _simulate_segment_matrix(
-                hyperspectral_vnir if segment == "vnir" else hyperspectral_swir,
+            bands = _source_retrieval_bands(schema, segment)
+            segment_matrix = _simulate_source_retrieval_matrix(
+                hyperspectral,
                 bands,
                 dtype=dtype_np,
             )
@@ -1102,7 +1193,7 @@ class SpectralMapper:
             schema = self.get_sensor_schema(sensor_id)
             for segment in SEGMENTS:
                 matrix = self._load_source_matrix(sensor_id, segment)
-                expected_shape = (self.manifest.row_count, len(schema.bands_for_segment(segment)))
+                expected_shape = (self.manifest.row_count, len(_source_retrieval_bands(schema, segment)))
                 if matrix.shape != expected_shape:
                     raise PreparedLibraryValidationError(
                         "Prepared source retrieval matrix shape does not match the sensor schema.",
@@ -1207,7 +1298,7 @@ class SpectralMapper:
         candidate_row_indices: np.ndarray,
     ) -> _SegmentRetrieval:
         source_schema = self.get_sensor_schema(source_sensor)
-        query_band_ids = tuple(band.band_id for band in source_schema.bands_for_segment(segment))
+        query_band_ids = tuple(band.band_id for band in _source_retrieval_bands(source_schema, segment))
         valid_band_count = int(valid_mask.sum())
         if valid_band_count < min_valid_bands:
             return _SegmentRetrieval(
@@ -1262,7 +1353,7 @@ class SpectralMapper:
         candidate_row_indices: np.ndarray,
     ) -> tuple[_SegmentRetrieval, ...]:
         source_schema = self.get_sensor_schema(source_sensor)
-        query_band_ids = tuple(band.band_id for band in source_schema.bands_for_segment(segment))
+        query_band_ids = tuple(band.band_id for band in _source_retrieval_bands(source_schema, segment))
         source_matrix = self._load_source_matrix(source_sensor, segment)
         if source_matrix.shape[1] != len(query_band_ids):
             raise PreparedLibraryValidationError(
@@ -1569,7 +1660,7 @@ class SpectralMapper:
 
         segment_retrievals: dict[str, _SegmentRetrieval] = {}
         for segment in SEGMENTS:
-            segment_indices = [index for index, band in enumerate(source_schema.bands) if band.segment == segment]
+            segment_indices = list(_source_retrieval_band_indices(source_schema, segment))
             segment_values = query_values[segment_indices]
             segment_valid = query_valid_mask[segment_indices]
             retrieval = self._retrieve_segment(
@@ -1684,7 +1775,7 @@ class SpectralMapper:
         candidate_rows = self._candidate_rows(None)
         segment_retrievals_by_segment: dict[str, tuple[_SegmentRetrieval, ...]] = {}
         for segment in SEGMENTS:
-            segment_indices = [index for index, band in enumerate(source_schema.bands) if band.segment == segment]
+            segment_indices = list(_source_retrieval_band_indices(source_schema, segment))
             segment_retrievals_by_segment[segment] = self._retrieve_segment_batch(
                 source_sensor=source_sensor,
                 segment=segment,
@@ -1717,13 +1808,13 @@ class SpectralMapper:
 
     def _source_queries(self, source_sensor: str) -> np.ndarray:
         if source_sensor not in self._source_query_cache:
+            query_matrix, band_ids = self._simulate_full_sensor_matrix(source_sensor)
             schema = self.get_sensor_schema(source_sensor)
-            query_matrix = np.empty((self.manifest.row_count, len(schema.bands)), dtype=np.float64)
-            segment_offsets = {segment: 0 for segment in SEGMENTS}
-            for band_index, band in enumerate(schema.bands):
-                segment_matrix = self._load_source_matrix(source_sensor, band.segment)
-                query_matrix[:, band_index] = segment_matrix[:, segment_offsets[band.segment]]
-                segment_offsets[band.segment] += 1
+            if band_ids != schema.band_ids():
+                raise PreparedLibraryValidationError(
+                    "Prepared source query matrix band order does not match the sensor schema.",
+                    context={"source_sensor": source_sensor},
+                )
             self._source_query_cache[source_sensor] = query_matrix
         return self._source_query_cache[source_sensor]
 

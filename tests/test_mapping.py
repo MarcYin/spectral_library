@@ -46,7 +46,7 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, object]])
 def _spectrum_values(vnir: float, overlap: float, swir: float) -> dict[str, float]:
     row: dict[str, float] = {}
     for wavelength in WAVELENGTHS:
-        if wavelength < 900:
+        if wavelength < 800:
             value = vnir
         elif wavelength <= 1000:
             value = overlap
@@ -200,7 +200,7 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertTrue((fixture["prepared_root"] / "checksums.json").exists())
 
             self.assertEqual(np.load(fixture["prepared_root"] / "hyperspectral_vnir.npy").shape, (4, 601))
-            self.assertEqual(np.load(fixture["prepared_root"] / "hyperspectral_swir.npy").shape, (4, 1601))
+            self.assertEqual(np.load(fixture["prepared_root"] / "hyperspectral_swir.npy").shape, (4, 1701))
             self.assertEqual(np.load(fixture["prepared_root"] / "source_sensor_a_vnir.npy").shape, (4, 1))
             self.assertEqual(np.load(fixture["prepared_root"] / "source_sensor_a_swir.npy").shape, (4, 1))
 
@@ -253,6 +253,56 @@ class MappingWorkflowTests(unittest.TestCase):
             with self.assertRaises(MappingInputError):
                 mapper.candidate_row_indices(exclude_row_ids=["fixture_source:missing:missing"])
 
+    def test_swir_retrieval_query_includes_nir_bridge_band_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture = _build_fixture(root)
+            source_sensor = {
+                "sensor_id": "sensor_overlap",
+                "bands": [
+                    {
+                        "band_id": "blue",
+                        "segment": "vnir",
+                        "wavelength_nm": [445.0, 450.0, 455.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                    {
+                        "band_id": "nir",
+                        "segment": "vnir",
+                        "wavelength_nm": [845.0, 850.0, 855.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                    {
+                        "band_id": "swir",
+                        "segment": "swir",
+                        "wavelength_nm": [1595.0, 1600.0, 1605.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                ],
+            }
+            (fixture["srf_root"] / "sensor_overlap.json").write_text(
+                json.dumps(source_sensor, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            prepare_mapping_library(
+                fixture["siac_root"],
+                fixture["srf_root"],
+                fixture["prepared_root"],
+                ["sensor_overlap"],
+            )
+            mapper = SpectralMapper(fixture["prepared_root"])
+            result = mapper.map_reflectance(
+                source_sensor="sensor_overlap",
+                reflectance={"blue": 0.80, "nir": 0.40, "swir": 0.20},
+                output_mode="swir_spectrum",
+                k=1,
+            )
+
+            self.assertEqual(
+                result.diagnostics["segments"]["swir"]["query_band_ids"],
+                ["nir", "swir"],
+            )
+
     def test_full_spectrum_output_blends_vnir_and_swir_segment_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -271,8 +321,9 @@ class MappingWorkflowTests(unittest.TestCase):
             full_spectrum = result.reconstructed_full_spectrum
             assert full_spectrum is not None
             self.assertAlmostEqual(full_spectrum[450 - 400], 0.80, places=6)
-            self.assertAlmostEqual(full_spectrum[900 - 400], 0.40, places=6)
-            self.assertAlmostEqual(full_spectrum[950 - 400], 0.65, places=6)
+            self.assertAlmostEqual(full_spectrum[800 - 400], 0.40, places=6)
+            self.assertAlmostEqual(full_spectrum[900 - 400], 0.65, places=6)
+            self.assertAlmostEqual(full_spectrum[950 - 400], 0.775, places=6)
             self.assertAlmostEqual(full_spectrum[1000 - 400], 0.90, places=6)
             self.assertAlmostEqual(full_spectrum[1600 - 400], 0.90, places=6)
 
@@ -336,6 +387,33 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertNotEqual(float(base.target_reflectance[0]), float(changed_vnir.target_reflectance[0]))
             self.assertEqual(float(base.target_reflectance[1]), float(changed_vnir.target_reflectance[1]))
 
+    def test_segment_isolation_keeps_vnir_output_stable_when_only_swir_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+
+            mapper = SpectralMapper(fixture["prepared_root"])
+            base = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                target_sensor="sensor_b",
+                reflectance={"blue": 0.80, "swir": 0.15},
+                output_mode="target_sensor",
+                k=1,
+            )
+            changed_swir = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                target_sensor="sensor_b",
+                reflectance={"blue": 0.80, "swir": 0.90},
+                output_mode="target_sensor",
+                k=1,
+            )
+
+            assert base.target_reflectance is not None
+            assert changed_swir.target_reflectance is not None
+            self.assertEqual(base.neighbor_ids_by_segment["vnir"], changed_swir.neighbor_ids_by_segment["vnir"])
+            self.assertNotEqual(base.neighbor_ids_by_segment["swir"], changed_swir.neighbor_ids_by_segment["swir"])
+            self.assertEqual(float(base.target_reflectance[0]), float(changed_swir.target_reflectance[0]))
+            self.assertNotEqual(float(base.target_reflectance[1]), float(changed_swir.target_reflectance[1]))
+
     def test_target_sensor_output_can_emit_only_successful_segments(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -375,7 +453,7 @@ class MappingWorkflowTests(unittest.TestCase):
 
             self.assertEqual(int(vnir_result.reconstructed_wavelength_nm[0]), 400)
             self.assertEqual(int(vnir_result.reconstructed_wavelength_nm[-1]), 1000)
-            self.assertEqual(int(swir_result.reconstructed_wavelength_nm[0]), 900)
+            self.assertEqual(int(swir_result.reconstructed_wavelength_nm[0]), 800)
             self.assertEqual(int(swir_result.reconstructed_wavelength_nm[-1]), 2500)
             self.assertIsNotNone(vnir_result.reconstructed_vnir)
             self.assertIsNotNone(swir_result.reconstructed_swir)
@@ -958,6 +1036,53 @@ class MappingValidationTests(unittest.TestCase):
                 ["source_id", "spectrum_id", "sample_name", *NM_COLUMNS],
                 [full_row],
             )
+            with self.assertRaises(PreparedLibraryBuildError):
+                mapping_module._load_siac_rows(metadata_path, spectra_path, dtype=np.dtype("float32"))
+
+    def test_load_siac_rows_interpolates_sparse_blank_nm_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path = root / "metadata.csv"
+            spectra_path = root / "spectra.csv"
+            _write_csv(
+                metadata_path,
+                ["source_id", "spectrum_id", "sample_name"],
+                [{"source_id": "s1", "spectrum_id": "a", "sample_name": "a"}],
+            )
+            row = {"source_id": "s1", "spectrum_id": "a", "sample_name": "a", **_spectrum_values(0.1, 0.2, 0.3)}
+            row["nm_2500"] = ""
+            _write_csv(
+                spectra_path,
+                ["source_id", "spectrum_id", "sample_name", *NM_COLUMNS],
+                [row],
+            )
+
+            _, _, hyperspectral = mapping_module._load_siac_rows(
+                metadata_path,
+                spectra_path,
+                dtype=np.dtype("float32"),
+            )
+
+            self.assertAlmostEqual(float(hyperspectral[0][-1]), float(hyperspectral[0][-2]), places=6)
+
+    def test_load_siac_rows_rejects_rows_with_too_few_numeric_nm_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path = root / "metadata.csv"
+            spectra_path = root / "spectra.csv"
+            _write_csv(
+                metadata_path,
+                ["source_id", "spectrum_id", "sample_name"],
+                [{"source_id": "s1", "spectrum_id": "a", "sample_name": "a"}],
+            )
+            row = {"source_id": "s1", "spectrum_id": "a", "sample_name": "a", **{column: "" for column in NM_COLUMNS}}
+            row["nm_400"] = 0.1
+            _write_csv(
+                spectra_path,
+                ["source_id", "spectrum_id", "sample_name", *NM_COLUMNS],
+                [row],
+            )
+
             with self.assertRaises(PreparedLibraryBuildError):
                 mapping_module._load_siac_rows(metadata_path, spectra_path, dtype=np.dtype("float32"))
 
@@ -1758,6 +1883,65 @@ class MappingCliTests(unittest.TestCase):
             with output_path.open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual([row["sample_id"] for row in rows], ["base", "vnir_high"])
+            self.assertAlmostEqual(float(rows[0]["target_vnir"]), 0.1, places=6)
+            self.assertAlmostEqual(float(rows[0]["target_swir"]), 0.2, places=6)
+            self.assertAlmostEqual(float(rows[1]["target_vnir"]), 0.6, places=6)
+            self.assertAlmostEqual(float(rows[1]["target_swir"]), 0.25, places=6)
+
+    def test_map_reflectance_batch_command_can_exclude_exact_row_ids_from_input_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_exclude_row_id.csv"
+            output_path = root / "batch_exclude_row_id_output.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "exclude_row_id", "blue", "swir"],
+                [
+                    {
+                        "sample_id": "base_alias",
+                        "exclude_row_id": "fixture_source:base:base",
+                        "blue": 0.15,
+                        "swir": 0.25,
+                    },
+                    {
+                        "sample_id": "vnir_alias",
+                        "exclude_row_id": "fixture_source:vnir_high:vnir_high",
+                        "blue": 0.80,
+                        "swir": 0.20,
+                    },
+                ],
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "map-reflectance-batch",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--target-sensor",
+                        "sensor_b",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "target_sensor",
+                        "--k",
+                        "1",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["input_exclude_row_id_column"])
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual([row["sample_id"] for row in rows], ["base_alias", "vnir_alias"])
             self.assertAlmostEqual(float(rows[0]["target_vnir"]), 0.1, places=6)
             self.assertAlmostEqual(float(rows[0]["target_swir"]), 0.2, places=6)
             self.assertAlmostEqual(float(rows[1]["target_vnir"]), 0.6, places=6)

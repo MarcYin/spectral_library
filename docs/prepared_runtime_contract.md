@@ -15,7 +15,7 @@ Every prepared runtime root must contain:
 | `manifest.json` | top-level runtime metadata |
 | `mapping_metadata.parquet` | row-aligned metadata table |
 | `hyperspectral_vnir.npy` | hyperspectral `400-1000 nm` array |
-| `hyperspectral_swir.npy` | hyperspectral `900-2500 nm` array |
+| `hyperspectral_swir.npy` | hyperspectral `800-2500 nm` array |
 | `sensor_schema.json` | packaged sensor schema document |
 | `checksums.json` | SHA-256 digest manifest |
 | `source_<sensor_id>_vnir.npy` | precomputed source-sensor VNIR matrix |
@@ -83,7 +83,7 @@ Band rules:
 Segment bounds:
 
 - `vnir`: `400-1000 nm`
-- `swir`: `900-2500 nm`
+- `swir`: `800-2500 nm`
 
 ## `checksums.json`
 
@@ -114,6 +114,11 @@ But the checksum document itself is still required.
 - sensor-schema readability
 - row-index continuity and uniqueness in `mapping_metadata.parquet`
 - checksum integrity when hashing is enabled
+
+During `prepare_mapping_library(...)`, sparse blank `nm_*` cells in the SIAC
+normalized spectra table are linearly interpolated on the canonical
+`400-2500 nm` grid when at least two numeric values are present in that row.
+Rows that are too incomplete to interpolate still fail validation.
 
 ## Stable Output Modes
 

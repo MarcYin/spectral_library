@@ -129,8 +129,13 @@ Batch input layouts:
 
 | Layout | Columns |
 | --- | --- |
-| long | `sample_id,band_id,reflectance[,valid]` |
-| wide | `sample_id` plus one column per source band and optional `valid_<band_id>` columns |
+| long | `sample_id,band_id,reflectance[,valid][,exclude_row_id]` |
+| wide | `sample_id`, optional `exclude_row_id`, one column per source band, and optional `valid_<band_id>` columns |
+
+If `exclude_row_id` is present in the batch CSV, the command excludes that one
+exact prepared row for the corresponding sample before retrieval. This is the
+recommended way to run held-out full-library examples without removing other
+rows that share the same class or source.
 
 Batch outputs:
 

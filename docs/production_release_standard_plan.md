@@ -117,7 +117,7 @@ The stable public surface for 1.x should include:
   - `full_spectrum`
 
 The full-spectrum output mode includes the overlap-blending rule already defined
-in the mapping design: VNIR and SWIR outputs are merged across `900-1000 nm`
+in the mapping design: VNIR and SWIR outputs are merged across `800-1000 nm`
 with a linear weighted average.
 
 ### Internal Non-Stable Surface
@@ -310,9 +310,9 @@ The prepared runtime manifest must declare the supported public output modes:
 
 For `full_spectrum`, the standard behavior is:
 
-- use VNIR values directly below `900 nm`,
+- use VNIR values directly below `800 nm`,
 - use SWIR values directly above `1000 nm`,
-- blend `900-1000 nm` with the documented linear weighted average.
+- blend `800-1000 nm` with the documented linear weighted average.
 
 That overlap rule is part of the public standard and must not change within 1.x.
 
@@ -588,7 +588,7 @@ Initial v1 release acceptance thresholds:
   bias must be `<= 0.01` on held-out library truth
 - full-spectrum overlap quality:
   the blend region must not introduce a discontinuity larger than `0.005`
-  reflectance units at the `900/1000 nm` boundaries on the reference test set
+  reflectance units at the `800/1000 nm` boundaries on the reference test set
 
 These thresholds are release gates for v1 package readiness, not claims about
 all possible sensor pairs.

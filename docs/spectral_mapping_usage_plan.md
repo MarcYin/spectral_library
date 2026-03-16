@@ -153,9 +153,9 @@ The default v1 estimator is:
 The workflow is split into two overlapping spectral segments:
 
 - `VNIR = 400-1000 nm`
-- `NIR-SWIR = 900-2500 nm`
+- `NIR-SWIR = 800-2500 nm`
 
-The overlap over `900-1000 nm` exists to preserve information near the
+The overlap over `800-1000 nm` exists to preserve information near the
 silicon/SWIR transition and to avoid unstable boundary behavior during
 retrieval and target simulation.
 
@@ -193,7 +193,7 @@ one spectral region from influencing retrieval in the other region.
 Each segment retrieval produces a segment-specific hyperspectral estimate:
 
 - `\bar{h}^{(vnir)}` over `400-1000 nm`,
-- `\bar{h}^{(swir)}` over `900-2500 nm`.
+- `\bar{h}^{(swir)}` over `800-2500 nm`.
 
 Those segment outputs can then be used in more than one way:
 
@@ -276,7 +276,7 @@ The retrieval workflow should support the following output modes:
 - `vnir_spectrum`
   Return reconstructed hyperspectral VNIR reflectance over `400-1000 nm`.
 - `swir_spectrum`
-  Return reconstructed hyperspectral SWIR reflectance over `900-2500 nm`.
+  Return reconstructed hyperspectral SWIR reflectance over `800-2500 nm`.
 - `full_spectrum`
   Return reconstructed hyperspectral reflectance over `400-2500 nm`.
 
@@ -290,26 +290,26 @@ be merged into one hyperspectral spectrum:
 
 - use the VNIR estimate directly for `400-899 nm`,
 - use the SWIR estimate directly for `1001-2500 nm`,
-- use a weighted average in the overlap `900-1000 nm`.
+- use a weighted average in the overlap `800-1000 nm`.
 
 Let `λ` be wavelength in nanometers. Define a blending weight
 `ω(λ)` over the overlap:
 
 $$
-\omega(\lambda) = \frac{1000 - \lambda}{100}
+\omega(\lambda) = \frac{1000 - \lambda}{200}
 $$
 
-for `900 \le \lambda \le 1000`.
+for `800 \le \lambda \le 1000`.
 
 Then the reconstructed full spectrum `\hat{h}_\lambda` is:
 
 $$
 \hat{h}_\lambda =
 \begin{cases}
-\bar{h}^{(vnir)}_\lambda, & 400 \le \lambda < 900 \\
+\bar{h}^{(vnir)}_\lambda, & 400 \le \lambda < 800 \\
 \omega(\lambda)\bar{h}^{(vnir)}_\lambda +
 \left(1 - \omega(\lambda)\right)\bar{h}^{(swir)}_\lambda, &
-900 \le \lambda \le 1000 \\
+800 \le \lambda \le 1000 \\
 \bar{h}^{(swir)}_\lambda, & 1000 < \lambda \le 2500
 \end{cases}
 $$
@@ -360,7 +360,7 @@ Recommended prepared assets:
 | --- | --- |
 | `mapping_metadata.parquet` | Row-aligned spectrum identifiers, source ids, landcover labels, native range, and coverage metrics. |
 | `hyperspectral_vnir.f32` or `.npy` | `N × 601` array for `400-1000 nm`. |
-| `hyperspectral_swir.f32` or `.npy` | `N × 1601` array for `900-2500 nm`. |
+| `hyperspectral_swir.f32` or `.npy` | `N × 1701` array for `800-2500 nm`. |
 | `source_<sensor_id>_vnir.f32` or `.npy` | `N × B_src_vnir` convolved source matrix for VNIR retrieval. |
 | `source_<sensor_id>_swir.f32` or `.npy` | `N × B_src_swir` convolved source matrix for SWIR retrieval. |
 | `sensor_schema.json` | Sensor and band definitions, segment assignments, wavelength support, and file references. |
@@ -682,12 +682,12 @@ matches driven by a nearly empty query vector.
    SWIR inputs must not change VNIR outputs.
 
 4. Overlap support
-   Queries and target bands around `900-1000 nm` must remain supported without
+   Queries and target bands around `800-1000 nm` must remain supported without
    duplication or boundary dropout.
 
 5. Full-spectrum blend behavior
-   Full reconstructed output must use VNIR values below `900 nm`, SWIR values
-   above `1000 nm`, and weighted overlap blending inside `900-1000 nm`.
+   Full reconstructed output must use VNIR values below `800 nm`, SWIR values
+   above `1000 nm`, and weighted overlap blending inside `800-1000 nm`.
 
 6. Missing-band behavior
    Masked source bands must be excluded from the weighted Euclidean distance,
@@ -723,11 +723,11 @@ Recommended benchmark slices:
   current build pipeline,
 - the design is sensor-agnostic because no SRF datasets are currently committed
   in the repository,
-- default segment windows are `400-1000 nm` and `900-2500 nm`,
+- default segment windows are `400-1000 nm` and `800-2500 nm`,
 - default retrieval metric is weighted Euclidean distance with uniform per-band
   weights over valid bands,
 - default estimator is unweighted top-`k` mean with `k = 10`,
-- default full-spectrum merge uses a linear weighted average over `900-1000 nm`,
+- default full-spectrum merge uses a linear weighted average over `800-1000 nm`,
 - landcover labels are optional evaluation strata and not a mandatory retrieval
   filter,
 - Python-first implementation is the default path,

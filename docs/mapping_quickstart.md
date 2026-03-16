@@ -134,8 +134,8 @@ Batch input layouts:
 
 | Layout | Columns |
 | --- | --- |
-| long | `sample_id,band_id,reflectance[,valid]` |
-| wide | one row per sample, optional `sample_id`, one column per source band, optional `valid_<band_id>` columns |
+| long | `sample_id,band_id,reflectance[,valid][,exclude_row_id]` |
+| wide | one row per sample, optional `sample_id`, optional `exclude_row_id`, one column per source band, optional `valid_<band_id>` columns |
 
 Batch outputs:
 
@@ -146,6 +146,11 @@ Batch outputs:
 
 If only one target segment maps successfully, the missing target-band cells are
 left blank in the batch CSV.
+
+If you are running a held-out evaluation against a shared prepared runtime, put
+the exact prepared `row_id` to exclude in the optional `exclude_row_id`
+column. The official MODIS/Sentinel-2/Landsat example uses this pattern so
+each query removes only its own source row from the full library.
 
 ## Step 6: Use The Python API
 
@@ -197,7 +202,7 @@ Each file in `--srf-root` defines one sensor:
 Band support must stay inside its declared segment:
 
 - `vnir`: `400-1000 nm`
-- `swir`: `900-2500 nm`
+- `swir`: `800-2500 nm`
 
 ## Where To Go Next
 

@@ -147,7 +147,9 @@ def _load_reflectance_input(path: Path) -> tuple[dict[str, float], dict[str, boo
         return reflectance, None
 
 
-def _load_batch_reflectance_input(path: Path) -> tuple[tuple[str, ...], list[dict[str, float]], list[dict[str, bool] | None]]:
+def _load_batch_reflectance_input(
+    path: Path,
+) -> tuple[tuple[str, ...], list[dict[str, float]], list[dict[str, bool] | None], tuple[str | None, ...]]:
     if not path.exists():
         raise SpectralLibraryError("missing_input_file", "Input reflectance CSV does not exist.", context={"path": str(path)})
 
@@ -166,6 +168,7 @@ def _load_batch_reflectance_input(path: Path) -> tuple[tuple[str, ...], list[dic
             sample_indices: dict[str, int] = {}
             reflectance_by_sample: dict[str, dict[str, float]] = {}
             valid_by_sample: dict[str, dict[str, bool]] = {}
+            exclude_row_id_by_sample: dict[str, str | None] = {}
             has_valid = "valid" in fieldnames
             for row in reader:
                 sample_id = (row.get("sample_id") or "").strip()
@@ -180,7 +183,17 @@ def _load_batch_reflectance_input(path: Path) -> tuple[tuple[str, ...], list[dic
                     sample_ids.append(sample_id)
                     reflectance_by_sample[sample_id] = {}
                     valid_by_sample[sample_id] = {}
+                    exclude_row_id_by_sample[sample_id] = None
                 sample_index = sample_indices[sample_id]
+                exclude_row_id = (row.get("exclude_row_id") or "").strip() or None
+                if exclude_row_id_by_sample[sample_id] != exclude_row_id and exclude_row_id_by_sample[sample_id] is not None:
+                    raise SpectralLibraryError(
+                        "invalid_input_csv",
+                        "Batch long-format exclude_row_id values must remain consistent within each sample.",
+                        context={"path": str(path), "sample_id": sample_id, "sample_index": sample_index},
+                    )
+                if exclude_row_id_by_sample[sample_id] is None:
+                    exclude_row_id_by_sample[sample_id] = exclude_row_id
                 band_id = (row.get("band_id") or "").strip()
                 if not band_id:
                     raise SpectralLibraryError(
@@ -216,6 +229,7 @@ def _load_batch_reflectance_input(path: Path) -> tuple[tuple[str, ...], list[dic
                 tuple(sample_ids),
                 [reflectance_by_sample[sample_id] for sample_id in sample_ids],
                 [valid_by_sample[sample_id] if has_valid else None for sample_id in sample_ids],
+                tuple(exclude_row_id_by_sample[sample_id] for sample_id in sample_ids),
             )
 
         rows = list(reader)
@@ -234,7 +248,7 @@ def _load_batch_reflectance_input(path: Path) -> tuple[tuple[str, ...], list[dic
         reflectance_columns = [
             fieldname
             for fieldname in fieldnames
-            if fieldname != "sample_id" and fieldname not in valid_columns.values()
+            if fieldname not in {"sample_id", "exclude_row_id"} and fieldname not in valid_columns.values()
         ]
         if not reflectance_columns:
             raise SpectralLibraryError(
@@ -253,6 +267,7 @@ def _load_batch_reflectance_input(path: Path) -> tuple[tuple[str, ...], list[dic
         sample_ids: list[str] = []
         reflectance_rows: list[dict[str, float]] = []
         valid_rows: list[dict[str, bool] | None] = []
+        exclude_row_ids: list[str | None] = []
         for row_index, row in enumerate(rows):
             if "sample_id" in fieldnames:
                 sample_id = (row.get("sample_id") or "").strip()
@@ -297,8 +312,9 @@ def _load_batch_reflectance_input(path: Path) -> tuple[tuple[str, ...], list[dic
             sample_ids.append(sample_id)
             reflectance_rows.append(reflectance)
             valid_rows.append(valid_mask or None)
+            exclude_row_ids.append((row.get("exclude_row_id") or "").strip() or None)
 
-        return tuple(sample_ids), reflectance_rows, valid_rows
+        return tuple(sample_ids), reflectance_rows, valid_rows, tuple(exclude_row_ids)
 
 
 def _write_mapping_output(
@@ -614,23 +630,28 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
 
 def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
     mapper = SpectralMapper(Path(args.prepared_root))
-    sample_ids, reflectance_rows, valid_mask_rows = _load_batch_reflectance_input(Path(args.input))
+    sample_ids, reflectance_rows, valid_mask_rows, input_exclude_row_ids = _load_batch_reflectance_input(Path(args.input))
     exclude_row_ids = _split_repeated_csv_arg(args.exclude_row_id)
     exclude_sample_names = _split_repeated_csv_arg(args.exclude_sample_name)
-    if exclude_row_ids or exclude_sample_names or args.self_exclude_sample_id:
+    if exclude_row_ids or exclude_sample_names or args.self_exclude_sample_id or any(input_exclude_row_ids):
         base_candidate_row_indices = mapper.candidate_row_indices(
             exclude_row_ids=exclude_row_ids,
             exclude_sample_names=exclude_sample_names,
         )
         results = []
-        for sample_index, (sample_id, reflectance, valid_mask) in enumerate(
-            zip(sample_ids, reflectance_rows, valid_mask_rows)
+        for sample_index, (sample_id, reflectance, valid_mask, input_exclude_row_id) in enumerate(
+            zip(sample_ids, reflectance_rows, valid_mask_rows, input_exclude_row_ids)
         ):
             try:
                 candidate_row_indices = base_candidate_row_indices
+                if input_exclude_row_id:
+                    candidate_row_indices = mapper.candidate_row_indices(
+                        candidate_row_indices,
+                        exclude_row_ids=[input_exclude_row_id],
+                    )
                 if args.self_exclude_sample_id and mapper.has_prepared_sample_name(sample_id):
                     candidate_row_indices = mapper.candidate_row_indices(
-                        base_candidate_row_indices,
+                        candidate_row_indices,
                         exclude_sample_names=[sample_id],
                     )
                 results.append(
@@ -679,6 +700,7 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
         "excluded_row_ids": exclude_row_ids,
         "excluded_sample_names": exclude_sample_names,
         "self_exclude_sample_id": bool(args.self_exclude_sample_id),
+        "input_exclude_row_id_column": any(value is not None for value in input_exclude_row_ids),
     }
     if args.diagnostics_output:
         diagnostics_path = Path(args.diagnostics_output)

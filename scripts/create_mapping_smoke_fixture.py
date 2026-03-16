@@ -22,7 +22,7 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, object]])
 def _spectrum_values(vnir: float, overlap: float, swir: float) -> dict[str, float]:
     row: dict[str, float] = {}
     for wavelength in WAVELENGTHS:
-        if wavelength < 900:
+        if wavelength < 800:
             value = vnir
         elif wavelength <= 1000:
             value = overlap
@@ -144,10 +144,22 @@ def create_smoke_fixture(output_root: Path) -> dict[str, str]:
     batch_query_path = output_root / "query_batch.csv"
     _write_csv(
         batch_query_path,
-        ["sample_id", "blue", "swir", "valid_swir"],
+        ["sample_id", "exclude_row_id", "blue", "swir", "valid_swir"],
         [
-            {"sample_id": "alpha", "blue": 0.80, "swir": 0.20, "valid_swir": "true"},
-            {"sample_id": "beta", "blue": 0.80, "swir": 0.90, "valid_swir": "false"},
+            {
+                "sample_id": "alpha",
+                "exclude_row_id": "smoke_source:vnir_high:vnir_high",
+                "blue": 0.80,
+                "swir": 0.20,
+                "valid_swir": "true",
+            },
+            {
+                "sample_id": "beta",
+                "exclude_row_id": "smoke_source:swir_high:swir_high",
+                "blue": 0.80,
+                "swir": 0.90,
+                "valid_swir": "false",
+            },
         ],
     )
 

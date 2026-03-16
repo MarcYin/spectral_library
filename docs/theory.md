@@ -57,11 +57,16 @@ Let:
 The current runtime splits the spectrum into two overlapping segments:
 
 - `VNIR = 400-1000 nm`
-- `SWIR = 900-2500 nm`
+- `SWIR = 800-2500 nm`
 
 The overlap is intentional. It preserves continuity near the detector
 transition and lets the system reconstruct a stable full `400-2500 nm`
 spectrum.
+
+For retrieval, the SWIR query can also reuse the semantic `nir` source band
+when that band exists in the sensor schema. This gives the SWIR neighbor search
+one bridge feature near the VNIR-SWIR transition instead of relying only on
+`swir1` and `swir2`.
 
 ## Sensor Forward Model
 
@@ -120,6 +125,15 @@ queries:
 Each segment is retrieved independently. Missing VNIR support does not distort
 the SWIR neighborhood, and vice versa.
 
+This remains true even when the source query provides a complete visible-to-SWIR
+band vector. The runtime still performs two independent nearest-neighbor
+searches, one for the VNIR query and one for the NIR-SWIR query, and only
+combines the reconstructed segments after retrieval.
+
+The SWIR retrieval query is slightly augmented: if the source sensor defines a
+semantic `nir` band, that band is appended to the SWIR query feature set so the
+retrieval sees one overlap feature across the detector boundary.
+
 If $B_p^{\text{valid}}$ is the valid source-band set for segment $p$, the
 implementation uses a root-mean-square Euclidean distance:
 
@@ -135,6 +149,7 @@ $$
 Important implementation details:
 
 - only valid source bands are scored
+- the SWIR feature set includes `nir` when available, then the SWIR bands
 - all valid bands currently use uniform weight
 - top-$k$ neighbors are ordered deterministically by distance and row index
 
@@ -155,6 +170,8 @@ This is intentionally simple in v1:
 - it is stable
 - it has no extra tuning parameter
 - it exposes the retrieval behavior directly in diagnostics
+- it is query-centric, so neighbors are not required to be mutually similar or
+  from the same landcover class
 
 The returned diagnostics carry both neighbor identities and neighbor distances
 for each segment.
@@ -184,8 +201,8 @@ When both segment reconstructions are available, the package assembles the full
 $$
 \hat{h}(\lambda) =
 \begin{cases}
-\bar{h}^{(\text{vnir})}(\lambda), & 400 \le \lambda < 900 \\
-w(\lambda)\bar{h}^{(\text{vnir})}(\lambda) + \left(1 - w(\lambda)\right)\bar{h}^{(\text{swir})}(\lambda), & 900 \le \lambda \le 1000 \\
+\bar{h}^{(\text{vnir})}(\lambda), & 400 \le \lambda < 800 \\
+w(\lambda)\bar{h}^{(\text{vnir})}(\lambda) + \left(1 - w(\lambda)\right)\bar{h}^{(\text{swir})}(\lambda), & 800 \le \lambda \le 1000 \\
 \bar{h}^{(\text{swir})}(\lambda), & 1000 < \lambda \le 2500
 \end{cases}
 $$
@@ -193,10 +210,10 @@ $$
 with a linear overlap weight:
 
 $$
-w(\lambda) = \frac{1000 - \lambda}{100}
+w(\lambda) = \frac{1000 - \lambda}{200}
 $$
 
-So the blend is fully VNIR at `900 nm`, fully SWIR at `1000 nm`, and linear in
+So the blend is fully VNIR at `800 nm`, fully SWIR at `1000 nm`, and linear in
 between.
 
 ## Regression Baseline
