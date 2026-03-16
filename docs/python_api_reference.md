@@ -101,7 +101,7 @@ import csv
 
 from spectral_library import SpectralMapper
 
-query_path = Path("examples/official_mapping/queries/single/veg_soil_mix_modis_terra.csv")
+query_path = Path("examples/official_mapping/queries/single/dense_vegetation_modis_terra.csv")
 reflectance = {}
 with query_path.open("r", encoding="utf-8", newline="") as handle:
     for row in csv.DictReader(handle):
@@ -125,17 +125,23 @@ from spectral_library import SpectralMapper
 mapper = SpectralMapper(Path("build/official_mapping_runtime"))
 batch = mapper.map_reflectance_batch(
     source_sensor="landsat8_oli",
-    sample_ids=["veg_soil_mix", "urban_soil_mix", "water_edge_mix"],
+    sample_ids=["dense_vegetation", "bright_soil", "turbid_water", "asphalt"],
     reflectance_rows=[
-        {"ultra_blue": 0.07671433, "blue": 0.08305546, "green": 0.11208171, "red": 0.07725103, "nir": 0.45319132, "swir1": 0.41291375, "swir2": 0.30716747},
-        {"ultra_blue": 0.13998734, "blue": 0.14528265, "green": 0.15596958, "red": 0.16224651, "nir": 0.16884728, "swir1": 0.22944125, "swir2": 0.25201676},
-        {"ultra_blue": 0.08171818, "blue": 0.08769056, "green": 0.10877393, "red": 0.08937566, "nir": 0.16752776, "swir1": 0.12579797, "swir2": 0.08902762},
+        {"ultra_blue": 0.03511018, "blue": 0.04232701, "green": 0.08010689, "red": 0.02404218, "nir": 0.56492711, "swir1": 0.45158788, "swir2": 0.28757895},
+        {"ultra_blue": 0.16515787, "blue": 0.16991066, "green": 0.17936012, "red": 0.19055300, "nir": 0.21574854, "swir1": 0.33057901, "swir2": 0.34816245},
+        {"ultra_blue": 0.08220505, "blue": 0.08545536, "green": 0.09594336, "red": 0.09473721, "nir": 0.02853783, "swir1": 0.0, "swir2": 0.0},
+        {"ultra_blue": 0.05254817, "blue": 0.05482323, "green": 0.05978893, "red": 0.06668515, "nir": 0.08302571, "swir1": 0.10971880, "swir2": 0.13942782},
     ],
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
     k=3,
 )
 ```
+
+The bundled example runtime is a hold-out design: those four query targets are
+simulated from the synthetic catalogue, but omitted from the committed
+`examples/official_mapping/siac` candidate library so the mapper cannot return
+the identical row as its own neighbor.
 
 ## Result Objects
 

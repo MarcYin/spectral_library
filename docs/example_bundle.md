@@ -14,16 +14,16 @@ examples.
 | --- | --- |
 | `examples/official_mapping/official_source_manifest.json` | official-source provenance, retrieval timestamps, and SHA-256 digests |
 | `examples/official_mapping/srfs/` | selected-band SRF JSON files |
-| `examples/official_mapping/siac/` | compact SIAC-style hyperspectral fixture |
-| `examples/official_mapping/queries/` | single-sample and batch query CSVs |
+| `examples/official_mapping/siac/` | compact SIAC-style candidate fixture used by the prepared runtime |
+| `examples/official_mapping/queries/` | held-out single-sample and batch query CSVs |
 | `examples/official_mapping/results/` | mapped outputs, truth tables, and pairwise metrics |
 
 ## Key Artifacts
 
 - [Source manifest](../examples/official_mapping/official_source_manifest.json)
 - [Pairwise metrics CSV](../examples/official_mapping/results/metrics/pairwise_band_metrics.csv)
-- [MODIS to Sentinel-2A mapped output](../examples/official_mapping/results/selected/veg_soil_mix_modis_to_sentinel2a.csv)
-- [Batch diagnostics example](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch_diagnostics.json)
+- [Vegetation holdout MODIS to Sentinel-2A output](../examples/official_mapping/results/selected/dense_vegetation_modis_to_sentinel2a.csv)
+- [Batch diagnostics example](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_holdout_batch_diagnostics.json)
 
 ## Why This Bundle Exists
 
@@ -31,6 +31,7 @@ The bundle keeps the public examples reproducible:
 
 - the SRF sources are official and recorded with hashes
 - the input queries are committed
+- the four public targets are explicit held-out library spectra recorded in the manifest
 - the output tables and figures are generated from the same committed fixture
 
 ## Regenerate The Bundle
