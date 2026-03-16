@@ -126,8 +126,10 @@ spectral-library map-reflectance-batch \
   --input path/to/source_reflectance_batch.csv \
   --output-mode target_sensor \
   --k 10 \
+  --neighbor-estimator simplex_mixture \
   --output path/to/mapped_batch.csv \
-  --diagnostics-output path/to/mapped_batch_diagnostics.json
+  --diagnostics-output path/to/mapped_batch_diagnostics.json \
+  --neighbor-review-output path/to/mapped_batch_neighbor_review.csv
 ```
 
 Batch input layouts:
@@ -146,6 +148,11 @@ Batch outputs:
 
 If only one target segment maps successfully, the missing target-band cells are
 left blank in the batch CSV.
+
+If `--neighbor-review-output` is set, the command also writes a long-form CSV
+that records the retained neighbors, their distances, estimator weights, the
+query band values, and the selected neighbors' source-band values for each
+sample and segment.
 
 If you are running a held-out evaluation against a shared prepared runtime, put
 the exact prepared `row_id` to exclude in the optional `exclude_row_id`

@@ -7,12 +7,14 @@
     "swir1",
     "swir2"
   ],
+  "neighbor_estimator": "simplex_mixture",
   "pairs": [
     {
       "source_sensor": "modis_terra",
       "target_sensor": "sentinel2a_msi",
       "source_label": "MODIS Terra",
       "target_label": "Sentinel-2A",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -22,8 +24,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0027676860090740957,
-      "rmse": 0.003786155385664626,
+      "mean_abs_error": 0.002600405399937073,
+      "rmse": 0.0035952099400702155,
       "sample_count": 4
     },
     {
@@ -31,6 +33,7 @@
       "target_sensor": "landsat8_oli",
       "source_label": "MODIS Terra",
       "target_label": "Landsat 8",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -40,8 +43,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0026367578754970776,
-      "rmse": 0.0037423857351286693,
+      "mean_abs_error": 0.0023888728326382203,
+      "rmse": 0.0034060396071655336,
       "sample_count": 4
     },
     {
@@ -49,6 +52,7 @@
       "target_sensor": "landsat9_oli",
       "source_label": "MODIS Terra",
       "target_label": "Landsat 9",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -58,8 +62,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0026452883729450897,
-      "rmse": 0.0037471274611121735,
+      "mean_abs_error": 0.002397302273508902,
+      "rmse": 0.003410885558272012,
       "sample_count": 4
     },
     {
@@ -67,6 +71,7 @@
       "target_sensor": "modis_terra",
       "source_label": "Sentinel-2A",
       "target_label": "MODIS Terra",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -76,8 +81,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.00296193359856261,
-      "rmse": 0.003982030301249973,
+      "mean_abs_error": 0.002319832580845358,
+      "rmse": 0.003413545165872708,
       "sample_count": 4
     },
     {
@@ -85,6 +90,7 @@
       "target_sensor": "landsat8_oli",
       "source_label": "Sentinel-2A",
       "target_label": "Landsat 8",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -94,8 +100,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0023675336902655667,
-      "rmse": 0.002868441863709684,
+      "mean_abs_error": 0.0016716123929463081,
+      "rmse": 0.00215386469273987,
       "sample_count": 4
     },
     {
@@ -103,6 +109,7 @@
       "target_sensor": "landsat9_oli",
       "source_label": "Sentinel-2A",
       "target_label": "Landsat 9",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -112,8 +119,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0023761821391039555,
-      "rmse": 0.002875829148369903,
+      "mean_abs_error": 0.0016856987139443615,
+      "rmse": 0.0021665923887762882,
       "sample_count": 4
     },
     {
@@ -121,6 +128,7 @@
       "target_sensor": "modis_terra",
       "source_label": "Landsat 8",
       "target_label": "MODIS Terra",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -130,8 +138,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0029777475803407965,
-      "rmse": 0.003966997812347564,
+      "mean_abs_error": 0.002159180808794927,
+      "rmse": 0.0032675240960837633,
       "sample_count": 4
     },
     {
@@ -139,6 +147,7 @@
       "target_sensor": "sentinel2a_msi",
       "source_label": "Landsat 8",
       "target_label": "Sentinel-2A",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -148,8 +157,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0027682785696629985,
-      "rmse": 0.0033746018977558827,
+      "mean_abs_error": 0.0018861238759485027,
+      "rmse": 0.0024593685000267084,
       "sample_count": 4
     },
     {
@@ -157,6 +166,7 @@
       "target_sensor": "landsat9_oli",
       "source_label": "Landsat 8",
       "target_label": "Landsat 9",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -166,8 +176,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.002577137738005087,
-      "rmse": 0.0030850565617368273,
+      "mean_abs_error": 0.0017255534159006168,
+      "rmse": 0.002204135539783878,
       "sample_count": 4
     },
     {
@@ -175,6 +185,7 @@
       "target_sensor": "modis_terra",
       "source_label": "Landsat 9",
       "target_label": "MODIS Terra",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -184,8 +195,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0028619340594751626,
-      "rmse": 0.0038059288173099702,
+      "mean_abs_error": 0.0020974664914254725,
+      "rmse": 0.0031816737426756804,
       "sample_count": 4
     },
     {
@@ -193,6 +204,7 @@
       "target_sensor": "sentinel2a_msi",
       "source_label": "Landsat 9",
       "target_label": "Sentinel-2A",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -202,8 +214,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0026234787511721183,
-      "rmse": 0.0032125769511208934,
+      "mean_abs_error": 0.0017949274217029323,
+      "rmse": 0.0023628687056833223,
       "sample_count": 4
     },
     {
@@ -211,6 +223,7 @@
       "target_sensor": "landsat8_oli",
       "source_label": "Landsat 9",
       "target_label": "Landsat 8",
+      "neighbor_estimator": "simplex_mixture",
       "evaluated_band_ids": [
         "blue",
         "green",
@@ -220,8 +233,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.002416515846773831,
-      "rmse": 0.002886930177782857,
+      "mean_abs_error": 0.0015923020290394415,
+      "rmse": 0.002045173929673168,
       "sample_count": 4
     }
   ]

@@ -25,7 +25,8 @@ Those targets are simulated to each source sensor. Single-sample examples
 exclude the exact prepared `row_id`, and the batch input carries a per-sample
 `exclude_row_id` column so each query removes only its own source row from the
 77,125-row retrieval library.
-All generated outputs use the public default `k = 10`.
+All generated outputs use `k = 10` with
+`neighbor_estimator = simplex_mixture`.
 
 Regenerate everything from the official upstream sources with:
 

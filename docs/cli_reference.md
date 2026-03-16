@@ -78,9 +78,11 @@ Optional arguments:
 | --- | --- |
 | `--k` | nearest-neighbor count, default `10` |
 | `--min-valid-bands` | minimum valid source bands per segment, default `1` |
-| `--neighbor-estimator` | `mean` or `distance_weighted_mean`, default `mean` |
+| `--neighbor-estimator` | `mean`, `distance_weighted_mean`, or `simplex_mixture`, default `mean` |
 | `--exclude-row-id` | exclude one or more prepared row ids from neighbor selection |
 | `--exclude-sample-name` | exclude one or more prepared `sample_name` values from neighbor selection |
+| `--diagnostics-output` | optional JSON summary path |
+| `--neighbor-review-output` | optional CSV path with one row per segment-neighbor review record |
 
 Single-sample input layouts:
 
@@ -95,6 +97,11 @@ Single-sample outputs:
 | --- | --- |
 | `target_sensor` | `band_id,segment,reflectance` |
 | spectral outputs | `wavelength_nm,reflectance` |
+
+If `--neighbor-review-output` is set, the command also writes a CSV review table
+with one row per segment-neighbor pair. It includes the sample id, segment
+status, neighbor rank, distance, estimator weight, query band values, and the
+selected neighbor's source-band values.
 
 ### `map-reflectance-batch`
 
@@ -122,11 +129,12 @@ Optional arguments:
 | --- | --- |
 | `--k` | nearest-neighbor count |
 | `--min-valid-bands` | minimum valid source bands per segment |
-| `--neighbor-estimator` | `mean` or `distance_weighted_mean` |
+| `--neighbor-estimator` | `mean`, `distance_weighted_mean`, or `simplex_mixture` |
 | `--exclude-row-id` | exclude one or more prepared row ids for every batch sample |
 | `--exclude-sample-name` | exclude one or more prepared `sample_name` values for every batch sample |
 | `--self-exclude-sample-id` | exclude rows whose prepared `sample_name` matches each batch `sample_id` |
 | `--diagnostics-output` | optional JSON summary path |
+| `--neighbor-review-output` | optional CSV path with one row per sample-segment-neighbor review record |
 
 Batch input layouts:
 
@@ -146,6 +154,11 @@ Batch outputs:
 | --- | --- |
 | `target_sensor` | one row per sample, `sample_id` plus one column per target band |
 | spectral outputs | one row per sample, `sample_id` plus `nm_<wavelength>` columns |
+
+If `--neighbor-review-output` is set, the command writes a long-form CSV with
+one row per sample, segment, and retained neighbor. This is the easiest public
+way to audit which candidates were shortlisted and how the estimator reweighted
+them.
 
 ### `benchmark-mapping`
 
@@ -167,7 +180,7 @@ Optional arguments:
 | `--k` | nearest-neighbor count, default `10` |
 | `--test-fraction` | held-out fraction, default `0.2` |
 | `--random-seed` | split seed, default `0` |
-| `--neighbor-estimator` | retrieval estimator to benchmark, default `mean` |
+| `--neighbor-estimator` | retrieval estimator to benchmark: `mean`, `distance_weighted_mean`, or `simplex_mixture`; default `mean` |
 
 ## Error Behavior
 

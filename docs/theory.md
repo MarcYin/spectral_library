@@ -181,11 +181,32 @@ For non-zero distances, the implementation uses inverse-distance weights
 $w_i = 1 / d_i$. If one or more neighbors have distance `0`, only those exact
 matches are averaged.
 
+`simplex_mixture`
+
+This estimator keeps the same top-$k$ shortlist, but then solves a constrained
+local mixture fit in source-band space:
+
+$$
+\min_{w} \left\| \sum_{i \in \mathcal{N}_k^{(p)}} w_i x_i^{(src,p)} - q^{(p)} \right\|_2^2
+$$
+
+subject to:
+
+$$
+w_i \ge 0,\qquad \sum_i w_i = 1
+$$
+
+So the reconstructed segment remains a convex combination of the retrieved
+library spectra. In practice, this makes the shortlist more interpretable:
+the diagnostics now expose both the KNN ranking and the fitted estimator
+weights.
+
 The returned diagnostics carry the chosen `neighbor_estimator`, plus:
 
 - segment query band ids
 - query band values and validity masks
 - neighbor identities and neighbor distances
+- neighbor weights and source-fit RMSE
 - the selected neighbors' simulated source-band values for the same segment
 
 ## Target-Sensor Mapping
