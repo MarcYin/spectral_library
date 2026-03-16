@@ -135,6 +135,15 @@ The result diagnostics also expose a heuristic `confidence_score` for the full
 mapping and for each segment. It is based on valid-band coverage, neighbor
 distances, source-space fit RMSE, and estimator weight concentration.
 
+Current production interpretation policy:
+
+- `high` / `accept`: `confidence_score >= 0.85`
+- `medium` / `manual_review`: `0.60 <= confidence_score < 0.85`
+- `low` / `reject`: `confidence_score < 0.60`
+
+This policy is heuristic and conservative. It is useful for routing and QA, not
+as a calibrated probability of correctness.
+
 Reconstruct a full `400-2500 nm` spectrum instead:
 
 ```bash

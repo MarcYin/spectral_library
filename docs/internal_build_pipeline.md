@@ -74,10 +74,10 @@ The current retained pipeline is organized as:
 
 Representative internal commands used by those stages:
 
-- `spectral-library normalize-sources`
-- `spectral-library filter-coverage --min-coverage 0.8`
-- `spectral-library plot-quality`
-- `spectral-library build-siac-library`
+- `spectral-library-internal normalize-sources`
+- `spectral-library-internal filter-coverage --min-coverage 0.8`
+- `spectral-library-internal plot-quality`
+- `spectral-library-internal build-siac-library`
 
 Representative repair and review scripts:
 

@@ -110,7 +110,12 @@ selected neighbor's source-band values. The review rows also record
 The JSON diagnostics also include a heuristic `confidence_score` at the overall
 mapping level and per segment. It is derived from valid-band coverage, neighbor
 distances, estimator weight concentration, and source-space fit RMSE. Treat it
-as a ranking aid, not a calibrated probability.
+as a ranking aid, not a calibrated probability. The diagnostics also include
+`confidence_policy` with the current routing thresholds:
+
+- `high` / `accept`: `>= 0.85`
+- `medium` / `manual_review`: `>= 0.60` and `< 0.85`
+- `low` / `reject`: `< 0.60`
 
 ### `map-reflectance-batch`
 
@@ -225,6 +230,10 @@ PYTHONPATH=src python scripts/run_full_library_benchmarks.py \
 It writes per-scenario JSON reports under `runs/`, plus aggregate
 `summary.csv`, `summary.json`, and `reports.json`.
 
+For non-`numpy` backends, the runner also records a same-scenario comparison to
+the exact `numpy` baseline and can fail when backend drift exceeds the
+`baseline_deltas` thresholds in `benchmarks/default_thresholds.json`.
+
 ## Error Behavior
 
 Public commands provide:
@@ -270,8 +279,12 @@ Level values:
 
 ## Internal Commands
 
-The CLI still ships retained internal commands for source acquisition and SIAC
-build workflows:
+Source acquisition and SIAC build workflows are intentionally separated from
+the public mapping CLI. Maintainers should use:
+
+- `spectral-library-internal --help`
+
+That maintainer-only entrypoint exposes the retained internal commands:
 
 - `plan-matrix`
 - `fetch-source`
@@ -283,5 +296,8 @@ build workflows:
 - `filter-coverage`
 - `build-siac-library`
 
-Those are documented in [Internal Build Pipeline](internal_build_pipeline.md)
-because they are not part of the stable public mapping contract.
+Legacy direct invocation through `spectral-library <internal-command>` still
+works for repository automation, but those commands are hidden from the public
+help and are not part of the stable public mapping contract. See
+[Internal Build Pipeline](internal_build_pipeline.md) for the maintained
+workflow.

@@ -243,6 +243,16 @@ probability. It combines:
 - source-space fit RMSE after estimator weighting
 - estimator weight concentration
 
+Current production interpretation policy:
+
+- `high` / `accept` for `confidence_score >= 0.85`
+- `medium` / `manual_review` for `0.60 <= confidence_score < 0.85`
+- `low` / `reject` for `confidence_score < 0.60`
+
+These thresholds are intentionally conservative. They are useful as QA routing
+rules, not as a substitute for benchmark validation on the target
+sensor/library regime.
+
 ## Target-Sensor Mapping
 
 Once a segment-level hyperspectral reconstruction is available, target bands in

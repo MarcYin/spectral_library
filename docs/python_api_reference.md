@@ -239,7 +239,12 @@ indexes were written into the runtime.
 Mapping diagnostics now also expose a heuristic `confidence_score` at the
 overall mapping level and per segment. This is not a calibrated uncertainty
 model; it is a compact ranking signal derived from distance, source fit, weight
-concentration, and valid-band coverage.
+concentration, and valid-band coverage. The diagnostics also include
+`confidence_policy`, which currently maps the score to:
+
+- `high` / `accept` for scores `>= 0.85`
+- `medium` / `manual_review` for scores `>= 0.60` and `< 0.85`
+- `low` / `reject` for scores `< 0.60`
 
 `benchmark_mapping(...)` also accepts `max_test_rows` so large prepared
 libraries can run bounded held-out evaluations without scoring every row in the
