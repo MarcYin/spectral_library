@@ -113,6 +113,9 @@ result = mapper.map_reflectance(
     reflectance=reflectance,
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
+    exclude_row_ids=[
+        "usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF",
+    ],
 )
 ```
 
@@ -133,14 +136,23 @@ batch = mapper.map_reflectance_batch(
     ],
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
+    exclude_row_ids_per_sample=[
+        "usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF",
+        "ecostress_v1:ecostress_v1_002334:Pale brown silty loam",
+        "ecostress_v1:ecostress_v1_003451:Tap water",
+        "usgs_v7:usgs_v7_000004:Asphalt GDS376 Blck_Road old ASDFRa AREF",
+    ],
 )
 ```
 
-The public official examples in the docs use the external full SIAC library and
-exclude exact held-out rows in the CLI workflow with `--exclude-row-id` or the
-batch CSV `exclude_row_id` column. The Python examples above show the direct
-runtime calls themselves; if you need the exact held-out evaluation behavior,
-follow the CLI example inputs in [Official Sensor Examples](official_sensor_examples.md).
+Supported exclusion controls:
+
+- `map_reflectance(..., exclude_row_ids=..., exclude_sample_names=...)`
+- `map_reflectance_batch(..., exclude_row_ids=..., exclude_sample_names=...)`
+- `map_reflectance_batch(..., exclude_row_ids_per_sample=..., self_exclude_sample_id=True)`
+
+That means the public Python API can now reproduce the same held-out
+self-exclusion workflow shown in [Official Sensor Examples](official_sensor_examples.md).
 
 ## Result Objects
 
@@ -200,6 +212,9 @@ Represents the stable prepared-runtime manifest returned by:
 
 - `prepare_mapping_library(...)`
 - `validate_prepared_library(...)`
+
+Current prepared runtimes also expose `interpolation_summary` so you can see how
+many SIAC rows required gap repair during prepare.
 
 ### `SensorSRFSchema`
 

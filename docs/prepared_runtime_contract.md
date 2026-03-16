@@ -42,6 +42,7 @@ Required fields:
 | `swir_wavelength_range_nm` | SWIR segment bounds |
 | `array_dtype` | stored array dtype |
 | `file_checksums` | files included in checksum validation |
+| `interpolation_summary` | summary counts for repaired SIAC `nm_*` gaps, when any rows needed repair |
 
 Additive optional fields are allowed in minor releases. Renames, removals, or
 required-field changes require a major version change.
@@ -115,10 +116,17 @@ But the checksum document itself is still required.
 - row-index continuity and uniqueness in `mapping_metadata.parquet`
 - checksum integrity when hashing is enabled
 
-During `prepare_mapping_library(...)`, sparse blank `nm_*` cells in the SIAC
-normalized spectra table are linearly interpolated on the canonical
-`400-2500 nm` grid when at least two numeric values are present in that row.
-Rows that are too incomplete to interpolate still fail validation.
+During `prepare_mapping_library(...)`, blank `nm_*` cells in the SIAC
+normalized spectra table are handled conservatively:
+
+- leading and trailing gaps are edge-extrapolated onto the canonical grid
+- small internal gaps are linearly interpolated
+- rows with fewer than two numeric values still fail
+- rows with more than `8` internal missing samples or an internal missing run
+  longer than `8` samples fail
+
+Prepared manifests record repair counts in `interpolation_summary` so runtime
+artifacts can be audited after build.
 
 ## Stable Output Modes
 

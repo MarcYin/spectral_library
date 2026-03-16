@@ -782,15 +782,14 @@ def _write_pairwise_metrics(
             sample_rmse: list[float] = []
             for sample_id, reflectance in truth_rows_by_sensor[source_sensor].items():
                 target = HELD_OUT_TARGETS_BY_ID[sample_id]
-                mapping_result = mapper._map_reflectance_internal(
+                mapping_result = mapper.map_reflectance(
                     source_sensor=source_sensor,
                     reflectance=reflectance,
-                    valid_mask=None,
                     output_mode="target_sensor",
                     target_sensor=target_sensor,
                     k=EXAMPLE_K,
                     min_valid_bands=1,
-                    candidate_row_indices=mapper.candidate_row_indices(exclude_row_ids=[target.row_id]),
+                    exclude_row_ids=[target.row_id],
                 )
                 if mapping_result.target_reflectance is None:
                     raise RuntimeError(
@@ -1289,6 +1288,17 @@ def _render_official_sensor_examples_doc(
         f"- `{group}`: `{count:,}` rows"
         for group, count in landcover_counts.items()
     ]
+    band_correspondence_lines = [
+        "| Semantic band | Terra MODIS | Sentinel-2A MSI | Landsat 8 OLI | Landsat 9 OLI |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    sensor_columns = [sensor for sensor in OFFICIAL_SENSORS]
+    for band_id in SEMANTIC_BANDS:
+        row = [f"| `{band_id}` |"]
+        for sensor in sensor_columns:
+            matching_band = next((band for band in sensor.bands if band.band_id == band_id), None)
+            row.append(f" `{matching_band.official_band}` |" if matching_band is not None else " not present |")
+        band_correspondence_lines.append("".join(row))
 
     return f"""{GENERATED_DOC_BANNER}
 # Official Sensor Examples
@@ -1366,15 +1376,7 @@ each segment’s `k = {EXAMPLE_K}` retrieval for readability.
 
 ## Band Correspondence
 
-| Semantic band | Terra MODIS | Sentinel-2A MSI | Landsat 8 OLI | Landsat 9 OLI |
-| --- | --- | --- | --- | --- |
-| `ultra_blue` | not present | `B1` | `Band 1` | `Band 1` |
-| `blue` | `Band 3` | `B2` | `Band 2` | `Band 2` |
-| `green` | `Band 4` | `B3` | `Band 3` | `Band 3` |
-| `red` | `Band 1` | `B4` | `Band 4` | `Band 4` |
-| `nir` | `Band 2` | `B8` | `Band 5` | `Band 5` |
-| `swir1` | `Band 6` | `B11` | `Band 6` | `Band 6` |
-| `swir2` | `Band 7` | `B12` | `Band 7` | `Band 7` |
+{chr(10).join(band_correspondence_lines)}
 
 Sentinel-2 is represented here by the `S2A` sheet from the official ESA SRF
 workbook. If you need `S2B` or `S2C`, the same conversion script can be pointed

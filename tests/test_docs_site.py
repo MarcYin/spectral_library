@@ -34,6 +34,7 @@ class DocsSiteBuildTests(unittest.TestCase):
 
             self.assertTrue((output_root / "index.html").exists())
             self.assertTrue((output_root / "example_bundle.html").exists())
+            self.assertTrue((output_root / "cli_reference.html").exists())
             self.assertTrue((output_root / "internal_overview.html").exists())
             self.assertTrue((output_root / "official_sensor_examples.html").exists())
             self.assertTrue((output_root / "theory.html").exists())
@@ -51,10 +52,12 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertTrue((output_root / ".nojekyll").exists())
 
             index_html = (output_root / "index.html").read_text(encoding="utf-8")
+            cli_html = (output_root / "cli_reference.html").read_text(encoding="utf-8")
             official_html = (output_root / "official_sensor_examples.html").read_text(encoding="utf-8")
             theory_html = (output_root / "theory.html").read_text(encoding="utf-8")
 
             self.assertIn("Map between sensors", index_html)
+            self.assertIn("--json-logs", cli_html)
             self.assertIn('href="example_bundle.html"', official_html)
             self.assertIn('href="examples/official_mapping/results/metrics/pairwise_band_metrics.csv"', official_html)
             self.assertIn("held-out reconstruction", official_html)
@@ -65,6 +68,7 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertIn("visible-to-NIR retrieval", official_html)
             self.assertIn("NIR-to-SWIR retrieval", official_html)
             self.assertIn("exclude_row_id", official_html)
+            self.assertIn("B8A", official_html)
             self.assertNotIn('href="../examples/', official_html)
             self.assertIn("Mathematical Foundations", official_html)
             self.assertIn("root-mean-square Euclidean distance", theory_html)

@@ -12,6 +12,7 @@ spectral-library
 | --- | --- |
 | `--version` | print the package version and exit |
 | `--json-errors` | emit machine-readable JSON errors to `stderr` |
+| `--json-logs` | emit structured JSON log events to `stderr` |
 
 ## Public Commands
 
@@ -172,12 +173,21 @@ Public commands provide:
 - non-zero exit codes on failure
 - human-readable errors by default
 - JSON error envelopes with `--json-errors`
+- newline-delimited JSON log events with `--json-logs`
 
 The error envelope includes:
 
 - `error_code`
 - `message`
 - `command`
+- `context`
+
+The JSON log envelope includes:
+
+- `command`
+- `event`
+- `level`
+- `timestamp`
 - `context`
 
 ## Related Docs

@@ -175,6 +175,7 @@ result = mapper.map_reflectance(
     reflectance={"blue": 0.12, "nir": 0.34, "swir1": 0.27},
     output_mode="full_spectrum",
     k=10,
+    exclude_row_ids=["source_id:spectrum_id:sample_name"],
 )
 ```
 
