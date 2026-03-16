@@ -9,6 +9,12 @@ from typing import Iterable
 from spectral_library import PreparedLibraryValidationError, benchmark_mapping, validate_prepared_library
 from spectral_library.mapping import SUPPORTED_KNN_BACKENDS, SUPPORTED_NEIGHBOR_ESTIMATORS
 
+QUALIFICATION_METRIC_KEYS = (
+    "target_sensor.retrieval.mean_mae",
+    "target_sensor.retrieval.mean_rmse",
+    "full_spectrum.retrieval.mean_mae",
+)
+
 
 def _parse_repeated_csv(values: list[str]) -> list[str]:
     normalized: list[str] = []
@@ -47,6 +53,82 @@ def _metric_value(report: dict[str, object], metric_key: str) -> float:
 
 def _scenario_key(*, source_sensor: str, target_sensor: str, neighbor_estimator: str, knn_backend: str, k: int) -> str:
     return f"{source_sensor}->{target_sensor}|{neighbor_estimator}|{knn_backend}|{k}"
+
+
+def _report_cache_key(
+    *,
+    source_sensor: str,
+    target_sensor: str,
+    neighbor_estimator: str,
+    knn_backend: str,
+    k: int,
+) -> tuple[str, str, str, str, int]:
+    return (source_sensor, target_sensor, neighbor_estimator, knn_backend, int(k))
+
+
+def _numpy_baseline_metrics(
+    report: dict[str, object],
+    baseline_report: dict[str, object],
+) -> dict[str, dict[str, float | None]]:
+    metrics: dict[str, dict[str, float | None]] = {}
+    for metric_key in QUALIFICATION_METRIC_KEYS:
+        actual = _metric_value(report, metric_key)
+        baseline = _metric_value(baseline_report, metric_key)
+        delta = actual - baseline
+        ratio = None if abs(baseline) <= 1e-12 else actual / baseline
+        metrics[metric_key] = {
+            "actual": actual,
+            "baseline": baseline,
+            "delta": delta,
+            "ratio": ratio,
+        }
+    return metrics
+
+
+def _numpy_baseline_summary_row(
+    report: dict[str, object],
+    baseline_report: dict[str, object],
+    *,
+    source_sensor: str,
+    target_sensor: str,
+    neighbor_estimator: str,
+    knn_backend: str,
+    k: int,
+) -> dict[str, object]:
+    baseline_metrics = _numpy_baseline_metrics(report, baseline_report)
+    target_mae = baseline_metrics["target_sensor.retrieval.mean_mae"]
+    target_rmse = baseline_metrics["target_sensor.retrieval.mean_rmse"]
+    full_mae = baseline_metrics["full_spectrum.retrieval.mean_mae"]
+    return {
+        "scenario_key": _scenario_key(
+            source_sensor=source_sensor,
+            target_sensor=target_sensor,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            k=k,
+        ),
+        "source_sensor": source_sensor,
+        "target_sensor": target_sensor,
+        "neighbor_estimator": neighbor_estimator,
+        "knn_backend": knn_backend,
+        "k": int(k),
+        "target_mean_mae": float(report["target_sensor"]["retrieval"]["mean_mae"]),  # type: ignore[index]
+        "target_mean_rmse": float(report["target_sensor"]["retrieval"]["mean_rmse"]),  # type: ignore[index]
+        "full_mean_mae": float(report["full_spectrum"]["retrieval"]["mean_mae"]),  # type: ignore[index]
+        "full_mean_rmse": float(report["full_spectrum"]["retrieval"]["mean_rmse"]),  # type: ignore[index]
+        "numpy_baseline_target_mean_mae": target_mae["baseline"],
+        "numpy_baseline_target_mean_mae_delta": target_mae["delta"],
+        "numpy_baseline_target_mean_mae_ratio": target_mae["ratio"],
+        "numpy_baseline_target_mean_rmse": target_rmse["baseline"],
+        "numpy_baseline_target_mean_rmse_delta": target_rmse["delta"],
+        "numpy_baseline_target_mean_rmse_ratio": target_rmse["ratio"],
+        "numpy_baseline_full_mean_mae": full_mae["baseline"],
+        "numpy_baseline_full_mean_mae_delta": full_mae["delta"],
+        "numpy_baseline_full_mean_mae_ratio": full_mae["ratio"],
+        "train_rows": int(report["train_rows"]),
+        "test_rows": int(report["test_rows"]),
+        "is_numpy_baseline": bool(knn_backend == "numpy"),
+    }
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
@@ -97,6 +179,10 @@ def run_benchmarks(
     summary_rows: list[dict[str, object]] = []
     failures: list[dict[str, object]] = []
     per_run_reports: list[dict[str, object]] = []
+    report_cache: dict[tuple[str, str, str, str, int], dict[str, object]] = {}
+    baseline_thresholds = thresholds.get("baseline_deltas", {})
+    if not isinstance(baseline_thresholds, dict):
+        baseline_thresholds = {}
 
     for source_sensor, target_sensor in _ordered_sensor_pairs(source_sensors):
         for neighbor_estimator in neighbor_estimators:
@@ -109,44 +195,79 @@ def run_benchmarks(
                         knn_backend=knn_backend,
                         k=k,
                     )
-                    report = benchmark_mapping(
-                        prepared_root,
-                        source_sensor,
-                        target_sensor,
-                        k=k,
-                        test_fraction=test_fraction,
-                        max_test_rows=max_test_rows,
-                        random_seed=random_seed,
+                    cache_key = _report_cache_key(
+                        source_sensor=source_sensor,
+                        target_sensor=target_sensor,
                         neighbor_estimator=neighbor_estimator,
                         knn_backend=knn_backend,
+                        k=k,
                     )
+                    report = report_cache.get(cache_key)
+                    if report is None:
+                        report = benchmark_mapping(
+                            prepared_root,
+                            source_sensor,
+                            target_sensor,
+                            k=k,
+                            test_fraction=test_fraction,
+                            max_test_rows=max_test_rows,
+                            random_seed=random_seed,
+                            neighbor_estimator=neighbor_estimator,
+                            knn_backend=knn_backend,
+                        )
+                        report_cache[cache_key] = report
+
+                    baseline_key = _report_cache_key(
+                        source_sensor=source_sensor,
+                        target_sensor=target_sensor,
+                        neighbor_estimator=neighbor_estimator,
+                        knn_backend="numpy",
+                        k=k,
+                    )
+                    baseline_report = report_cache.get(baseline_key)
+                    if baseline_report is None:
+                        baseline_report = benchmark_mapping(
+                            prepared_root,
+                            source_sensor,
+                            target_sensor,
+                            k=k,
+                            test_fraction=test_fraction,
+                            max_test_rows=max_test_rows,
+                            random_seed=random_seed,
+                            neighbor_estimator=neighbor_estimator,
+                            knn_backend="numpy",
+                        )
+                        report_cache[baseline_key] = baseline_report
+
                     report["scenario_key"] = scenario
                     report["prepared_root"] = str(prepared_root)
+                    report["numpy_baseline"] = {
+                        "scenario_key": _scenario_key(
+                            source_sensor=source_sensor,
+                            target_sensor=target_sensor,
+                            neighbor_estimator=neighbor_estimator,
+                            knn_backend="numpy",
+                            k=k,
+                        ),
+                        "is_self_baseline": bool(knn_backend == "numpy"),
+                        "metrics": _numpy_baseline_metrics(report, baseline_report),
+                    }
                     run_path = runs_root / f"{scenario.replace('|', '__').replace('->', '_to_')}.json"
                     run_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
                     per_run_reports.append(report)
 
-                    row = {
-                        "scenario_key": scenario,
-                        "source_sensor": source_sensor,
-                        "target_sensor": target_sensor,
-                        "neighbor_estimator": neighbor_estimator,
-                        "knn_backend": knn_backend,
-                        "k": int(k),
-                        "target_mean_mae": float(report["target_sensor"]["retrieval"]["mean_mae"]),  # type: ignore[index]
-                        "target_mean_rmse": float(report["target_sensor"]["retrieval"]["mean_rmse"]),  # type: ignore[index]
-                        "full_mean_mae": float(report["full_spectrum"]["retrieval"]["mean_mae"]),  # type: ignore[index]
-                        "full_mean_rmse": float(report["full_spectrum"]["retrieval"]["mean_rmse"]),  # type: ignore[index]
-                        "train_rows": int(report["train_rows"]),
-                        "test_rows": int(report["test_rows"]),
-                    }
+                    row = _numpy_baseline_summary_row(
+                        report,
+                        baseline_report,
+                        source_sensor=source_sensor,
+                        target_sensor=target_sensor,
+                        neighbor_estimator=neighbor_estimator,
+                        knn_backend=knn_backend,
+                        k=k,
+                    )
                     summary_rows.append(row)
 
-                    for metric_key in (
-                        "target_sensor.retrieval.mean_mae",
-                        "target_sensor.retrieval.mean_rmse",
-                        "full_spectrum.retrieval.mean_mae",
-                    ):
+                    for metric_key in QUALIFICATION_METRIC_KEYS:
                         limit = _threshold_value(thresholds, scenario_key=scenario, metric_key=metric_key)
                         if limit is None:
                             continue
@@ -155,11 +276,30 @@ def run_benchmarks(
                             failures.append(
                                 {
                                     "scenario_key": scenario,
+                                    "threshold_group": "absolute_metrics",
                                     "metric": metric_key,
                                     "actual": actual,
                                     "limit": limit,
                                 }
                             )
+                    if knn_backend != "numpy":
+                        baseline_metrics = report["numpy_baseline"]["metrics"]  # type: ignore[index]
+                        for metric_key in QUALIFICATION_METRIC_KEYS:
+                            limit = _threshold_value(baseline_thresholds, scenario_key=scenario, metric_key=metric_key)
+                            if limit is None:
+                                continue
+                            delta = float(baseline_metrics[metric_key]["delta"])  # type: ignore[index]
+                            if delta > limit:
+                                failures.append(
+                                    {
+                                        "scenario_key": scenario,
+                                        "threshold_group": "numpy_baseline_deltas",
+                                        "metric": metric_key,
+                                        "actual": delta,
+                                        "limit": limit,
+                                        "baseline": float(baseline_metrics[metric_key]["baseline"]),  # type: ignore[index]
+                                    }
+                                )
 
     summary_payload = {
         "prepared_root": str(prepared_root),
@@ -171,6 +311,7 @@ def run_benchmarks(
         "max_test_rows": None if max_test_rows is None else int(max_test_rows),
         "random_seed": int(random_seed),
         "run_count": len(summary_rows),
+        "numpy_baseline_metrics": list(QUALIFICATION_METRIC_KEYS),
         "threshold_failures": failures,
     }
     (output_root / "summary.json").write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
