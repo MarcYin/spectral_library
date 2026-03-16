@@ -173,6 +173,8 @@ class CliContractTests(unittest.TestCase):
                 "--k",
                 "--neighbor-estimator",
                 "--output",
+                "--diagnostics-output",
+                "--neighbor-review-output",
                 "--exclude-row-id",
                 "--exclude-sample-name",
             }.issubset(map_options)
@@ -188,6 +190,7 @@ class CliContractTests(unittest.TestCase):
                 "--neighbor-estimator",
                 "--output",
                 "--diagnostics-output",
+                "--neighbor-review-output",
                 "--exclude-row-id",
                 "--exclude-sample-name",
                 "--self-exclude-sample-id",

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from typing import Mapping, Sequence
 
 from ._version import __version__
 from .batch import fetch_batch, tidy_source_directory
@@ -470,6 +471,106 @@ def _write_batch_mapping_output(
         return len(result.results), output_columns
 
 
+def _json_cell(value: object) -> str:
+    return json.dumps(value, separators=(",", ":"), sort_keys=False)
+
+
+def _neighbor_review_rows_for_result(sample_id: str, result: object) -> list[dict[str, object]]:
+    from .mapping import MappingResult
+
+    if not isinstance(result, MappingResult):
+        raise SpectralLibraryError("invalid_result", "Unexpected mapping result type while writing neighbor review output.")
+
+    diagnostics = dict(result.diagnostics)
+    segments = diagnostics.get("segments")
+    if not isinstance(segments, Mapping):
+        raise SpectralLibraryError("invalid_result", "Mapping diagnostics are missing segment details.")
+
+    base_fields = {
+        "sample_id": sample_id,
+        "source_sensor": diagnostics.get("source_sensor"),
+        "target_sensor": diagnostics.get("target_sensor"),
+        "output_mode": diagnostics.get("output_mode"),
+        "neighbor_estimator": diagnostics.get("neighbor_estimator"),
+        "k": diagnostics.get("k"),
+    }
+    rows: list[dict[str, object]] = []
+    for segment, segment_payload_obj in segments.items():
+        if not isinstance(segment_payload_obj, Mapping):
+            raise SpectralLibraryError("invalid_result", "Segment diagnostics payload must be an object.")
+        segment_payload = dict(segment_payload_obj)
+        neighbor_ids = [str(value) for value in segment_payload.get("neighbor_ids", [])]  # type: ignore[arg-type]
+        neighbor_distances = [float(value) for value in segment_payload.get("neighbor_distances", [])]  # type: ignore[arg-type]
+        neighbor_weights = [float(value) for value in segment_payload.get("neighbor_weights", [])]  # type: ignore[arg-type]
+        neighbor_band_values = list(segment_payload.get("neighbor_band_values", []))  # type: ignore[arg-type]
+        common_fields = {
+            **base_fields,
+            "segment": str(segment),
+            "segment_status": segment_payload.get("status"),
+            "valid_band_count": segment_payload.get("valid_band_count"),
+            "source_fit_rmse": segment_payload.get("source_fit_rmse"),
+            "query_band_ids": _json_cell(segment_payload.get("query_band_ids", [])),
+            "query_band_values": _json_cell(segment_payload.get("query_band_values", [])),
+            "query_valid_mask": _json_cell(segment_payload.get("query_valid_mask", [])),
+        }
+        if not neighbor_ids:
+            rows.append(
+                {
+                    **common_fields,
+                    "rank": "",
+                    "neighbor_id": "",
+                    "neighbor_distance": "",
+                    "neighbor_weight": "",
+                    "neighbor_band_values": _json_cell([]),
+                }
+            )
+            continue
+        for rank, neighbor_id in enumerate(neighbor_ids, start=1):
+            rows.append(
+                {
+                    **common_fields,
+                    "rank": rank,
+                    "neighbor_id": neighbor_id,
+                    "neighbor_distance": neighbor_distances[rank - 1] if rank - 1 < len(neighbor_distances) else "",
+                    "neighbor_weight": neighbor_weights[rank - 1] if rank - 1 < len(neighbor_weights) else "",
+                    "neighbor_band_values": _json_cell(
+                        neighbor_band_values[rank - 1] if rank - 1 < len(neighbor_band_values) else []
+                    ),
+                }
+            )
+    return rows
+
+
+def _write_neighbor_review_output(path: Path, rows: Sequence[dict[str, object]]) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "sample_id",
+        "source_sensor",
+        "target_sensor",
+        "output_mode",
+        "neighbor_estimator",
+        "k",
+        "segment",
+        "segment_status",
+        "valid_band_count",
+        "source_fit_rmse",
+        "query_band_ids",
+        "query_band_values",
+        "query_valid_mask",
+        "rank",
+        "neighbor_id",
+        "neighbor_distance",
+        "neighbor_weight",
+        "neighbor_band_values",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+    return len(rows)
+
+
 def _emit_cli_error(error: SpectralLibraryError, *, command: str | None, json_errors: bool) -> None:
     if json_errors:
         print(json.dumps(error.to_dict(command=command), indent=2, sort_keys=True), file=sys.stderr)
@@ -646,10 +747,12 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
         command="map-reflectance",
         event="command_started",
         context={
+            "diagnostics_output": str(Path(args.diagnostics_output)) if args.diagnostics_output else None,
             "input_path": str(Path(args.input)),
             "k": args.k,
             "min_valid_bands": args.min_valid_bands,
             "neighbor_estimator": args.neighbor_estimator,
+            "neighbor_review_output": str(Path(args.neighbor_review_output)) if args.neighbor_review_output else None,
             "output_mode": args.output_mode,
             "output_path": str(Path(args.output)),
             "prepared_root": str(Path(args.prepared_root)),
@@ -692,11 +795,26 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
             "neighbor_estimator": args.neighbor_estimator,
         }
     )
+    if args.diagnostics_output:
+        diagnostics_path = Path(args.diagnostics_output)
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        diagnostics_path.write_text(json.dumps(result.to_summary_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        payload["diagnostics_output"] = str(diagnostics_path)
+    if args.neighbor_review_output:
+        neighbor_review_path = Path(args.neighbor_review_output)
+        review_row_count = _write_neighbor_review_output(
+            neighbor_review_path,
+            _neighbor_review_rows_for_result("sample_000001", result),
+        )
+        payload["neighbor_review_output"] = str(neighbor_review_path)
+        payload["neighbor_review_row_count"] = int(review_row_count)
     _emit_cli_log(
         args,
         command="map-reflectance",
         event="command_completed",
         context={
+            "diagnostics_output": payload.get("diagnostics_output"),
+            "neighbor_review_output": payload.get("neighbor_review_output"),
             "output_mode": args.output_mode,
             "output_path": str(output_path),
             "segment_statuses": {
@@ -722,6 +840,7 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
             "input_path": str(Path(args.input)),
             "k": args.k,
             "min_valid_bands": args.min_valid_bands,
+            "neighbor_review_output": str(Path(args.neighbor_review_output)) if args.neighbor_review_output else None,
             "output_mode": args.output_mode,
             "output_path": str(Path(args.output)),
             "prepared_root": str(Path(args.prepared_root)),
@@ -776,12 +895,21 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
         diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
         diagnostics_path.write_text(json.dumps(result.to_summary_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
         payload["diagnostics_output"] = str(diagnostics_path)
+    if args.neighbor_review_output:
+        neighbor_review_path = Path(args.neighbor_review_output)
+        review_rows: list[dict[str, object]] = []
+        for sample_id, sample_result in zip(result.sample_ids, result.results):
+            review_rows.extend(_neighbor_review_rows_for_result(sample_id, sample_result))
+        review_row_count = _write_neighbor_review_output(neighbor_review_path, review_rows)
+        payload["neighbor_review_output"] = str(neighbor_review_path)
+        payload["neighbor_review_row_count"] = int(review_row_count)
     _emit_cli_log(
         args,
         command="map-reflectance-batch",
         event="command_completed",
         context={
             "diagnostics_output": payload.get("diagnostics_output"),
+            "neighbor_review_output": payload.get("neighbor_review_output"),
             "output_columns": list(output_columns),
             "output_path": str(output_path),
             "sample_count": len(result.results),
@@ -911,6 +1039,8 @@ def build_parser() -> argparse.ArgumentParser:
     map_parser.add_argument("--exclude-row-id", action="append", default=[])
     map_parser.add_argument("--exclude-sample-name", action="append", default=[])
     map_parser.add_argument("--output", required=True)
+    map_parser.add_argument("--diagnostics-output", default="")
+    map_parser.add_argument("--neighbor-review-output", default="")
     map_parser.set_defaults(func=cmd_map_reflectance)
 
     batch_map_parser = subparsers.add_parser(
@@ -930,6 +1060,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_map_parser.add_argument("--self-exclude-sample-id", action="store_true")
     batch_map_parser.add_argument("--output", required=True)
     batch_map_parser.add_argument("--diagnostics-output", default="")
+    batch_map_parser.add_argument("--neighbor-review-output", default="")
     batch_map_parser.set_defaults(func=cmd_map_reflectance_batch)
 
     benchmark_parser = subparsers.add_parser(

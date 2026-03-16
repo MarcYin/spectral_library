@@ -27,6 +27,7 @@ SUPPORTED_OUTPUT_MODES = (
 SUPPORTED_NEIGHBOR_ESTIMATORS = (
     "mean",
     "distance_weighted_mean",
+    "simplex_mixture",
 )
 SEGMENTS = ("vnir", "swir")
 CANONICAL_START_NM = 400
@@ -388,7 +389,9 @@ class _SegmentRetrieval:
     neighbor_indices: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int64))
     neighbor_ids: tuple[str, ...] = ()
     neighbor_distances: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    neighbor_weights: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     neighbor_band_values: np.ndarray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
+    source_fit_rmse: float | None = None
     reason: str | None = None
 
 
@@ -650,26 +653,103 @@ def _combine_neighbor_spectra(
     hyperspectral_rows: np.ndarray,
     neighbor_indices: np.ndarray,
     neighbor_distances: np.ndarray,
+    neighbor_band_values: np.ndarray,
+    query_vector: np.ndarray,
     *,
     neighbor_estimator: str,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray, float]:
     neighbor_spectra = np.asarray(hyperspectral_rows[neighbor_indices], dtype=np.float64)
     if neighbor_estimator == "mean":
-        return np.asarray(np.mean(neighbor_spectra, axis=0), dtype=np.float64)
-    if neighbor_estimator == "distance_weighted_mean":
+        weights = np.full(neighbor_indices.shape[0], 1.0 / float(neighbor_indices.shape[0]), dtype=np.float64)
+    elif neighbor_estimator == "distance_weighted_mean":
         exact_match_mask = np.asarray(neighbor_distances <= 1e-12, dtype=bool)
         if np.any(exact_match_mask):
-            return np.asarray(np.mean(neighbor_spectra[exact_match_mask], axis=0), dtype=np.float64)
-        weights = 1.0 / np.asarray(neighbor_distances, dtype=np.float64)
-        normalized_weights = weights / float(np.sum(weights))
-        return np.asarray(normalized_weights @ neighbor_spectra, dtype=np.float64)
-    raise MappingInputError(
-        "neighbor_estimator is not supported.",
-        context={
-            "neighbor_estimator": neighbor_estimator,
-            "supported_neighbor_estimators": list(SUPPORTED_NEIGHBOR_ESTIMATORS),
-        },
-    )
+            weights = np.asarray(exact_match_mask, dtype=np.float64)
+            weights /= float(np.sum(weights))
+        else:
+            weights = 1.0 / np.asarray(neighbor_distances, dtype=np.float64)
+            weights /= float(np.sum(weights))
+    elif neighbor_estimator == "simplex_mixture":
+        weights = _fit_simplex_neighbor_weights(
+            np.asarray(neighbor_band_values, dtype=np.float64),
+            np.asarray(query_vector, dtype=np.float64),
+            np.asarray(neighbor_distances, dtype=np.float64),
+        )
+    else:
+        raise MappingInputError(
+            "neighbor_estimator is not supported.",
+            context={
+                "neighbor_estimator": neighbor_estimator,
+                "supported_neighbor_estimators": list(SUPPORTED_NEIGHBOR_ESTIMATORS),
+            },
+        )
+    reconstructed = np.asarray(weights @ neighbor_spectra, dtype=np.float64)
+    source_prediction = np.asarray(weights @ np.asarray(neighbor_band_values, dtype=np.float64), dtype=np.float64)
+    source_fit_rmse = float(np.sqrt(np.mean((source_prediction - np.asarray(query_vector, dtype=np.float64)) ** 2)))
+    return reconstructed, np.asarray(weights, dtype=np.float64), source_fit_rmse
+
+
+def _project_simplex(values: np.ndarray) -> np.ndarray:
+    if values.ndim != 1:
+        raise MappingInputError("Simplex projection requires a one-dimensional vector.")
+    if values.size == 0:
+        raise MappingInputError("Simplex projection requires at least one value.")
+    sorted_values = np.sort(np.asarray(values, dtype=np.float64))[::-1]
+    cumulative = np.cumsum(sorted_values) - 1.0
+    indices = np.arange(1, sorted_values.size + 1, dtype=np.float64)
+    positive = sorted_values - cumulative / indices > 0.0
+    if not np.any(positive):
+        return np.full(values.shape, 1.0 / float(values.size), dtype=np.float64)
+    rho = int(np.flatnonzero(positive)[-1])
+    theta = cumulative[rho] / float(rho + 1)
+    projected = np.maximum(np.asarray(values, dtype=np.float64) - theta, 0.0)
+    projected_sum = float(np.sum(projected))
+    if projected_sum <= 0.0:
+        return np.full(values.shape, 1.0 / float(values.size), dtype=np.float64)
+    return projected / projected_sum
+
+
+def _fit_simplex_neighbor_weights(
+    neighbor_band_values: np.ndarray,
+    query_vector: np.ndarray,
+    neighbor_distances: np.ndarray,
+) -> np.ndarray:
+    candidate_matrix = np.asarray(neighbor_band_values, dtype=np.float64)
+    query = np.asarray(query_vector, dtype=np.float64)
+    if candidate_matrix.ndim != 2:
+        raise MappingInputError("Simplex mixture fitting requires a two-dimensional candidate matrix.")
+    neighbor_count = int(candidate_matrix.shape[0])
+    if neighbor_count < 1:
+        raise MappingInputError("Simplex mixture fitting requires at least one neighbor candidate.")
+    if neighbor_count == 1:
+        return np.asarray([1.0], dtype=np.float64)
+
+    exact_match_mask = np.asarray(neighbor_distances <= 1e-12, dtype=bool)
+    if np.any(exact_match_mask):
+        weights = np.asarray(exact_match_mask, dtype=np.float64)
+        return weights / float(np.sum(weights))
+
+    gram = candidate_matrix @ candidate_matrix.T
+    linear = candidate_matrix @ query
+    max_eigenvalue = float(np.max(np.linalg.eigvalsh(gram)))
+    if not np.isfinite(max_eigenvalue) or max_eigenvalue <= 1e-12:
+        return np.full(neighbor_count, 1.0 / float(neighbor_count), dtype=np.float64)
+
+    step = 1.0 / max_eigenvalue
+    weights = np.full(neighbor_count, 1.0 / float(neighbor_count), dtype=np.float64)
+    momentum = np.asarray(weights, dtype=np.float64)
+    t_prev = 1.0
+    for _ in range(250):
+        gradient = gram @ momentum - linear
+        updated = _project_simplex(momentum - step * gradient)
+        if np.linalg.norm(updated - weights, ord=1) <= 1e-10:
+            weights = updated
+            break
+        t_next = 0.5 * (1.0 + math.sqrt(1.0 + 4.0 * t_prev * t_prev))
+        momentum = updated + ((t_prev - 1.0) / t_next) * (updated - weights)
+        weights = updated
+        t_prev = t_next
+    return np.asarray(weights / float(np.sum(weights)), dtype=np.float64)
 
 
 def _source_retrieval_bands(schema: SensorSRFSchema, segment: str) -> tuple[SensorBandDefinition, ...]:
@@ -1496,10 +1576,13 @@ class SpectralMapper:
             k=k,
         )
 
-        reconstructed = _combine_neighbor_spectra(
+        neighbor_band_values = np.asarray(source_matrix[neighbor_indices], dtype=np.float64)
+        reconstructed, neighbor_weights, source_fit_rmse = _combine_neighbor_spectra(
             self._load_hyperspectral(segment),
             neighbor_indices,
             neighbor_distances,
+            neighbor_band_values[:, valid_indices],
+            query_vector,
             neighbor_estimator=neighbor_estimator,
         )
         return _SegmentRetrieval(
@@ -1513,7 +1596,9 @@ class SpectralMapper:
             neighbor_indices=neighbor_indices,
             neighbor_ids=tuple(self._row_ids[index] for index in neighbor_indices),
             neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
-            neighbor_band_values=np.asarray(source_matrix[neighbor_indices], dtype=np.float64),
+            neighbor_weights=neighbor_weights,
+            neighbor_band_values=neighbor_band_values,
+            source_fit_rmse=source_fit_rmse,
         )
 
     def _retrieve_segment_batch(
@@ -1573,10 +1658,13 @@ class SpectralMapper:
                     candidate_row_indices,
                     k=k,
                 )
-                reconstructed = _combine_neighbor_spectra(
+                neighbor_band_values = np.asarray(source_matrix[neighbor_indices], dtype=np.float64)
+                reconstructed, neighbor_weights, source_fit_rmse = _combine_neighbor_spectra(
                     segment_hyperspectral,
                     neighbor_indices,
                     neighbor_distances,
+                    neighbor_band_values[:, valid_indices],
+                    query_group[local_index],
                     neighbor_estimator=neighbor_estimator,
                 )
                 retrievals[int(batch_index)] = _SegmentRetrieval(
@@ -1590,7 +1678,9 @@ class SpectralMapper:
                     neighbor_indices=neighbor_indices,
                     neighbor_ids=tuple(self._row_ids[index] for index in neighbor_indices),
                     neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
-                    neighbor_band_values=np.asarray(source_matrix[neighbor_indices], dtype=np.float64),
+                    neighbor_weights=neighbor_weights,
+                    neighbor_band_values=neighbor_band_values,
+                    source_fit_rmse=source_fit_rmse,
                 )
 
         return tuple(
@@ -1810,6 +1900,8 @@ class SpectralMapper:
                 "query_valid_mask": [bool(value) for value in retrieval.query_valid_mask],
                 "neighbor_ids": list(retrieval.neighbor_ids),
                 "neighbor_distances": [float(value) for value in retrieval.neighbor_distances],
+                "neighbor_weights": [float(value) for value in retrieval.neighbor_weights],
+                "source_fit_rmse": None if retrieval.source_fit_rmse is None else float(retrieval.source_fit_rmse),
                 "neighbor_band_values": [
                     [float(value) for value in row]
                     for row in np.asarray(retrieval.neighbor_band_values, dtype=np.float64)
