@@ -17,6 +17,8 @@ from .fetchers import get_fetcher
 from .manifest import filter_sources, load_manifest, manifest_sha256, split_csv_arg
 from .mapping import (
     CANONICAL_WAVELENGTHS,
+    SUPPORTED_KNN_BACKENDS,
+    SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS,
     SUPPORTED_NEIGHBOR_ESTIMATORS,
     SUPPORTED_OUTPUT_MODES,
     SWIR_WAVELENGTHS,
@@ -492,6 +494,8 @@ def _neighbor_review_rows_for_result(sample_id: str, result: object) -> list[dic
         "target_sensor": diagnostics.get("target_sensor"),
         "output_mode": diagnostics.get("output_mode"),
         "neighbor_estimator": diagnostics.get("neighbor_estimator"),
+        "knn_backend": diagnostics.get("knn_backend"),
+        "knn_eps": diagnostics.get("knn_eps"),
         "k": diagnostics.get("k"),
     }
     rows: list[dict[str, object]] = []
@@ -549,6 +553,8 @@ def _write_neighbor_review_output(path: Path, rows: Sequence[dict[str, object]])
         "target_sensor",
         "output_mode",
         "neighbor_estimator",
+        "knn_backend",
+        "knn_eps",
         "k",
         "segment",
         "segment_status",
@@ -704,12 +710,14 @@ def cmd_build_siac_library(args: argparse.Namespace) -> int:
 
 
 def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
+    knn_index_backends = _split_repeated_csv_arg(args.knn_index_backend)
     _emit_cli_log(
         args,
         command="prepare-mapping-library",
         event="command_started",
         context={
             "dtype": args.dtype,
+            "knn_index_backends": knn_index_backends,
             "output_root": str(Path(args.output_root)),
             "siac_root": str(Path(args.siac_root)),
             "source_sensors": _split_repeated_csv_arg(args.source_sensor),
@@ -722,6 +730,7 @@ def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
         Path(args.output_root),
         _split_repeated_csv_arg(args.source_sensor),
         dtype=args.dtype,
+        knn_index_backends=knn_index_backends,
     )
     payload = manifest.to_dict()
     payload["output_root"] = str(Path(args.output_root))
@@ -730,6 +739,7 @@ def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
         command="prepare-mapping-library",
         event="command_completed",
         context={
+            "knn_index_backends": knn_index_backends,
             "output_root": str(Path(args.output_root)),
             "row_count": manifest.row_count,
             "source_sensors": list(manifest.source_sensors),
@@ -750,6 +760,8 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
             "diagnostics_output": str(Path(args.diagnostics_output)) if args.diagnostics_output else None,
             "input_path": str(Path(args.input)),
             "k": args.k,
+            "knn_backend": args.knn_backend,
+            "knn_eps": args.knn_eps,
             "min_valid_bands": args.min_valid_bands,
             "neighbor_estimator": args.neighbor_estimator,
             "neighbor_review_output": str(Path(args.neighbor_review_output)) if args.neighbor_review_output else None,
@@ -771,6 +783,8 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
         k=args.k,
         min_valid_bands=args.min_valid_bands,
         neighbor_estimator=args.neighbor_estimator,
+        knn_backend=args.knn_backend,
+        knn_eps=args.knn_eps,
         exclude_row_ids=exclude_row_ids,
         exclude_sample_names=exclude_sample_names,
     )
@@ -793,6 +807,8 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
             "excluded_row_ids": exclude_row_ids,
             "excluded_sample_names": exclude_sample_names,
             "neighbor_estimator": args.neighbor_estimator,
+            "knn_backend": args.knn_backend,
+            "knn_eps": args.knn_eps,
         }
     )
     if args.diagnostics_output:
@@ -839,6 +855,8 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
             "diagnostics_output": str(Path(args.diagnostics_output)) if args.diagnostics_output else None,
             "input_path": str(Path(args.input)),
             "k": args.k,
+            "knn_backend": args.knn_backend,
+            "knn_eps": args.knn_eps,
             "min_valid_bands": args.min_valid_bands,
             "neighbor_review_output": str(Path(args.neighbor_review_output)) if args.neighbor_review_output else None,
             "output_mode": args.output_mode,
@@ -862,6 +880,8 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
         k=args.k,
         min_valid_bands=args.min_valid_bands,
         neighbor_estimator=args.neighbor_estimator,
+        knn_backend=args.knn_backend,
+        knn_eps=args.knn_eps,
         exclude_row_ids=exclude_row_ids,
         exclude_sample_names=exclude_sample_names,
         exclude_row_ids_per_sample=input_exclude_row_ids,
@@ -887,6 +907,8 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
         "excluded_row_ids": exclude_row_ids,
         "excluded_sample_names": exclude_sample_names,
         "neighbor_estimator": args.neighbor_estimator,
+        "knn_backend": args.knn_backend,
+        "knn_eps": args.knn_eps,
         "self_exclude_sample_id": bool(args.self_exclude_sample_id),
         "input_exclude_row_id_column": any(value is not None for value in input_exclude_row_ids),
     }
@@ -927,6 +949,9 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
         event="command_started",
         context={
             "k": args.k,
+            "knn_backend": args.knn_backend,
+            "knn_eps": args.knn_eps,
+            "max_test_rows": args.max_test_rows if args.max_test_rows > 0 else None,
             "prepared_root": str(Path(args.prepared_root)),
             "random_seed": args.random_seed,
             "report": str(Path(args.report)),
@@ -942,8 +967,11 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
         args.target_sensor,
         k=args.k,
         test_fraction=args.test_fraction,
+        max_test_rows=(args.max_test_rows if args.max_test_rows > 0 else None),
         random_seed=args.random_seed,
         neighbor_estimator=args.neighbor_estimator,
+        knn_backend=args.knn_backend,
+        knn_eps=args.knn_eps,
     )
     report_path = Path(args.report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -954,6 +982,9 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
         event="command_completed",
         context={
             "neighbor_estimator": args.neighbor_estimator,
+            "knn_backend": args.knn_backend,
+            "knn_eps": args.knn_eps,
+            "max_test_rows": args.max_test_rows if args.max_test_rows > 0 else None,
             "report": str(report_path),
             "test_rows": report["test_rows"],
             "train_rows": report["train_rows"],
@@ -965,6 +996,9 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
                 "prepared_root": str(Path(args.prepared_root)),
                 "report": str(report_path),
                 "neighbor_estimator": args.neighbor_estimator,
+                "knn_backend": args.knn_backend,
+                "knn_eps": args.knn_eps,
+                "max_test_rows": args.max_test_rows if args.max_test_rows > 0 else None,
                 "test_rows": report["test_rows"],
                 "train_rows": report["train_rows"],
             },
@@ -1022,6 +1056,12 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_mapping_parser.add_argument("--source-sensor", action="append", required=True)
     prepare_mapping_parser.add_argument("--output-root", required=True)
     prepare_mapping_parser.add_argument("--dtype", default="float32")
+    prepare_mapping_parser.add_argument(
+        "--knn-index-backend",
+        action="append",
+        default=[],
+        choices=list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS),
+    )
     prepare_mapping_parser.set_defaults(func=cmd_prepare_mapping_library)
 
     map_parser = subparsers.add_parser(
@@ -1036,6 +1076,8 @@ def build_parser() -> argparse.ArgumentParser:
     map_parser.add_argument("--k", type=int, default=10)
     map_parser.add_argument("--min-valid-bands", type=int, default=1)
     map_parser.add_argument("--neighbor-estimator", choices=list(SUPPORTED_NEIGHBOR_ESTIMATORS), default="mean")
+    map_parser.add_argument("--knn-backend", choices=list(SUPPORTED_KNN_BACKENDS), default="numpy")
+    map_parser.add_argument("--knn-eps", type=float, default=0.0)
     map_parser.add_argument("--exclude-row-id", action="append", default=[])
     map_parser.add_argument("--exclude-sample-name", action="append", default=[])
     map_parser.add_argument("--output", required=True)
@@ -1055,6 +1097,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch_map_parser.add_argument("--k", type=int, default=10)
     batch_map_parser.add_argument("--min-valid-bands", type=int, default=1)
     batch_map_parser.add_argument("--neighbor-estimator", choices=list(SUPPORTED_NEIGHBOR_ESTIMATORS), default="mean")
+    batch_map_parser.add_argument("--knn-backend", choices=list(SUPPORTED_KNN_BACKENDS), default="numpy")
+    batch_map_parser.add_argument("--knn-eps", type=float, default=0.0)
     batch_map_parser.add_argument("--exclude-row-id", action="append", default=[])
     batch_map_parser.add_argument("--exclude-sample-name", action="append", default=[])
     batch_map_parser.add_argument("--self-exclude-sample-id", action="store_true")
@@ -1072,8 +1116,11 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--target-sensor", required=True)
     benchmark_parser.add_argument("--k", type=int, default=10)
     benchmark_parser.add_argument("--test-fraction", type=float, default=0.2)
+    benchmark_parser.add_argument("--max-test-rows", type=int, default=0)
     benchmark_parser.add_argument("--random-seed", type=int, default=0)
     benchmark_parser.add_argument("--neighbor-estimator", choices=list(SUPPORTED_NEIGHBOR_ESTIMATORS), default="mean")
+    benchmark_parser.add_argument("--knn-backend", choices=list(SUPPORTED_KNN_BACKENDS), default="numpy")
+    benchmark_parser.add_argument("--knn-eps", type=float, default=0.0)
     benchmark_parser.add_argument("--report", required=True)
     benchmark_parser.set_defaults(func=cmd_benchmark_mapping)
 

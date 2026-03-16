@@ -10,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MKDOCS_CONFIG_PATH = REPO_ROOT / "mkdocs.yml"
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "docs-pages.yml"
 PACKAGE_CHECKS_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "package-checks.yml"
+FULL_LIBRARY_BENCHMARK_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "full-library-benchmarks.yml"
 
 
 class DocsSiteBuildTests(unittest.TestCase):
@@ -63,9 +64,22 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertIn("--json-logs", cli_html)
             self.assertIn("distance_weighted_mean", cli_html)
             self.assertIn("simplex_mixture", cli_html)
+            self.assertIn("scipy_ckdtree", cli_html)
+            self.assertIn("faiss", cli_html)
+            self.assertIn("pynndescent", cli_html)
+            self.assertIn("scann", cli_html)
+            self.assertIn("--knn-index-backend", cli_html)
+            self.assertIn("spectral-library[knn]", cli_html)
+            self.assertIn("spectral-library[knn-faiss]", cli_html)
+            self.assertIn("spectral-library[knn-pynndescent]", cli_html)
+            self.assertIn("spectral-library[knn-scann]", cli_html)
             self.assertIn("command_failed", cli_html)
             self.assertIn("elapsed_ms", cli_html)
             self.assertIn("per-segment query values", python_html)
+            self.assertIn("knn_backend", python_html)
+            self.assertIn("knn_eps", python_html)
+            self.assertIn("knn_index_artifacts", python_html)
+            self.assertIn("confidence_score", python_html)
             self.assertIn("neighbor-review-output", cli_html)
             self.assertIn('href="example_bundle.html"', official_html)
             self.assertIn('href="examples/official_mapping/results/metrics/pairwise_band_metrics.csv"', official_html)
@@ -85,6 +99,13 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertNotIn('href="../examples/', official_html)
             self.assertIn("Mathematical Foundations", official_html)
             self.assertIn("root-mean-square Euclidean distance", theory_html)
+            self.assertIn("scipy_ckdtree", theory_html)
+            self.assertIn("faiss", theory_html)
+            self.assertIn("pynndescent", theory_html)
+            self.assertIn("scann", theory_html)
+            self.assertIn("full-feature ANN indexes", theory_html)
+            self.assertIn("not a calibrated", theory_html)
+            self.assertIn("Pre-sorting the full library rows", theory_html)
             self.assertIn("two independent nearest-neighbor", theory_html)
             self.assertIn("arithmatex", theory_html)
             self.assertNotIn("/Users/fengyin/Documents/spectral_library", official_html)
@@ -93,6 +114,7 @@ class DocsSiteBuildTests(unittest.TestCase):
         mkdocs_config = MKDOCS_CONFIG_PATH.read_text(encoding="utf-8")
         docs_workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         package_checks_workflow = PACKAGE_CHECKS_WORKFLOW_PATH.read_text(encoding="utf-8")
+        full_benchmark_workflow = FULL_LIBRARY_BENCHMARK_WORKFLOW_PATH.read_text(encoding="utf-8")
 
         self.assertIn("exclude_docs:", mkdocs_config)
         self.assertIn("scale_factor_verification.md", mkdocs_config)
@@ -108,6 +130,13 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("actions/deploy-pages@v4", docs_workflow)
         self.assertIn('python -m pip install -e ".[docs]"', docs_workflow)
         self.assertIn("python -m mkdocs build --clean --config-file mkdocs.yml --site-dir build/docs-site", package_checks_workflow)
+        self.assertIn("optional-knn-smoke:", package_checks_workflow)
+        self.assertIn("knn-faiss", package_checks_workflow)
+        self.assertIn("knn-pynndescent", package_checks_workflow)
+        self.assertIn("knn-scann", package_checks_workflow)
+        self.assertIn("full-library-benchmarks", full_benchmark_workflow)
+        self.assertIn("FULL_LIBRARY_PREPARED_ROOT", full_benchmark_workflow)
+        self.assertIn("run_full_library_benchmarks.py", full_benchmark_workflow)
 
 
 if __name__ == "__main__":

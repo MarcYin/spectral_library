@@ -48,7 +48,7 @@ class PublicApiContractTests(unittest.TestCase):
     def test_public_signatures_are_stable(self) -> None:
         self.assertEqual(
             tuple(inspect.signature(prepare_mapping_library).parameters),
-            ("siac_root", "srf_root", "output_root", "source_sensors", "dtype"),
+            ("siac_root", "srf_root", "output_root", "source_sensors", "dtype", "knn_index_backends"),
         )
         self.assertEqual(
             tuple(inspect.signature(validate_prepared_library).parameters),
@@ -56,7 +56,18 @@ class PublicApiContractTests(unittest.TestCase):
         )
         self.assertEqual(
             tuple(inspect.signature(benchmark_mapping).parameters),
-            ("prepared_root", "source_sensor", "target_sensor", "k", "test_fraction", "random_seed", "neighbor_estimator"),
+            (
+                "prepared_root",
+                "source_sensor",
+                "target_sensor",
+                "k",
+                "test_fraction",
+                "max_test_rows",
+                "random_seed",
+                "neighbor_estimator",
+                "knn_backend",
+                "knn_eps",
+            ),
         )
         self.assertEqual(
             tuple(inspect.signature(SpectralMapper).parameters),
@@ -74,6 +85,8 @@ class PublicApiContractTests(unittest.TestCase):
                 "k",
                 "min_valid_bands",
                 "neighbor_estimator",
+                "knn_backend",
+                "knn_eps",
                 "exclude_row_ids",
                 "exclude_sample_names",
             ),
@@ -91,6 +104,8 @@ class PublicApiContractTests(unittest.TestCase):
                 "k",
                 "min_valid_bands",
                 "neighbor_estimator",
+                "knn_backend",
+                "knn_eps",
                 "exclude_row_ids",
                 "exclude_sample_names",
                 "exclude_row_ids_per_sample",
@@ -131,6 +146,7 @@ class PublicApiContractTests(unittest.TestCase):
                 "swir_wavelength_range_nm",
                 "array_dtype",
                 "file_checksums",
+                "knn_index_artifacts",
                 "interpolation_summary",
             ),
         )
@@ -161,8 +177,13 @@ class CliContractTests(unittest.TestCase):
         map_options = {option for action in command_parsers["map-reflectance"]._actions for option in action.option_strings}
         batch_options = {option for action in command_parsers["map-reflectance-batch"]._actions for option in action.option_strings}
         benchmark_options = {option for action in command_parsers["benchmark-mapping"]._actions for option in action.option_strings}
+        backend_choices = set(command_parsers["map-reflectance"]._option_string_actions["--knn-backend"].choices)
 
-        self.assertTrue({"--siac-root", "--srf-root", "--source-sensor", "--output-root"}.issubset(prepare_options))
+        self.assertTrue(
+            {"--siac-root", "--srf-root", "--source-sensor", "--output-root", "--knn-index-backend"}.issubset(
+                prepare_options
+            )
+        )
         self.assertTrue(
             {
                 "--prepared-root",
@@ -172,6 +193,8 @@ class CliContractTests(unittest.TestCase):
                 "--output-mode",
                 "--k",
                 "--neighbor-estimator",
+                "--knn-backend",
+                "--knn-eps",
                 "--output",
                 "--diagnostics-output",
                 "--neighbor-review-output",
@@ -188,6 +211,8 @@ class CliContractTests(unittest.TestCase):
                 "--output-mode",
                 "--k",
                 "--neighbor-estimator",
+                "--knn-backend",
+                "--knn-eps",
                 "--output",
                 "--diagnostics-output",
                 "--neighbor-review-output",
@@ -197,10 +222,20 @@ class CliContractTests(unittest.TestCase):
             }.issubset(batch_options)
         )
         self.assertTrue(
-            {"--prepared-root", "--source-sensor", "--target-sensor", "--neighbor-estimator", "--report"}.issubset(
+            {
+                "--prepared-root",
+                "--source-sensor",
+                "--target-sensor",
+                "--neighbor-estimator",
+                "--knn-backend",
+                "--knn-eps",
+                "--max-test-rows",
+                "--report",
+            }.issubset(
                 benchmark_options
             )
         )
+        self.assertTrue({"numpy", "scipy_ckdtree", "faiss", "pynndescent", "scann"}.issubset(backend_choices))
 
     def test_cli_json_error_envelope_is_stable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -304,16 +339,18 @@ class PreparedRuntimeContractTests(unittest.TestCase):
                     "swir_wavelength_range_nm",
                     "array_dtype",
                     "file_checksums",
+                    "knn_index_artifacts",
                     "interpolation_summary",
                 },
             )
-            self.assertEqual(manifest_payload["schema_version"], "1.1.0")
+            self.assertEqual(manifest_payload["schema_version"], "1.2.0")
             self.assertEqual(set(manifest_payload["file_checksums"]), set(manifest.file_checksums))
+            self.assertEqual(manifest_payload["knn_index_artifacts"], manifest.knn_index_artifacts)
             self.assertEqual(set(manifest_payload["interpolation_summary"]), set(manifest.interpolation_summary))
 
             checksums_payload = json.loads((fixture["prepared_root"] / "checksums.json").read_text(encoding="utf-8"))
             self.assertEqual(set(checksums_payload), {"files", "schema_version"})
-            self.assertEqual(checksums_payload["schema_version"], "1.1.0")
+            self.assertEqual(checksums_payload["schema_version"], "1.2.0")
             self.assertIn("manifest.json", checksums_payload["files"])
             self.assertIn("mapping_metadata.parquet", checksums_payload["files"])
             self.assertIn("sensor_schema.json", checksums_payload["files"])

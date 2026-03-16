@@ -460,7 +460,7 @@ class CliCommandTests(unittest.TestCase):
         parser = cli.build_parser()
         args = parser.parse_args(["plan-matrix"])
         self.assertEqual(args.manifest, str(cli.DEFAULT_MANIFEST))
-        self.assertEqual(__version__, "0.1.0")
+        self.assertEqual(__version__, "0.2.0")
 
 
 if __name__ == "__main__":

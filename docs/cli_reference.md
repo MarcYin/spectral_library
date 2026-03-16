@@ -34,6 +34,7 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--dtype` | floating-point output dtype, default `float32` |
+| `--knn-index-backend` | optionally persist ANN indexes for `faiss`, `pynndescent`, or `scann` during prepare |
 
 ### `validate-prepared-library`
 
@@ -79,6 +80,8 @@ Optional arguments:
 | `--k` | nearest-neighbor count, default `10` |
 | `--min-valid-bands` | minimum valid source bands per segment, default `1` |
 | `--neighbor-estimator` | `mean`, `distance_weighted_mean`, or `simplex_mixture`, default `mean` |
+| `--knn-backend` | shortlist search backend: `numpy`, `scipy_ckdtree`, `faiss`, `pynndescent`, or `scann`; default `numpy` |
+| `--knn-eps` | approximation slack / search-accuracy knob for supported ANN backends; `0` keeps `scipy_ckdtree` exact |
 | `--exclude-row-id` | exclude one or more prepared row ids from neighbor selection |
 | `--exclude-sample-name` | exclude one or more prepared `sample_name` values from neighbor selection |
 | `--diagnostics-output` | optional JSON summary path |
@@ -101,7 +104,13 @@ Single-sample outputs:
 If `--neighbor-review-output` is set, the command also writes a CSV review table
 with one row per segment-neighbor pair. It includes the sample id, segment
 status, neighbor rank, distance, estimator weight, query band values, and the
-selected neighbor's source-band values.
+selected neighbor's source-band values. The review rows also record
+`knn_backend` and `knn_eps`.
+
+The JSON diagnostics also include a heuristic `confidence_score` at the overall
+mapping level and per segment. It is derived from valid-band coverage, neighbor
+distances, estimator weight concentration, and source-space fit RMSE. Treat it
+as a ranking aid, not a calibrated probability.
 
 ### `map-reflectance-batch`
 
@@ -130,6 +139,8 @@ Optional arguments:
 | `--k` | nearest-neighbor count |
 | `--min-valid-bands` | minimum valid source bands per segment |
 | `--neighbor-estimator` | `mean`, `distance_weighted_mean`, or `simplex_mixture` |
+| `--knn-backend` | shortlist search backend: `numpy`, `scipy_ckdtree`, `faiss`, `pynndescent`, or `scann` |
+| `--knn-eps` | approximation slack / search-accuracy knob for supported ANN backends |
 | `--exclude-row-id` | exclude one or more prepared row ids for every batch sample |
 | `--exclude-sample-name` | exclude one or more prepared `sample_name` values for every batch sample |
 | `--self-exclude-sample-id` | exclude rows whose prepared `sample_name` matches each batch `sample_id` |
@@ -179,8 +190,40 @@ Optional arguments:
 | --- | --- |
 | `--k` | nearest-neighbor count, default `10` |
 | `--test-fraction` | held-out fraction, default `0.2` |
+| `--max-test-rows` | optional cap on held-out rows, default `0` in the CLI and `None` in Python |
 | `--random-seed` | split seed, default `0` |
 | `--neighbor-estimator` | retrieval estimator to benchmark: `mean`, `distance_weighted_mean`, or `simplex_mixture`; default `mean` |
+| `--knn-backend` | shortlist search backend: `numpy`, `scipy_ckdtree`, `faiss`, `pynndescent`, or `scann`; default `numpy` |
+| `--knn-eps` | approximation slack / search-accuracy knob for supported ANN backends |
+
+Optional backend install extras:
+
+```bash
+python3 -m pip install "spectral-library[knn]"
+python3 -m pip install "spectral-library[knn-faiss]"
+python3 -m pip install "spectral-library[knn-pynndescent]"
+python3 -m pip install "spectral-library[knn-scann]"
+```
+
+## Benchmark Automation
+
+For larger prepared runtimes, the repository also ships a multi-scenario
+benchmark runner:
+
+```bash
+PYTHONPATH=src python scripts/run_full_library_benchmarks.py \
+  --prepared-root path/to/prepared_runtime \
+  --neighbor-estimator simplex_mixture \
+  --knn-backend numpy \
+  --k 10 \
+  --max-test-rows 512 \
+  --output-root build/full-library-benchmarks \
+  --thresholds benchmarks/default_thresholds.json \
+  --fail-on-thresholds
+```
+
+It writes per-scenario JSON reports under `runs/`, plus aggregate
+`summary.csv`, `summary.json`, and `reports.json`.
 
 ## Error Behavior
 

@@ -1,0 +1,57 @@
+name: Full Library Benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    env:
+      FULL_LIBRARY_PREPARED_ROOT: ${{ vars.FULL_LIBRARY_PREPARED_ROOT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Skip when no prepared runtime is configured
+        if: ${{ env.FULL_LIBRARY_PREPARED_ROOT == '' }}
+        run: |
+          echo "FULL_LIBRARY_PREPARED_ROOT is not configured; skipping full-library benchmark run."
+          echo "Configure repository variable FULL_LIBRARY_PREPARED_ROOT to enable this workflow." >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Validate configured runtime path
+        if: ${{ env.FULL_LIBRARY_PREPARED_ROOT != '' }}
+        run: |
+          test -d "${FULL_LIBRARY_PREPARED_ROOT}"
+
+      - name: Run full-library benchmark suite
+        if: ${{ env.FULL_LIBRARY_PREPARED_ROOT != '' }}
+        run: |
+          PYTHONPATH=src python scripts/run_full_library_benchmarks.py \
+            --prepared-root "${FULL_LIBRARY_PREPARED_ROOT}" \
+            --neighbor-estimator simplex_mixture \
+            --knn-backend numpy \
+            --k 10 \
+            --max-test-rows 512 \
+            --output-root build/full-library-benchmarks \
+            --thresholds benchmarks/default_thresholds.json \
+            --fail-on-thresholds
+
+      - name: Upload benchmark artifacts
+        if: ${{ env.FULL_LIBRARY_PREPARED_ROOT != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-library-benchmarks
+          path: build/full-library-benchmarks

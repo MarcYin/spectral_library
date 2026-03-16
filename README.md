@@ -65,6 +65,20 @@ python3 -m pip install ".[docs]"
 
 The published docs site is built with MkDocs from [mkdocs.yml](mkdocs.yml).
 
+For the optional SciPy `cKDTree` shortlist backend, install:
+
+```bash
+python3 -m pip install ".[knn]"
+```
+
+Additional optional ANN backends are available with:
+
+```bash
+python3 -m pip install ".[knn-faiss]"
+python3 -m pip install ".[knn-pynndescent]"
+python3 -m pip install ".[knn-scann]"
+```
+
 ## Minimal Example
 
 Prepare a mapping runtime:
@@ -74,6 +88,7 @@ spectral-library prepare-mapping-library \
   --siac-root build/siac_library \
   --srf-root path/to/srfs \
   --source-sensor SENSOR_A \
+  --knn-index-backend faiss \
   --output-root build/mapping_runtime
 ```
 
@@ -111,6 +126,13 @@ spectral-library map-reflectance-batch \
 The detailed quickstart, supported CSV layouts, Python API examples, SRF JSON
 schema, and prepared-runtime contract are documented in
 [`docs/mapping_quickstart.md`](docs/mapping_quickstart.md).
+
+For larger prepared runtimes, the repository also ships
+[`scripts/run_full_library_benchmarks.py`](scripts/run_full_library_benchmarks.py)
+plus the scheduled/manual GitHub Actions workflow
+[`full-library-benchmarks.yml`](.github/workflows/full-library-benchmarks.yml).
+Use `--max-test-rows` to keep held-out benchmark runs bounded on large
+prepared libraries.
 
 For reproducible cross-sensor examples built from official MODIS, Sentinel-2A,
 Landsat 8, and Landsat 9 response functions, see

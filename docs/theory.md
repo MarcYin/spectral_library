@@ -153,6 +153,31 @@ Important implementation details:
 - all valid bands currently use uniform weight
 - top-$k$ neighbors are ordered deterministically by distance and row index
 
+The package also exposes multiple search backends for this same metric:
+
+- `numpy`: direct dense distance evaluation
+- `scipy_ckdtree`: SciPy `cKDTree` search, with `knn_eps > 0` allowing an
+  approximate shortlist
+- `faiss`: FAISS HNSW search
+- `pynndescent`: PyNNDescent approximate search
+- `scann`: ScaNN approximate search
+
+The backend changes how the shortlist is found, not the metric itself. The
+returned neighbors are still re-ordered by exact RMS distance before the
+estimator runs.
+
+For `faiss`, `pynndescent`, and `scann`, the prepare step can also persist
+full-feature ANN indexes for each prepared source sensor and segment. Those
+saved indexes are only used when a query uses the full segment feature set and
+the full candidate pool. Queries with missing bands or per-query exclusions
+fall back to on-the-fly search in the reduced feature space.
+
+Pre-sorting the full library rows by global spectral similarity usually does
+not improve this retrieval. The runtime searches two different segment spaces,
+and each query may activate a different valid-band subset, so there is no
+single fixed row order that makes the real KNN computation cheap. Indexing or
+tree-based search is the useful acceleration path instead.
+
 If a segment has fewer than `min_valid_bands` valid inputs, that segment is
 reported as unavailable instead of forcing a low-information retrieval.
 
@@ -207,7 +232,16 @@ The returned diagnostics carry the chosen `neighbor_estimator`, plus:
 - query band values and validity masks
 - neighbor identities and neighbor distances
 - neighbor weights and source-fit RMSE
+- heuristic confidence scores and their components
 - the selected neighbors' simulated source-band values for the same segment
+
+The current confidence score is a bounded heuristic, not a calibrated
+probability. It combines:
+
+- valid-band coverage
+- mean neighbor distance
+- source-space fit RMSE after estimator weighting
+- estimator weight concentration
 
 ## Target-Sensor Mapping
 

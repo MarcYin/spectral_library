@@ -132,3 +132,75 @@ jobs:
         with:
           name: docs-site-preview
           path: build/docs-site
+
+  optional-knn-smoke:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: scipy_ckdtree
+            extra: knn
+            persist_backend: ""
+            knn_eps: "0.05"
+          - backend: faiss
+            extra: knn-faiss
+            persist_backend: faiss
+            knn_eps: "0.10"
+          - backend: pynndescent
+            extra: knn-pynndescent
+            persist_backend: pynndescent
+            knn_eps: "0.10"
+          - backend: scann
+            extra: knn-scann
+            persist_backend: scann
+            knn_eps: "0.10"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend-specific dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[${{ matrix.extra }}]"
+
+      - name: Create smoke fixture
+        run: python scripts/create_mapping_smoke_fixture.py --output-root "${RUNNER_TEMP}/mapping-smoke"
+
+      - name: Prepare runtime with optional ANN indexes
+        run: |
+          extra_args=""
+          if [ -n "${{ matrix.persist_backend }}" ]; then
+            extra_args="--knn-index-backend ${{ matrix.persist_backend }}"
+          fi
+          spectral-library prepare-mapping-library \
+            --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
+            --srf-root "${RUNNER_TEMP}/mapping-smoke/srfs" \
+            --source-sensor sensor_a \
+            --output-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
+            ${extra_args}
+
+      - name: Run ANN smoke mapping and benchmark
+        run: |
+          spectral-library map-reflectance \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
+            --source-sensor sensor_a \
+            --target-sensor sensor_b \
+            --input "${RUNNER_TEMP}/mapping-smoke/query_single.csv" \
+            --output-mode target_sensor \
+            --k 2 \
+            --knn-backend "${{ matrix.backend }}" \
+            --knn-eps "${{ matrix.knn_eps }}" \
+            --output "${RUNNER_TEMP}/mapping-smoke/ann_mapped.csv"
+          spectral-library benchmark-mapping \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
+            --source-sensor sensor_a \
+            --target-sensor sensor_b \
+            --neighbor-estimator simplex_mixture \
+            --knn-backend "${{ matrix.backend }}" \
+            --knn-eps "${{ matrix.knn_eps }}" \
+            --report "${RUNNER_TEMP}/mapping-smoke/ann_benchmark.json"

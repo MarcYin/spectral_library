@@ -37,6 +37,10 @@ Optional extras:
 | Extra | Use when |
 | --- | --- |
 | `.[docs]` | building the MkDocs site or GitHub Pages output |
+| `.[knn]` | enabling the optional SciPy `cKDTree` backend |
+| `.[knn-faiss]` | enabling the optional FAISS backend |
+| `.[knn-pynndescent]` | enabling the optional PyNNDescent backend |
+| `.[knn-scann]` | enabling the optional ScaNN backend on supported platforms |
 | `.[internal-build]` | regenerating official examples or running retained SIAC-build tooling |
 | `.[accel]` | using optional Rust-backed smoothing utilities |
 | `.[dev]` | running tests and release tooling |
@@ -50,6 +54,7 @@ spectral-library prepare-mapping-library \
   --siac-root build/siac_library \
   --srf-root path/to/srfs \
   --source-sensor SENSOR_A \
+  --knn-index-backend faiss \
   --output-root build/mapping_runtime
 ```
 
@@ -57,6 +62,7 @@ What this does:
 
 - loads and validates the sensor SRF definitions
 - precomputes source-sensor simulation matrices
+- optionally persists full-feature ANN indexes for supported backends
 - writes row-aligned hyperspectral arrays and metadata
 - emits `manifest.json`, `sensor_schema.json`, and `checksums.json`
 
@@ -94,6 +100,40 @@ spectral-library map-reflectance \
   --k 10 \
   --output path/to/mapped_reflectance.csv
 ```
+
+If you installed `.[knn]`, you can switch the shortlist search to SciPy's
+`cKDTree` backend. This keeps the same distance metric, but can accelerate
+larger searches, especially when many batch rows share the same valid-band
+pattern:
+
+```bash
+spectral-library map-reflectance \
+  --prepared-root build/mapping_runtime \
+  --source-sensor SENSOR_A \
+  --target-sensor SENSOR_B \
+  --input path/to/source_reflectance.csv \
+  --output-mode target_sensor \
+  --k 10 \
+  --knn-backend scipy_ckdtree \
+  --knn-eps 0.05 \
+  --output path/to/mapped_reflectance.csv
+```
+
+`--knn-eps 0` keeps the tree search exact. Values above `0` allow approximate
+shortlists.
+
+Additional ANN backends use the same `--knn-backend` flag:
+
+- `faiss`: FAISS HNSW search
+- `pynndescent`: PyNNDescent approximate search
+- `scann`: ScaNN approximate search
+
+Those backends still re-rank the returned shortlist by exact RMS distance
+before the estimator runs.
+
+The result diagnostics also expose a heuristic `confidence_score` for the full
+mapping and for each segment. It is based on valid-band coverage, neighbor
+distances, source-space fit RMSE, and estimator weight concentration.
 
 Reconstruct a full `400-2500 nm` spectrum instead:
 
@@ -159,6 +199,11 @@ the exact prepared `row_id` to exclude in the optional `exclude_row_id`
 column. The official MODIS/Sentinel-2/Landsat example uses this pattern so
 each query removes only its own source row from the full library.
 
+Pre-sorting the prepared rows by global spectral similarity is not a substitute
+for a search backend. Retrieval runs independently in VNIR and NIR-SWIR
+feature space, and can use different valid-band subsets per query, so a single
+fixed row order does not make the actual KNN search cheaper.
+
 ## Step 6: Use The Python API
 
 ```python
@@ -218,6 +263,9 @@ Band support must stay inside its declared segment:
   for end-to-end MODIS, Sentinel-2A, Landsat 8, and Landsat 9 runs
 - [Mathematical Foundations](theory.md)
   for the retrieval equations behind the outputs
+- [CLI Reference](cli_reference.md)
+  for `--knn-index-backend`, ANN backend selection, and the full-library
+  benchmark runner
 - [CLI Reference](cli_reference.md)
   for every public command and flag
 - [Prepared Runtime Contract](prepared_runtime_contract.md)

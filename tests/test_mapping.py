@@ -5,6 +5,7 @@ import csv
 import io
 import json
 import os
+import pickle
 import tempfile
 import unittest
 from pathlib import Path
@@ -190,7 +191,7 @@ class MappingWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, manifest = _prepare_fixture(Path(tmpdir))
 
-            self.assertEqual(manifest.schema_version, "1.1.0")
+            self.assertEqual(manifest.schema_version, "1.2.0")
             self.assertEqual(manifest.source_sensors, ("sensor_a",))
             self.assertEqual(manifest.row_count, 4)
             self.assertEqual(manifest.supported_output_modes, ("target_sensor", "vnir_spectrum", "swir_spectrum", "full_spectrum"))
@@ -208,6 +209,7 @@ class MappingWorkflowTests(unittest.TestCase):
                     "max_internal_gap_run_count": 0,
                 },
             )
+            self.assertEqual(manifest.knn_index_artifacts, {})
             self.assertTrue((fixture["prepared_root"] / "manifest.json").exists())
             self.assertTrue((fixture["prepared_root"] / "mapping_metadata.parquet").exists())
             self.assertTrue((fixture["prepared_root"] / "sensor_schema.json").exists())
@@ -233,6 +235,92 @@ class MappingWorkflowTests(unittest.TestCase):
             checksums = json.loads((fixture["prepared_root"] / "checksums.json").read_text(encoding="utf-8"))
             self.assertIn("manifest.json", checksums["files"])
             self.assertEqual(checksums["files"]["hyperspectral_vnir.npy"], manifest.file_checksums["hyperspectral_vnir.npy"])
+
+    def test_prepare_mapping_library_can_persist_faiss_indexes(self) -> None:
+        class BuildFaissIndex:
+            def __init__(self, dim: int, m: int) -> None:
+                del dim, m
+                self.data: np.ndarray | None = None
+                self.hnsw = type("FakeHNSW", (), {})()
+
+            def add(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float32)
+
+        class BuildFaissModule:
+            IndexHNSWFlat = BuildFaissIndex
+
+            @staticmethod
+            def write_index(index: BuildFaissIndex, path: str) -> None:
+                with Path(path).open("wb") as handle:
+                    pickle.dump(np.asarray(index.data, dtype=np.float32), handle)
+
+            @staticmethod
+            def read_index(path: str) -> BuildFaissIndex:
+                with Path(path).open("rb") as handle:
+                    data = pickle.load(handle)
+                index = BuildFaissIndex(int(np.asarray(data).shape[1]), 32)
+                index.add(np.asarray(data, dtype=np.float32))
+                return index
+
+        class QueryFaissIndex:
+            def __init__(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float32)
+
+            def search(self, query: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+                query_array = np.asarray(query, dtype=np.float32)
+                squared_distances = np.sum((self.data[None, :, :] - query_array[:, None, :]) ** 2, axis=2)
+                ordered = np.argsort(squared_distances, axis=1)[:, :k]
+                selected = np.take_along_axis(squared_distances, ordered, axis=1)
+                return selected, ordered
+
+        class QueryFaissModule:
+            @staticmethod
+            def read_index(path: str) -> QueryFaissIndex:
+                with Path(path).open("rb") as handle:
+                    data = pickle.load(handle)
+                return QueryFaissIndex(np.asarray(data, dtype=np.float32))
+
+            class IndexHNSWFlat:
+                def __init__(self, *_: object) -> None:
+                    raise AssertionError("Persisted FAISS test should not rebuild an in-memory index at query time.")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = _build_fixture(Path(tmpdir))
+            with patch.object(mapping_module, "_load_faiss_module", return_value=BuildFaissModule):
+                manifest = prepare_mapping_library(
+                    fixture["siac_root"],
+                    fixture["srf_root"],
+                    fixture["prepared_root"],
+                    ["sensor_a"],
+                    knn_index_backends=["faiss"],
+                )
+
+            self.assertIn("faiss", manifest.knn_index_artifacts)
+            self.assertEqual(
+                manifest.knn_index_artifacts["faiss"]["sensor_a"]["vnir"],
+                "knn_indexes/faiss_sensor_a_vnir.faiss",
+            )
+            self.assertTrue((fixture["prepared_root"] / "knn_indexes" / "faiss_sensor_a_vnir.faiss").exists())
+            self.assertIn(
+                "knn_indexes/faiss_sensor_a_vnir.faiss",
+                manifest.file_checksums,
+            )
+
+            with patch.object(mapping_module, "_load_faiss_module", return_value=QueryFaissModule):
+                mapper = SpectralMapper(fixture["prepared_root"])
+                result = mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.79, "swir": 0.21},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    neighbor_estimator="simplex_mixture",
+                    knn_backend="faiss",
+                )
+
+            assert result.target_reflectance is not None
+            self.assertTrue(np.allclose(result.target_reflectance, np.array([0.79, 0.21]), atol=1e-4))
+            self.assertEqual(result.diagnostics["knn_backend"], "faiss")
 
     def test_spectral_mapper_identity_retrieval_matches_when_source_equals_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -432,6 +520,243 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertAlmostEqual(sum(simplex_result.diagnostics["segments"]["vnir"]["neighbor_weights"]), 1.0, places=6)
             self.assertAlmostEqual(sum(simplex_result.diagnostics["segments"]["swir"]["neighbor_weights"]), 1.0, places=6)
 
+    def test_scipy_ckdtree_knn_backend_can_match_numpy_backend(self) -> None:
+        class FakeKDTree:
+            def __init__(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float64)
+
+            def query(self, query: np.ndarray, k: int, eps: float = 0.0, workers: int = 1) -> tuple[np.ndarray, np.ndarray]:
+                del eps, workers
+                query_array = np.asarray(query, dtype=np.float64)
+                if query_array.ndim == 1:
+                    distances = np.linalg.norm(self.data - query_array[None, :], axis=1)
+                    ordered = np.argsort(distances)[:k]
+                    return distances[ordered], ordered
+                distances = np.linalg.norm(self.data[None, :, :] - query_array[:, None, :], axis=2)
+                ordered = np.argsort(distances, axis=1)[:, :k]
+                selected = np.take_along_axis(distances, ordered, axis=1)
+                return selected, ordered
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            numpy_result = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance={"blue": 0.79, "swir": 0.21},
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=2,
+                neighbor_estimator="simplex_mixture",
+            )
+            with patch.object(mapping_module, "_load_ckdtree_class", return_value=FakeKDTree):
+                scipy_result = mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.79, "swir": 0.21},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    neighbor_estimator="simplex_mixture",
+                    knn_backend="scipy_ckdtree",
+                    knn_eps=0.1,
+                )
+
+            assert numpy_result.target_reflectance is not None
+            assert scipy_result.target_reflectance is not None
+            self.assertTrue(np.allclose(numpy_result.target_reflectance, scipy_result.target_reflectance, atol=1e-6))
+            self.assertEqual(scipy_result.diagnostics["knn_backend"], "scipy_ckdtree")
+            self.assertAlmostEqual(scipy_result.diagnostics["knn_eps"], 0.1)
+
+    def test_faiss_pynndescent_and_scann_backends_can_match_numpy_backend(self) -> None:
+        class FakeFaissIndex:
+            def __init__(self, dim: int, m: int) -> None:
+                del dim, m
+                self.data: np.ndarray | None = None
+                self.hnsw = type("FakeHNSW", (), {})()
+
+            def add(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float32)
+
+            def search(self, query: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+                assert self.data is not None
+                query_array = np.asarray(query, dtype=np.float32)
+                squared_distances = np.sum((self.data[None, :, :] - query_array[:, None, :]) ** 2, axis=2)
+                ordered = np.argsort(squared_distances, axis=1)[:, :k]
+                selected = np.take_along_axis(squared_distances, ordered, axis=1)
+                return selected, ordered
+
+        class FakeFaissModule:
+            IndexHNSWFlat = FakeFaissIndex
+
+        class FakeNNDescent:
+            def __init__(self, data: np.ndarray, metric: str = "euclidean") -> None:
+                del metric
+                self.data = np.asarray(data, dtype=np.float32)
+
+            def query(self, query: np.ndarray, k: int, epsilon: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+                del epsilon
+                query_array = np.asarray(query, dtype=np.float32)
+                distances = np.linalg.norm(self.data[None, :, :] - query_array[:, None, :], axis=2)
+                ordered = np.argsort(distances, axis=1)[:, :k]
+                selected = np.take_along_axis(distances, ordered, axis=1)
+                return ordered, selected
+
+        class FakeScannSearcher:
+            def __init__(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float32)
+
+            def search_batched(self, query: np.ndarray, final_num_neighbors: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+                query_array = np.asarray(query, dtype=np.float32)
+                k = int(final_num_neighbors or 1)
+                squared_distances = np.sum((self.data[None, :, :] - query_array[:, None, :]) ** 2, axis=2)
+                ordered = np.argsort(squared_distances, axis=1)[:, :k]
+                selected = np.take_along_axis(squared_distances, ordered, axis=1)
+                return ordered, selected
+
+        class FakeScannBuilder:
+            def __init__(self, data: np.ndarray, k: int, metric: str) -> None:
+                del k, metric
+                self.data = np.asarray(data, dtype=np.float32)
+
+            def tree(self, **_: object) -> "FakeScannBuilder":
+                return self
+
+            def score_ah(self, *args: object, **kwargs: object) -> "FakeScannBuilder":
+                del args, kwargs
+                return self
+
+            def reorder(self, *_: object) -> "FakeScannBuilder":
+                return self
+
+            def build(self) -> FakeScannSearcher:
+                return FakeScannSearcher(self.data)
+
+        class FakeScannOps:
+            @staticmethod
+            def builder(data: np.ndarray, k: int, metric: str) -> FakeScannBuilder:
+                return FakeScannBuilder(data, k, metric)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            numpy_result = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance={"blue": 0.79, "swir": 0.21},
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=2,
+                neighbor_estimator="simplex_mixture",
+            )
+
+            with patch.object(mapping_module, "_load_faiss_module", return_value=FakeFaissModule):
+                faiss_result = mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.79, "swir": 0.21},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    neighbor_estimator="simplex_mixture",
+                    knn_backend="faiss",
+                    knn_eps=0.2,
+                )
+            with patch.object(mapping_module, "_load_pynndescent_class", return_value=FakeNNDescent):
+                pynndescent_result = mapper.map_reflectance_batch(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[{"blue": 0.79, "swir": 0.21}, {"blue": 0.15, "swir": 0.25}],
+                    sample_ids=["alpha", "beta"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    neighbor_estimator="simplex_mixture",
+                    knn_backend="pynndescent",
+                    knn_eps=0.2,
+                )
+            with patch.object(mapping_module, "_load_scann_ops", return_value=FakeScannOps()):
+                scann_result = mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.79, "swir": 0.21},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    neighbor_estimator="simplex_mixture",
+                    knn_backend="scann",
+                    knn_eps=0.2,
+                )
+
+            assert numpy_result.target_reflectance is not None
+            assert faiss_result.target_reflectance is not None
+            assert scann_result.target_reflectance is not None
+            self.assertTrue(np.allclose(numpy_result.target_reflectance, faiss_result.target_reflectance, atol=1e-6))
+            self.assertTrue(np.allclose(numpy_result.target_reflectance, scann_result.target_reflectance, atol=1e-6))
+            self.assertEqual(faiss_result.diagnostics["knn_backend"], "faiss")
+            self.assertEqual(scann_result.diagnostics["knn_backend"], "scann")
+            self.assertEqual(
+                [result.diagnostics["knn_backend"] for result in pynndescent_result.results],
+                ["pynndescent", "pynndescent"],
+            )
+
+    def test_knn_backend_validation_and_missing_scipy_error_are_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.79, "swir": 0.21},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    knn_backend="unsupported_backend",
+                )
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.79, "swir": 0.21},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    knn_eps=-0.1,
+                )
+            with patch.object(
+                mapping_module,
+                "_load_ckdtree_class",
+                side_effect=MappingInputError(
+                    "scipy_ckdtree backend requires scipy.",
+                    context={"knn_backend": "scipy_ckdtree"},
+                ),
+            ):
+                with self.assertRaises(MappingInputError):
+                    mapper.map_reflectance(
+                        source_sensor="sensor_a",
+                        reflectance={"blue": 0.79, "swir": 0.21},
+                        output_mode="target_sensor",
+                        target_sensor="sensor_b",
+                        k=2,
+                        knn_backend="scipy_ckdtree",
+                    )
+            for loader_name, backend_name in (
+                ("_load_faiss_module", "faiss"),
+                ("_load_pynndescent_class", "pynndescent"),
+                ("_load_scann_ops", "scann"),
+            ):
+                with patch.object(
+                    mapping_module,
+                    loader_name,
+                    side_effect=MappingInputError(
+                        f"{backend_name} backend dependency is missing.",
+                        context={"knn_backend": backend_name},
+                    ),
+                ):
+                    with self.assertRaises(MappingInputError):
+                        mapper.map_reflectance(
+                            source_sensor="sensor_a",
+                            reflectance={"blue": 0.79, "swir": 0.21},
+                            output_mode="target_sensor",
+                            target_sensor="sensor_b",
+                            k=2,
+                            knn_backend=backend_name,
+                        )
+
     def test_mapping_diagnostics_include_query_and_neighbor_band_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -453,6 +778,9 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertEqual(vnir_diag["neighbor_ids"], ["fixture_source:vnir_high:vnir_high"])
             self.assertEqual(vnir_diag["neighbor_weights"], [1.0])
             self.assertAlmostEqual(vnir_diag["source_fit_rmse"], 0.0, places=6)
+            self.assertGreaterEqual(vnir_diag["confidence_score"], 0.0)
+            self.assertLessEqual(vnir_diag["confidence_score"], 1.0)
+            self.assertIn("coverage", vnir_diag["confidence_components"])
             self.assertEqual(len(vnir_diag["neighbor_band_values"]), 1)
             self.assertAlmostEqual(vnir_diag["neighbor_band_values"][0][0], 0.8, places=6)
             self.assertEqual(swir_diag["query_band_ids"], ["swir"])
@@ -461,8 +789,14 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertEqual(swir_diag["neighbor_ids"], ["fixture_source:vnir_high:vnir_high"])
             self.assertEqual(swir_diag["neighbor_weights"], [1.0])
             self.assertAlmostEqual(swir_diag["source_fit_rmse"], 0.0, places=6)
+            self.assertGreaterEqual(swir_diag["confidence_score"], 0.0)
+            self.assertLessEqual(swir_diag["confidence_score"], 1.0)
             self.assertEqual(len(swir_diag["neighbor_band_values"]), 1)
             self.assertAlmostEqual(swir_diag["neighbor_band_values"][0][0], 0.2, places=6)
+            self.assertGreaterEqual(result.diagnostics["confidence_score"], 0.0)
+            self.assertLessEqual(result.diagnostics["confidence_score"], 1.0)
+            self.assertEqual(result.diagnostics["knn_backend"], "numpy")
+            self.assertAlmostEqual(result.diagnostics["knn_eps"], 0.0)
 
     def test_benchmark_mapping_writes_target_and_spectral_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -517,6 +851,25 @@ class MappingWorkflowTests(unittest.TestCase):
 
             self.assertEqual(report["neighbor_estimator"], "simplex_mixture")
             self.assertIn("retrieval", report["target_sensor"])
+            self.assertEqual(report["knn_backend"], "numpy")
+            self.assertAlmostEqual(report["knn_eps"], 0.0)
+
+    def test_benchmark_mapping_can_cap_held_out_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+
+            report = benchmark_mapping(
+                fixture["prepared_root"],
+                "sensor_a",
+                "sensor_b",
+                k=1,
+                test_fraction=0.75,
+                max_test_rows=1,
+                random_seed=0,
+            )
+
+            self.assertEqual(report["test_rows"], 1)
+            self.assertEqual(report["max_test_rows"], 1)
 
     def test_segment_isolation_keeps_swir_output_stable_when_only_vnir_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2053,14 +2406,19 @@ class MappingCliTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["diagnostics_output"], str(diagnostics_path))
             self.assertEqual(payload["neighbor_review_output"], str(neighbor_review_path))
+            self.assertEqual(payload["knn_backend"], "numpy")
+            self.assertAlmostEqual(payload["knn_eps"], 0.0)
             diagnostics_payload = json.loads(diagnostics_path.read_text(encoding="utf-8"))
             self.assertEqual(diagnostics_payload["diagnostics"]["neighbor_estimator"], "simplex_mixture")
+            self.assertEqual(diagnostics_payload["diagnostics"]["knn_backend"], "numpy")
             with neighbor_review_path.open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual(len(rows), 4)
             self.assertEqual({row["segment"] for row in rows}, {"vnir", "swir"})
             self.assertEqual({row["sample_id"] for row in rows}, {"sample_000001"})
             self.assertIn("neighbor_weight", rows[0])
+            self.assertEqual(rows[0]["knn_backend"], "numpy")
+            self.assertEqual(rows[0]["knn_eps"], "0.0")
 
 
     def test_map_reflectance_batch_command_accepts_long_input_and_writes_wide_output(self) -> None:
@@ -2216,6 +2574,8 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual([payload["event"] for payload in log_payloads], ["command_started", "command_completed"])
             self.assertEqual(log_payloads[0]["context"]["input_path"], str(input_path))
             self.assertEqual(log_payloads[0]["level"], "info")
+            self.assertEqual(log_payloads[0]["context"]["knn_backend"], "numpy")
+            self.assertEqual(log_payloads[0]["context"]["knn_eps"], 0.0)
             self.assertEqual(log_payloads[1]["context"]["sample_count"], 2)
             self.assertEqual(log_payloads[1]["context"]["output_columns"], ["target_vnir", "target_swir"])
             self.assertEqual(log_payloads[1]["level"], "info")
@@ -2270,11 +2630,13 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["neighbor_review_output"], str(neighbor_review_path))
+            self.assertEqual(payload["knn_backend"], "numpy")
             with neighbor_review_path.open("r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertTrue(rows)
             self.assertEqual({row["sample_id"] for row in rows}, {"alpha", "beta"})
             self.assertEqual({row["neighbor_estimator"] for row in rows}, {"simplex_mixture"})
+            self.assertEqual({row["knn_backend"] for row in rows}, {"numpy"})
             self.assertIn("neighbor_band_values", rows[0])
 
     def test_map_reflectance_command_emits_failure_log_before_json_error(self) -> None:
@@ -2563,7 +2925,7 @@ class MappingCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
                 cli.main_with_args(["--version"])
             self.assertEqual(version_exit.exception.code, 0)
-            self.assertIn("0.1.0", version_stdout.getvalue())
+            self.assertIn("0.2.0", version_stdout.getvalue())
 
             _write_csv(
                 input_path,

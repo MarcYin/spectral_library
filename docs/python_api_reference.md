@@ -37,6 +37,7 @@ manifest = prepare_mapping_library(
     srf_root=Path("examples/official_mapping/srfs"),
     output_root=Path("build/official_mapping_runtime"),
     source_sensors=["modis_terra", "sentinel2a_msi", "landsat8_oli", "landsat9_oli"],
+    knn_index_backends=["faiss"],
 )
 ```
 
@@ -114,6 +115,8 @@ result = mapper.map_reflectance(
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
     neighbor_estimator="simplex_mixture",
+    knn_backend="scipy_ckdtree",
+    knn_eps=0.05,
     exclude_row_ids=[
         "usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF",
     ],
@@ -138,6 +141,7 @@ batch = mapper.map_reflectance_batch(
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
     neighbor_estimator="simplex_mixture",
+    knn_backend="scipy_ckdtree",
     exclude_row_ids_per_sample=[
         "usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF",
         "ecostress_v1:ecostress_v1_002334:Pale brown silty loam",
@@ -150,12 +154,23 @@ batch = mapper.map_reflectance_batch(
 Supported exclusion controls:
 
 - `neighbor_estimator="mean"`, `"distance_weighted_mean"`, or `"simplex_mixture"`
+- `knn_backend="numpy"`, `"scipy_ckdtree"`, `"faiss"`, `"pynndescent"`, or `"scann"`
+- `knn_eps > 0` to relax supported ANN searches
 - `map_reflectance(..., exclude_row_ids=..., exclude_sample_names=...)`
 - `map_reflectance_batch(..., exclude_row_ids=..., exclude_sample_names=...)`
 - `map_reflectance_batch(..., exclude_row_ids_per_sample=..., self_exclude_sample_id=True)`
 
 That means the public Python API can now reproduce the same held-out
 self-exclusion workflow shown in [Official Sensor Examples](official_sensor_examples.md).
+
+Optional backend install extras:
+
+```bash
+python3 -m pip install "spectral-library[knn]"
+python3 -m pip install "spectral-library[knn-faiss]"
+python3 -m pip install "spectral-library[knn-pynndescent]"
+python3 -m pip install "spectral-library[knn-scann]"
+```
 
 ## Result Objects
 
@@ -217,7 +232,18 @@ Represents the stable prepared-runtime manifest returned by:
 - `validate_prepared_library(...)`
 
 Current prepared runtimes also expose `interpolation_summary` so you can see how
-many SIAC rows required gap repair during prepare.
+many SIAC rows required gap repair during prepare. When requested at prepare
+time, they also expose `knn_index_artifacts` so you can see which persisted ANN
+indexes were written into the runtime.
+
+Mapping diagnostics now also expose a heuristic `confidence_score` at the
+overall mapping level and per segment. This is not a calibrated uncertainty
+model; it is a compact ranking signal derived from distance, source fit, weight
+concentration, and valid-band coverage.
+
+`benchmark_mapping(...)` also accepts `max_test_rows` so large prepared
+libraries can run bounded held-out evaluations without scoring every row in the
+test split.
 
 ### `SensorSRFSchema`
 

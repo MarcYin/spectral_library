@@ -1,0 +1,8 @@
+{
+  "defaults": {
+    "full_spectrum.retrieval.mean_mae": 0.05,
+    "target_sensor.retrieval.mean_mae": 0.03,
+    "target_sensor.retrieval.mean_rmse": 0.05
+  },
+  "scenarios": {}
+}

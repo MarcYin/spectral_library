@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import math
+import pickle
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ import numpy as np
 from ._version import __version__
 
 
-PREPARED_SCHEMA_VERSION = "1.1.0"
+PREPARED_SCHEMA_VERSION = "1.2.0"
 SUPPORTED_OUTPUT_MODES = (
     "target_sensor",
     "vnir_spectrum",
@@ -29,6 +30,24 @@ SUPPORTED_NEIGHBOR_ESTIMATORS = (
     "distance_weighted_mean",
     "simplex_mixture",
 )
+SUPPORTED_KNN_BACKENDS = (
+    "numpy",
+    "scipy_ckdtree",
+    "faiss",
+    "pynndescent",
+    "scann",
+)
+SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS = (
+    "faiss",
+    "pynndescent",
+    "scann",
+)
+KNN_BACKEND_INSTALL_HINTS = {
+    "scipy_ckdtree": 'pip install "spectral-library[knn]"',
+    "faiss": 'pip install "spectral-library[knn-faiss]"',
+    "pynndescent": 'pip install "spectral-library[knn-pynndescent]"',
+    "scann": 'pip install "spectral-library[knn-scann]"',
+}
 SEGMENTS = ("vnir", "swir")
 CANONICAL_START_NM = 400
 CANONICAL_END_NM = 2500
@@ -268,6 +287,7 @@ class PreparedLibraryManifest:
     swir_wavelength_range_nm: tuple[int, int]
     array_dtype: str
     file_checksums: dict[str, str] = field(default_factory=dict)
+    knn_index_artifacts: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
     interpolation_summary: dict[str, int] = field(default_factory=dict)
 
     @classmethod
@@ -285,6 +305,16 @@ class PreparedLibraryManifest:
             swir_wavelength_range_nm=tuple(int(value) for value in payload["swir_wavelength_range_nm"]),  # type: ignore[index]
             array_dtype=str(payload["array_dtype"]),
             file_checksums={str(key): str(value) for key, value in dict(payload["file_checksums"]).items()},  # type: ignore[arg-type]
+            knn_index_artifacts={
+                str(backend): {
+                    str(sensor_id): {
+                        str(segment): str(path)
+                        for segment, path in dict(sensor_payload).items()
+                    }
+                    for sensor_id, sensor_payload in dict(backend_payload).items()
+                }
+                for backend, backend_payload in dict(payload.get("knn_index_artifacts") or {}).items()  # type: ignore[arg-type]
+            },
             interpolation_summary={
                 str(key): int(value)
                 for key, value in dict(payload.get("interpolation_summary") or {}).items()  # type: ignore[arg-type]
@@ -325,6 +355,13 @@ class PreparedLibraryManifest:
             "swir_wavelength_range_nm": list(self.swir_wavelength_range_nm),
             "array_dtype": self.array_dtype,
             "file_checksums": dict(self.file_checksums),
+            "knn_index_artifacts": {
+                backend: {
+                    sensor_id: dict(sensor_payload)
+                    for sensor_id, sensor_payload in backend_payload.items()
+                }
+                for backend, backend_payload in self.knn_index_artifacts.items()
+            },
             **(
                 {"interpolation_summary": dict(self.interpolation_summary)}
                 if self.interpolation_summary
@@ -392,6 +429,8 @@ class _SegmentRetrieval:
     neighbor_weights: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     neighbor_band_values: np.ndarray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
     source_fit_rmse: float | None = None
+    confidence_score: float | None = None
+    confidence_components: dict[str, float] = field(default_factory=dict)
     reason: str | None = None
 
 
@@ -505,6 +544,8 @@ def _validate_mapping_request(
     k: int,
     min_valid_bands: int,
     neighbor_estimator: str = "mean",
+    knn_backend: str = "numpy",
+    knn_eps: float = 0.0,
 ) -> None:
     _ensure_supported_output_mode(output_mode)
     if k < 1:
@@ -519,6 +560,16 @@ def _validate_mapping_request(
                 "supported_neighbor_estimators": list(SUPPORTED_NEIGHBOR_ESTIMATORS),
             },
         )
+    if knn_backend not in SUPPORTED_KNN_BACKENDS:
+        raise MappingInputError(
+            "knn_backend is not supported.",
+            context={
+                "knn_backend": knn_backend,
+                "supported_knn_backends": list(SUPPORTED_KNN_BACKENDS),
+            },
+        )
+    if knn_eps < 0:
+        raise MappingInputError("knn_eps must be non-negative.", context={"knn_eps": knn_eps})
 
 
 def _normalized_source_sensors(source_sensors: Sequence[str]) -> list[str]:
@@ -532,6 +583,27 @@ def _normalized_source_sensors(source_sensors: Sequence[str]) -> list[str]:
     return normalized
 
 
+def _normalized_knn_index_backends(knn_index_backends: Sequence[str] | None) -> list[str]:
+    if not knn_index_backends:
+        return []
+    normalized: list[str] = []
+    for backend in knn_index_backends:
+        text = str(backend).strip()
+        if not text:
+            continue
+        if text not in SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS:
+            raise PreparedLibraryBuildError(
+                "Requested knn_index_backend is not supported for persisted indexes.",
+                context={
+                    "knn_index_backend": text,
+                    "supported_knn_index_backends": list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS),
+                },
+            )
+        if text not in normalized:
+            normalized.append(text)
+    return normalized
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -541,6 +613,23 @@ def _sha256_file(path: Path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_runtime_path(path: Path) -> str:
+    if path.is_file():
+        return _sha256_file(path)
+    if path.is_dir():
+        digest = hashlib.sha256()
+        for child in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
+            digest.update(str(child.relative_to(path)).encode("utf-8"))
+            with child.open("rb") as handle:
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+        return digest.hexdigest()
+    raise FileNotFoundError(path)
 
 
 def _sha256_paths(paths: Sequence[Path]) -> str:
@@ -649,6 +738,343 @@ def _ordered_neighbor_rows(
     return candidate_row_indices[ordered_local], np.asarray(distances[ordered_local], dtype=np.float64)
 
 
+def _load_ckdtree_class() -> type[Any]:
+    try:
+        from scipy.spatial import cKDTree  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise MappingInputError(
+            f'scipy_ckdtree backend requires scipy. Install it with `{KNN_BACKEND_INSTALL_HINTS["scipy_ckdtree"]}`.',
+            context={"knn_backend": "scipy_ckdtree"},
+        ) from exc
+    return cKDTree
+
+
+def _load_faiss_module() -> Any:
+    try:
+        import faiss  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise MappingInputError(
+            f'faiss backend requires faiss-cpu. Install it with `{KNN_BACKEND_INSTALL_HINTS["faiss"]}`.',
+            context={"knn_backend": "faiss"},
+        ) from exc
+    return faiss
+
+
+def _load_pynndescent_class() -> type[Any]:
+    try:
+        from pynndescent import NNDescent  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise MappingInputError(
+            f'pynndescent backend requires pynndescent. Install it with `{KNN_BACKEND_INSTALL_HINTS["pynndescent"]}`.',
+            context={"knn_backend": "pynndescent"},
+        ) from exc
+    return NNDescent
+
+
+def _load_scann_ops() -> Any:
+    try:
+        import scann  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise MappingInputError(
+            f'scann backend requires ScaNN. Install it with `{KNN_BACKEND_INSTALL_HINTS["scann"]}`.',
+            context={"knn_backend": "scann"},
+        ) from exc
+    return scann.scann_ops_pybind
+
+
+def _persist_faiss_index(candidate_matrix: np.ndarray, output_path: Path) -> None:
+    faiss = _load_faiss_module()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    index = faiss.IndexHNSWFlat(int(candidate_matrix.shape[1]), 32)
+    if hasattr(index, "hnsw"):
+        index.hnsw.efConstruction = max(40, min(int(candidate_matrix.shape[0]), 320))
+    index.add(np.asarray(candidate_matrix, dtype=np.float32))
+    faiss.write_index(index, str(output_path))
+
+
+def _load_persisted_faiss_index(path: Path) -> Any:
+    faiss = _load_faiss_module()
+    return faiss.read_index(str(path))
+
+
+def _persist_pynndescent_index(candidate_matrix: np.ndarray, output_path: Path) -> None:
+    NNDescent = _load_pynndescent_class()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    index = NNDescent(np.asarray(candidate_matrix, dtype=np.float32), metric="euclidean")
+    if hasattr(index, "prepare"):
+        index.prepare()
+    with output_path.open("wb") as handle:
+        pickle.dump(index, handle)
+
+
+def _load_persisted_pynndescent_index(path: Path) -> Any:
+    with path.open("rb") as handle:
+        return pickle.load(handle)
+
+
+def _persist_scann_index(candidate_matrix: np.ndarray, output_path: Path) -> None:
+    searcher = _build_scann_searcher(
+        np.asarray(candidate_matrix, dtype=np.float32),
+        neighbor_count=min(int(candidate_matrix.shape[0]), 64),
+        knn_eps=0.0,
+    )
+    output_path.mkdir(parents=True, exist_ok=True)
+    if hasattr(searcher, "serialize"):
+        searcher.serialize(str(output_path))
+        return
+    raise PreparedLibraryBuildError(
+        "scann searcher does not support serialization in this environment.",
+        context={"knn_backend": "scann", "path": str(output_path)},
+    )
+
+
+def _load_persisted_scann_index(path: Path) -> Any:
+    scann_ops = _load_scann_ops()
+    if hasattr(scann_ops, "load_searcher"):
+        return scann_ops.load_searcher(str(path))
+    raise MappingInputError(
+        "scann backend does not support persisted searcher loading in this environment.",
+        context={"knn_backend": "scann", "path": str(path)},
+    )
+
+
+def _persist_knn_index(candidate_matrix: np.ndarray, *, backend: str, output_path: Path) -> None:
+    if backend == "faiss":
+        _persist_faiss_index(candidate_matrix, output_path)
+        return
+    if backend == "pynndescent":
+        _persist_pynndescent_index(candidate_matrix, output_path)
+        return
+    if backend == "scann":
+        _persist_scann_index(candidate_matrix, output_path)
+        return
+    raise PreparedLibraryBuildError(
+        "KNN index persistence is not supported for the requested backend.",
+        context={"knn_backend": backend, "supported_knn_index_backends": list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS)},
+    )
+
+
+def _load_persisted_knn_index(path: Path, *, backend: str) -> Any:
+    if backend == "faiss":
+        return _load_persisted_faiss_index(path)
+    if backend == "pynndescent":
+        return _load_persisted_pynndescent_index(path)
+    if backend == "scann":
+        return _load_persisted_scann_index(path)
+    raise MappingInputError(
+        "KNN index persistence is not supported for the requested backend.",
+        context={"knn_backend": backend, "supported_knn_index_backends": list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS)},
+    )
+
+
+def _normalize_query_matrix(query_values: np.ndarray, *, dtype: np.dtype[Any]) -> np.ndarray:
+    query_matrix = np.asarray(query_values, dtype=dtype)
+    if query_matrix.ndim == 1:
+        return query_matrix.reshape(1, -1)
+    if query_matrix.ndim != 2:
+        raise MappingInputError(
+            "Query values must be one-dimensional or two-dimensional.",
+            context={"query_shape": list(query_matrix.shape)},
+        )
+    return query_matrix
+
+
+def _normalize_local_indices(local_indices: np.ndarray, *, query_count: int) -> np.ndarray:
+    normalized = np.asarray(local_indices, dtype=np.int64)
+    if normalized.ndim == 0:
+        return normalized.reshape(1, 1)
+    if normalized.ndim == 1:
+        return normalized.reshape(query_count, -1)
+    if normalized.ndim != 2:
+        raise MappingInputError(
+            "Neighbor search backend returned indices with an unsupported shape.",
+            context={"local_index_shape": list(normalized.shape)},
+        )
+    return normalized
+
+
+def _build_scann_searcher(
+    candidate_matrix: np.ndarray,
+    *,
+    neighbor_count: int,
+    knn_eps: float,
+) -> Any:
+    scann_ops = _load_scann_ops()
+    candidate_count = int(candidate_matrix.shape[0])
+    num_leaves = max(1, min(candidate_count, int(round(math.sqrt(candidate_count)))))
+    base_leaves_to_search = max(1, min(num_leaves, int(round(math.sqrt(num_leaves))) or 1))
+    leaves_to_search = max(
+        1,
+        min(
+            num_leaves,
+            int(math.ceil(base_leaves_to_search / (1.0 + max(float(knn_eps), 0.0) * 4.0))),
+        ),
+    )
+    training_sample_size = min(candidate_count, max(32, num_leaves * 10))
+    builder = scann_ops.builder(np.asarray(candidate_matrix, dtype=np.float32), neighbor_count, "squared_l2")
+    builder = builder.tree(
+        num_leaves=num_leaves,
+        num_leaves_to_search=leaves_to_search,
+        training_sample_size=training_sample_size,
+    )
+    if hasattr(builder, "score_ah"):
+        builder = builder.score_ah(2, anisotropic_quantization_threshold=0.2)
+    if hasattr(builder, "reorder"):
+        builder = builder.reorder(neighbor_count)
+    return builder.build()
+
+
+def _search_local_neighbor_indices(
+    candidate_matrix: np.ndarray,
+    query_values: np.ndarray,
+    *,
+    k: int,
+    knn_backend: str,
+    knn_eps: float,
+) -> np.ndarray | None:
+    if knn_backend == "numpy":
+        return None
+
+    neighbor_count = min(int(k), int(candidate_matrix.shape[0]))
+    if neighbor_count <= 0:
+        raise MappingInputError("k must be at least 1.", context={"k": k})
+
+    query_count = int(_normalize_query_matrix(query_values, dtype=np.float64).shape[0])
+
+    if knn_backend == "scipy_ckdtree":
+        cKDTree = _load_ckdtree_class()
+        tree = cKDTree(np.asarray(candidate_matrix, dtype=np.float64))
+        _, local_indices = tree.query(
+            _normalize_query_matrix(query_values, dtype=np.float64),
+            k=neighbor_count,
+            eps=float(knn_eps),
+            workers=1,
+        )
+        return _normalize_local_indices(local_indices, query_count=query_count)
+
+    if knn_backend == "faiss":
+        faiss = _load_faiss_module()
+        vector_dim = int(candidate_matrix.shape[1])
+        query_matrix = _normalize_query_matrix(query_values, dtype=np.float32)
+        index = faiss.IndexHNSWFlat(vector_dim, 32)
+        if hasattr(index, "hnsw"):
+            index.hnsw.efConstruction = max(40, neighbor_count * 8)
+            index.hnsw.efSearch = max(
+                neighbor_count,
+                int(math.ceil(max(32, neighbor_count * 8) / (1.0 + max(float(knn_eps), 0.0) * 4.0))),
+            )
+        index.add(np.asarray(candidate_matrix, dtype=np.float32))
+        _, local_indices = index.search(query_matrix, neighbor_count)
+        return _normalize_local_indices(local_indices, query_count=query_count)
+
+    if knn_backend == "pynndescent":
+        NNDescent = _load_pynndescent_class()
+        query_matrix = _normalize_query_matrix(query_values, dtype=np.float32)
+        index = NNDescent(np.asarray(candidate_matrix, dtype=np.float32), metric="euclidean")
+        local_indices, _ = index.query(query_matrix, k=neighbor_count, epsilon=float(knn_eps))
+        return _normalize_local_indices(local_indices, query_count=query_count)
+
+    if knn_backend == "scann":
+        query_matrix = _normalize_query_matrix(query_values, dtype=np.float32)
+        searcher = _build_scann_searcher(candidate_matrix, neighbor_count=neighbor_count, knn_eps=knn_eps)
+        try:
+            search_result = searcher.search_batched(query_matrix, final_num_neighbors=neighbor_count)
+        except TypeError:
+            search_result = searcher.search_batched(query_matrix)
+        local_indices = search_result[0] if isinstance(search_result, tuple) else search_result
+        return _normalize_local_indices(local_indices, query_count=query_count)
+
+    raise MappingInputError(
+        "knn_backend is not supported.",
+        context={
+            "knn_backend": knn_backend,
+            "supported_knn_backends": list(SUPPORTED_KNN_BACKENDS),
+        },
+    )
+
+
+def _query_persisted_knn_index(
+    index: Any,
+    query_values: np.ndarray,
+    *,
+    k: int,
+    knn_backend: str,
+    knn_eps: float,
+) -> np.ndarray:
+    query_count = int(_normalize_query_matrix(query_values, dtype=np.float64).shape[0])
+
+    if knn_backend == "faiss":
+        _, local_indices = index.search(_normalize_query_matrix(query_values, dtype=np.float32), int(k))
+        return _normalize_local_indices(local_indices, query_count=query_count)
+
+    if knn_backend == "pynndescent":
+        local_indices, _ = index.query(
+            _normalize_query_matrix(query_values, dtype=np.float32),
+            k=int(k),
+            epsilon=float(knn_eps),
+        )
+        return _normalize_local_indices(local_indices, query_count=query_count)
+
+    if knn_backend == "scann":
+        try:
+            search_result = index.search_batched(
+                _normalize_query_matrix(query_values, dtype=np.float32),
+                final_num_neighbors=int(k),
+            )
+        except TypeError:
+            search_result = index.search_batched(_normalize_query_matrix(query_values, dtype=np.float32))
+        local_indices = search_result[0] if isinstance(search_result, tuple) else search_result
+        return _normalize_local_indices(local_indices, query_count=query_count)
+
+    raise MappingInputError(
+        "Persisted KNN querying is not supported for the requested backend.",
+        context={"knn_backend": knn_backend},
+    )
+
+
+def _refine_neighbor_rows(
+    candidate_matrix: np.ndarray,
+    query_vector: np.ndarray,
+    candidate_row_indices: np.ndarray,
+    local_candidate_indices: np.ndarray,
+    *,
+    k: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    local_indices = np.asarray(local_candidate_indices, dtype=np.int64)
+    local_indices = local_indices[(local_indices >= 0) & (local_indices < int(candidate_row_indices.size))]
+    local_indices = np.unique(local_indices)
+    if local_indices.size == 0:
+        raise PreparedLibraryValidationError("Neighbor search backend returned no candidate rows.")
+    found_row_indices = candidate_row_indices[local_indices]
+    exact_distances = np.sqrt(np.mean((candidate_matrix[local_indices] - query_vector) ** 2, axis=1))
+    return _ordered_neighbor_rows(exact_distances, found_row_indices, k=k)
+
+
+def _search_neighbor_rows(
+    candidate_matrix: np.ndarray,
+    query_vector: np.ndarray,
+    candidate_row_indices: np.ndarray,
+    *,
+    k: int,
+    knn_backend: str,
+    knn_eps: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    if knn_backend == "numpy":
+        distances = np.sqrt(np.mean((candidate_matrix - query_vector) ** 2, axis=1))
+        return _ordered_neighbor_rows(distances, candidate_row_indices, k=k)
+
+    local_indices = _search_local_neighbor_indices(
+        candidate_matrix,
+        query_vector,
+        k=k,
+        knn_backend=knn_backend,
+        knn_eps=knn_eps,
+    )
+    if local_indices is None:
+        raise PreparedLibraryValidationError("Neighbor search backend returned no candidate rows.")
+    return _refine_neighbor_rows(candidate_matrix, query_vector, candidate_row_indices, local_indices[0], k=k)
+
+
 def _combine_neighbor_spectra(
     hyperspectral_rows: np.ndarray,
     neighbor_indices: np.ndarray,
@@ -687,6 +1113,44 @@ def _combine_neighbor_spectra(
     source_prediction = np.asarray(weights @ np.asarray(neighbor_band_values, dtype=np.float64), dtype=np.float64)
     source_fit_rmse = float(np.sqrt(np.mean((source_prediction - np.asarray(query_vector, dtype=np.float64)) ** 2)))
     return reconstructed, np.asarray(weights, dtype=np.float64), source_fit_rmse
+
+
+def _segment_confidence_payload(
+    *,
+    query_vector: np.ndarray,
+    valid_band_count: int,
+    total_band_count: int,
+    neighbor_distances: np.ndarray,
+    neighbor_weights: np.ndarray,
+    source_fit_rmse: float | None,
+) -> tuple[float, dict[str, float]]:
+    if valid_band_count <= 0 or total_band_count <= 0 or neighbor_distances.size == 0:
+        return 0.0, {
+            "coverage": 0.0,
+            "distance": 0.0,
+            "fit": 0.0,
+            "weight_concentration": 0.0,
+        }
+    query_scale = float(np.mean(np.abs(np.asarray(query_vector, dtype=np.float64)))) if query_vector.size else 0.0
+    if not np.isfinite(query_scale) or query_scale <= 1e-12:
+        query_scale = 1.0
+    coverage = float(valid_band_count) / float(total_band_count)
+    distance_score = math.exp(-float(np.mean(np.asarray(neighbor_distances, dtype=np.float64))) / query_scale)
+    fit_score = math.exp(-float(source_fit_rmse or 0.0) / query_scale)
+    weight_concentration = float(np.max(np.asarray(neighbor_weights, dtype=np.float64))) if neighbor_weights.size else 0.0
+    confidence_score = max(
+        0.0,
+        min(
+            1.0,
+            0.25 * coverage + 0.35 * distance_score + 0.25 * fit_score + 0.15 * weight_concentration,
+        ),
+    )
+    return confidence_score, {
+        "coverage": coverage,
+        "distance": distance_score,
+        "fit": fit_score,
+        "weight_concentration": weight_concentration,
+    }
 
 
 def _project_simplex(values: np.ndarray) -> np.ndarray:
@@ -1036,6 +1500,24 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _relative_runtime_name(path: Path, *, root: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def _artifact_name_for_knn_index(backend: str, sensor_id: str, segment: str) -> str:
+    suffix = {
+        "faiss": ".faiss",
+        "pynndescent": ".pkl",
+        "scann": "",
+    }.get(backend)
+    if suffix is None:
+        raise PreparedLibraryBuildError(
+            "KNN index persistence is not supported for the requested backend.",
+            context={"knn_backend": backend, "supported_knn_index_backends": list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS)},
+        )
+    return f"knn_indexes/{backend}_{sensor_id}_{segment}{suffix}"
+
+
 def _read_json_document(
     path: Path,
     *,
@@ -1058,6 +1540,18 @@ def _read_json_document(
         ) from exc
 
 
+def _flatten_knn_index_artifact_names(knn_index_artifacts: Mapping[str, Mapping[str, Mapping[str, str]]]) -> tuple[str, ...]:
+    file_names: list[str] = []
+    for backend in sorted(knn_index_artifacts):
+        backend_payload = knn_index_artifacts[backend]
+        for sensor_id in sorted(backend_payload):
+            for segment in sorted(backend_payload[sensor_id]):
+                file_name = str(backend_payload[sensor_id][segment]).strip()
+                if file_name:
+                    file_names.append(file_name)
+    return tuple(file_names)
+
+
 def _required_runtime_file_names(manifest: PreparedLibraryManifest) -> tuple[str, ...]:
     stable_files = [
         "manifest.json",
@@ -1068,6 +1562,7 @@ def _required_runtime_file_names(manifest: PreparedLibraryManifest) -> tuple[str
         "checksums.json",
     ]
     stable_files.extend(f"source_{sensor_id}_{segment}.npy" for sensor_id in manifest.source_sensors for segment in SEGMENTS)
+    stable_files.extend(_flatten_knn_index_artifact_names(manifest.knn_index_artifacts))
     return tuple(stable_files)
 
 
@@ -1149,6 +1644,32 @@ def _load_prepared_manifest(prepared_root: Path) -> PreparedLibraryManifest:
             "manifest.json array_dtype must be floating-point.",
             context={"path": str(manifest_path), "array_dtype": manifest.array_dtype},
         )
+    unsupported_knn_backends = [
+        backend for backend in manifest.knn_index_artifacts if backend not in SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS
+    ]
+    if unsupported_knn_backends:
+        raise PreparedLibraryValidationError(
+            "manifest.json contains unsupported knn_index_artifacts backends.",
+            context={"path": str(manifest_path), "unsupported_knn_index_backends": unsupported_knn_backends},
+        )
+    for backend, backend_payload in manifest.knn_index_artifacts.items():
+        for sensor_id, sensor_payload in backend_payload.items():
+            if sensor_id not in manifest.source_sensors:
+                raise PreparedLibraryValidationError(
+                    "manifest.json knn_index_artifacts references a sensor that is not in source_sensors.",
+                    context={"path": str(manifest_path), "knn_backend": backend, "sensor_id": sensor_id},
+                )
+            invalid_segments = [segment for segment in sensor_payload if segment not in SEGMENTS]
+            if invalid_segments:
+                raise PreparedLibraryValidationError(
+                    "manifest.json knn_index_artifacts contains invalid segment keys.",
+                    context={
+                        "path": str(manifest_path),
+                        "knn_backend": backend,
+                        "sensor_id": sensor_id,
+                        "invalid_segments": invalid_segments,
+                    },
+                )
 
     required_checksum_files = {
         file_name for file_name in _required_runtime_file_names(manifest) if file_name not in {"manifest.json", "checksums.json"}
@@ -1191,7 +1712,7 @@ def _load_checksums_payload(prepared_root: Path) -> dict[str, object]:
 def _expected_runtime_checksums(manifest: PreparedLibraryManifest, manifest_path: Path) -> dict[str, str]:
     return {
         **manifest.file_checksums,
-        manifest_path.name: _sha256_file(manifest_path),
+        manifest_path.name: _sha256_runtime_path(manifest_path),
     }
 
 
@@ -1202,12 +1723,14 @@ def prepare_mapping_library(
     source_sensors: Sequence[str],
     *,
     dtype: str = "float32",
+    knn_index_backends: Sequence[str] | None = None,
 ) -> PreparedLibraryManifest:
     dtype_np = np.dtype(dtype)
     if dtype_np.kind != "f":
         raise PreparedLibraryBuildError("prepare_mapping_library only supports floating-point dtypes.", context={"dtype": dtype})
 
     source_sensor_ids = _normalized_source_sensors(source_sensors)
+    persisted_knn_backends = _normalized_knn_index_backends(knn_index_backends)
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -1243,6 +1766,21 @@ def prepare_mapping_library(
             )
             np.save(output_root / f"source_{sensor_id}_{segment}.npy", segment_matrix)
 
+    knn_index_artifacts: dict[str, dict[str, dict[str, str]]] = {}
+    for backend in persisted_knn_backends:
+        backend_payload: dict[str, dict[str, str]] = {}
+        for sensor_id in source_sensor_ids:
+            sensor_payload: dict[str, str] = {}
+            for segment in SEGMENTS:
+                matrix_path = output_root / f"source_{sensor_id}_{segment}.npy"
+                candidate_matrix = np.asarray(np.load(matrix_path), dtype=np.float32)
+                artifact_relative_name = _artifact_name_for_knn_index(backend, sensor_id, segment)
+                artifact_path = output_root / artifact_relative_name
+                _persist_knn_index(candidate_matrix, backend=backend, output_path=artifact_path)
+                sensor_payload[segment] = artifact_relative_name
+            backend_payload[sensor_id] = sensor_payload
+        knn_index_artifacts[backend] = backend_payload
+
     mapping_metadata_path = output_root / "mapping_metadata.parquet"
     _write_mapping_metadata_parquet(mapping_metadata_path, metadata_fieldnames, metadata_rows)
 
@@ -1267,7 +1805,11 @@ def prepare_mapping_library(
         sensor_schema_path,
     ]
     stable_files.extend(output_root / f"source_{sensor_id}_{segment}.npy" for sensor_id in source_sensor_ids for segment in SEGMENTS)
-    file_checksums = {path.name: _sha256_file(path) for path in stable_files}
+    stable_files.extend(output_root / file_name for file_name in _flatten_knn_index_artifact_names(knn_index_artifacts))
+    file_checksums = {
+        _relative_runtime_name(path, root=output_root): _sha256_runtime_path(path)
+        for path in stable_files
+    }
 
     manifest = PreparedLibraryManifest(
         schema_version=PREPARED_SCHEMA_VERSION,
@@ -1282,6 +1824,7 @@ def prepare_mapping_library(
         swir_wavelength_range_nm=(SWIR_START_NM, SWIR_END_NM),
         array_dtype=dtype_np.name,
         file_checksums=file_checksums,
+        knn_index_artifacts=knn_index_artifacts,
         interpolation_summary=interpolation_summary,
     )
     manifest_path = output_root / "manifest.json"
@@ -1291,7 +1834,7 @@ def prepare_mapping_library(
         "schema_version": PREPARED_SCHEMA_VERSION,
         "files": {
             **file_checksums,
-            "manifest.json": _sha256_file(manifest_path),
+            "manifest.json": _sha256_runtime_path(manifest_path),
         },
     }
     _write_json(output_root / "checksums.json", checksums_payload)
@@ -1326,10 +1869,12 @@ class SpectralMapper:
             sample_name: tuple(row_indices)
             for sample_name, row_indices in row_indices_by_sample_name.items()
         }
+        self._all_row_indices = np.arange(self.manifest.row_count, dtype=np.int64)
         self._hyperspectral_cache: dict[str, np.ndarray] = {}
         self._source_matrix_cache: dict[tuple[str, str], np.ndarray] = {}
         self._response_cache: dict[tuple[str, str, bool], np.ndarray] = {}
         self._source_query_cache: dict[str, np.ndarray] = {}
+        self._knn_index_cache: dict[tuple[str, str, str], Any] = {}
 
         self._validate_prepared_layout()
 
@@ -1353,7 +1898,7 @@ class SpectralMapper:
                     context={"prepared_root": str(self.prepared_root), "file_name": file_name},
                 )
             if verify_checksums:
-                actual_checksum = _sha256_file(self.prepared_root / file_name)
+                actual_checksum = _sha256_runtime_path(self.prepared_root / file_name)
                 if actual_checksum != expected_checksum:
                     raise PreparedLibraryValidationError(
                         "Prepared mapping runtime checksum verification failed.",
@@ -1485,6 +2030,77 @@ class SpectralMapper:
                 ) from exc
         return self._source_matrix_cache[key]
 
+    def _persisted_knn_index_path(self, backend: str, source_sensor: str, segment: str) -> Path | None:
+        relative_path = (
+            self.manifest.knn_index_artifacts.get(backend, {})
+            .get(source_sensor, {})
+            .get(segment)
+        )
+        if not relative_path:
+            return None
+        return self.prepared_root / relative_path
+
+    def _load_persisted_knn_index(self, backend: str, source_sensor: str, segment: str) -> Any | None:
+        path = self._persisted_knn_index_path(backend, source_sensor, segment)
+        if path is None:
+            return None
+        key = (backend, source_sensor, segment)
+        if key not in self._knn_index_cache:
+            try:
+                self._knn_index_cache[key] = _load_persisted_knn_index(path, backend=backend)
+            except SpectralLibraryError:
+                raise
+            except Exception as exc:
+                raise PreparedLibraryValidationError(
+                    "Persisted KNN index could not be loaded.",
+                    context={
+                        "prepared_root": str(self.prepared_root),
+                        "knn_backend": backend,
+                        "source_sensor": source_sensor,
+                        "segment": segment,
+                        "path": str(path),
+                    },
+                ) from exc
+        return self._knn_index_cache[key]
+
+    def _can_use_persisted_knn_index(
+        self,
+        *,
+        backend: str,
+        source_sensor: str,
+        segment: str,
+        valid_mask: np.ndarray,
+        candidate_row_indices: np.ndarray,
+    ) -> bool:
+        if backend not in SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS:
+            return False
+        if not np.all(valid_mask):
+            return False
+        if candidate_row_indices.shape != self._all_row_indices.shape or not np.array_equal(candidate_row_indices, self._all_row_indices):
+            return False
+        return self._persisted_knn_index_path(backend, source_sensor, segment) is not None
+
+    def _query_persisted_knn_local_indices(
+        self,
+        *,
+        backend: str,
+        source_sensor: str,
+        segment: str,
+        query_values: np.ndarray,
+        k: int,
+        knn_eps: float,
+    ) -> np.ndarray | None:
+        index = self._load_persisted_knn_index(backend, source_sensor, segment)
+        if index is None:
+            return None
+        return _query_persisted_knn_index(
+            index,
+            query_values,
+            k=k,
+            knn_backend=backend,
+            knn_eps=knn_eps,
+        )
+
     def _band_response(self, sensor_id: str, band: SensorBandDefinition, *, segment_only: bool) -> np.ndarray:
         cache_key = (sensor_id, band.band_id, segment_only)
         if cache_key not in self._response_cache:
@@ -1543,6 +2159,8 @@ class SpectralMapper:
         k: int,
         min_valid_bands: int,
         neighbor_estimator: str,
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
         candidate_row_indices: np.ndarray,
     ) -> _SegmentRetrieval:
         source_schema = self.get_sensor_schema(source_sensor)
@@ -1569,12 +2187,38 @@ class SpectralMapper:
         valid_indices = np.flatnonzero(valid_mask)
         candidate_matrix = np.asarray(source_matrix[candidate_row_indices][:, valid_indices], dtype=np.float64)
         query_vector = query_values[valid_indices]
-        distances = np.sqrt(np.mean((candidate_matrix - query_vector) ** 2, axis=1))
-        neighbor_indices, neighbor_distances = _ordered_neighbor_rows(
-            distances,
-            candidate_row_indices,
-            k=k,
-        )
+        if self._can_use_persisted_knn_index(
+            backend=knn_backend,
+            source_sensor=source_sensor,
+            segment=segment,
+            valid_mask=np.asarray(valid_mask, dtype=bool),
+            candidate_row_indices=candidate_row_indices,
+        ):
+            local_indices = self._query_persisted_knn_local_indices(
+                backend=knn_backend,
+                source_sensor=source_sensor,
+                segment=segment,
+                query_values=query_values,
+                k=min(int(k), int(candidate_row_indices.size)),
+                knn_eps=knn_eps,
+            )
+            assert local_indices is not None
+            neighbor_indices, neighbor_distances = _refine_neighbor_rows(
+                np.asarray(source_matrix[candidate_row_indices], dtype=np.float64),
+                np.asarray(query_values, dtype=np.float64),
+                candidate_row_indices,
+                local_indices[0],
+                k=k,
+            )
+        else:
+            neighbor_indices, neighbor_distances = _search_neighbor_rows(
+                candidate_matrix,
+                query_vector,
+                candidate_row_indices,
+                k=k,
+                knn_backend=knn_backend,
+                knn_eps=knn_eps,
+            )
 
         neighbor_band_values = np.asarray(source_matrix[neighbor_indices], dtype=np.float64)
         reconstructed, neighbor_weights, source_fit_rmse = _combine_neighbor_spectra(
@@ -1584,6 +2228,14 @@ class SpectralMapper:
             neighbor_band_values[:, valid_indices],
             query_vector,
             neighbor_estimator=neighbor_estimator,
+        )
+        confidence_score, confidence_components = _segment_confidence_payload(
+            query_vector=np.asarray(query_vector, dtype=np.float64),
+            valid_band_count=valid_band_count,
+            total_band_count=len(query_band_ids),
+            neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
+            neighbor_weights=np.asarray(neighbor_weights, dtype=np.float64),
+            source_fit_rmse=source_fit_rmse,
         )
         return _SegmentRetrieval(
             segment=segment,
@@ -1599,6 +2251,8 @@ class SpectralMapper:
             neighbor_weights=neighbor_weights,
             neighbor_band_values=neighbor_band_values,
             source_fit_rmse=source_fit_rmse,
+            confidence_score=confidence_score,
+            confidence_components=confidence_components,
         )
 
     def _retrieve_segment_batch(
@@ -1611,6 +2265,8 @@ class SpectralMapper:
         k: int,
         min_valid_bands: int,
         neighbor_estimator: str,
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
         candidate_row_indices: np.ndarray,
     ) -> tuple[_SegmentRetrieval, ...]:
         source_schema = self.get_sensor_schema(source_sensor)
@@ -1646,18 +2302,48 @@ class SpectralMapper:
             valid_indices = np.flatnonzero(pattern)
             candidate_valid = candidate_matrix[:, valid_indices]
             query_group = np.asarray(query_values[batch_indices][:, valid_indices], dtype=np.float64)
-            candidate_sq = np.sum(candidate_valid**2, axis=1, dtype=np.float64)[None, :]
-            query_sq = np.sum(query_group**2, axis=1, dtype=np.float64)[:, None]
-            cross = query_group @ candidate_valid.T
-            mean_squared = np.maximum((query_sq + candidate_sq - 2.0 * cross) / float(valid_band_count), 0.0)
-            group_distances = np.sqrt(mean_squared, dtype=np.float64)
+            if self._can_use_persisted_knn_index(
+                backend=knn_backend,
+                source_sensor=source_sensor,
+                segment=segment,
+                valid_mask=np.asarray(pattern, dtype=bool),
+                candidate_row_indices=candidate_row_indices,
+            ):
+                group_local_indices = self._query_persisted_knn_local_indices(
+                    backend=knn_backend,
+                    source_sensor=source_sensor,
+                    segment=segment,
+                    query_values=query_values[batch_indices],
+                    k=min(int(k), int(candidate_row_indices.size)),
+                    knn_eps=knn_eps,
+                )
+            else:
+                group_local_indices = _search_local_neighbor_indices(
+                    candidate_valid,
+                    query_group,
+                    k=k,
+                    knn_backend=knn_backend,
+                    knn_eps=knn_eps,
+                )
 
             for local_index, batch_index in enumerate(batch_indices):
-                neighbor_indices, neighbor_distances = _ordered_neighbor_rows(
-                    group_distances[local_index],
-                    candidate_row_indices,
-                    k=k,
-                )
+                if group_local_indices is None:
+                    neighbor_indices, neighbor_distances = _search_neighbor_rows(
+                        candidate_valid,
+                        query_group[local_index],
+                        candidate_row_indices,
+                        k=k,
+                        knn_backend=knn_backend,
+                        knn_eps=knn_eps,
+                    )
+                else:
+                    neighbor_indices, neighbor_distances = _refine_neighbor_rows(
+                        candidate_valid,
+                        query_group[local_index],
+                        candidate_row_indices,
+                        group_local_indices[local_index],
+                        k=k,
+                    )
                 neighbor_band_values = np.asarray(source_matrix[neighbor_indices], dtype=np.float64)
                 reconstructed, neighbor_weights, source_fit_rmse = _combine_neighbor_spectra(
                     segment_hyperspectral,
@@ -1666,6 +2352,14 @@ class SpectralMapper:
                     neighbor_band_values[:, valid_indices],
                     query_group[local_index],
                     neighbor_estimator=neighbor_estimator,
+                )
+                confidence_score, confidence_components = _segment_confidence_payload(
+                    query_vector=np.asarray(query_group[local_index], dtype=np.float64),
+                    valid_band_count=valid_band_count,
+                    total_band_count=len(query_band_ids),
+                    neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
+                    neighbor_weights=np.asarray(neighbor_weights, dtype=np.float64),
+                    source_fit_rmse=source_fit_rmse,
                 )
                 retrievals[int(batch_index)] = _SegmentRetrieval(
                     segment=segment,
@@ -1681,6 +2375,8 @@ class SpectralMapper:
                     neighbor_weights=neighbor_weights,
                     neighbor_band_values=neighbor_band_values,
                     source_fit_rmse=source_fit_rmse,
+                    confidence_score=confidence_score,
+                    confidence_components=confidence_components,
                 )
 
         return tuple(
@@ -1865,6 +2561,8 @@ class SpectralMapper:
         output_mode: str,
         k: int,
         neighbor_estimator: str,
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
         segment_retrievals: Mapping[str, _SegmentRetrieval],
     ) -> MappingResult:
         segment_outputs: dict[str, np.ndarray] = {}
@@ -1885,10 +2583,17 @@ class SpectralMapper:
             "output_mode": output_mode,
             "k": k,
             "neighbor_estimator": neighbor_estimator,
+            "knn_backend": knn_backend,
+            "knn_eps": float(knn_eps),
             "segments": {},
         }
         diagnostics_segments: dict[str, object] = {}
+        confidence_weights: list[int] = []
+        confidence_scores: list[float] = []
         for segment, retrieval in segment_retrievals.items():
+            if retrieval.success and retrieval.confidence_score is not None:
+                confidence_weights.append(max(retrieval.valid_band_count, 1))
+                confidence_scores.append(float(retrieval.confidence_score))
             diagnostics_segments[segment] = {
                 "status": "ok" if retrieval.success else retrieval.reason,
                 "valid_band_count": retrieval.valid_band_count,
@@ -1902,12 +2607,18 @@ class SpectralMapper:
                 "neighbor_distances": [float(value) for value in retrieval.neighbor_distances],
                 "neighbor_weights": [float(value) for value in retrieval.neighbor_weights],
                 "source_fit_rmse": None if retrieval.source_fit_rmse is None else float(retrieval.source_fit_rmse),
+                "confidence_score": None if retrieval.confidence_score is None else float(retrieval.confidence_score),
+                "confidence_components": dict(retrieval.confidence_components),
                 "neighbor_band_values": [
                     [float(value) for value in row]
                     for row in np.asarray(retrieval.neighbor_band_values, dtype=np.float64)
                 ],
             }
         diagnostics["segments"] = diagnostics_segments
+        if confidence_scores:
+            diagnostics["confidence_score"] = float(np.average(np.asarray(confidence_scores), weights=np.asarray(confidence_weights)))
+        else:
+            diagnostics["confidence_score"] = 0.0
 
         reconstructed_vnir = segment_outputs.get("vnir")
         reconstructed_swir = segment_outputs.get("swir")
@@ -1976,6 +2687,8 @@ class SpectralMapper:
         k: int,
         min_valid_bands: int,
         neighbor_estimator: str,
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
         candidate_row_indices: Sequence[int] | None,
     ) -> MappingResult:
         _validate_mapping_request(
@@ -1983,6 +2696,8 @@ class SpectralMapper:
             k=k,
             min_valid_bands=min_valid_bands,
             neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
         )
 
         source_schema = self.get_sensor_schema(source_sensor)
@@ -2002,6 +2717,8 @@ class SpectralMapper:
                 k=k,
                 min_valid_bands=min_valid_bands,
                 neighbor_estimator=neighbor_estimator,
+                knn_backend=knn_backend,
+                knn_eps=knn_eps,
                 candidate_row_indices=candidate_rows,
             )
             segment_retrievals[segment] = retrieval
@@ -2011,6 +2728,8 @@ class SpectralMapper:
             output_mode=output_mode,
             k=k,
             neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
             segment_retrievals=segment_retrievals,
         )
 
@@ -2025,6 +2744,8 @@ class SpectralMapper:
         k: int = 10,
         min_valid_bands: int = 1,
         neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
         exclude_row_ids: Sequence[str] | None = None,
         exclude_sample_names: Sequence[str] | None = None,
     ) -> MappingResult:
@@ -2037,6 +2758,8 @@ class SpectralMapper:
             k=k,
             min_valid_bands=min_valid_bands,
             neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
             candidate_row_indices=self._candidate_rows(
                 None,
                 exclude_row_ids=exclude_row_ids,
@@ -2056,6 +2779,8 @@ class SpectralMapper:
         k: int = 10,
         min_valid_bands: int = 1,
         neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
         exclude_row_ids: Sequence[str] | None = None,
         exclude_sample_names: Sequence[str] | None = None,
         exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
@@ -2066,6 +2791,8 @@ class SpectralMapper:
             k=k,
             min_valid_bands=min_valid_bands,
             neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
         )
         if isinstance(reflectance_rows, Mapping):
             raise MappingInputError("map_reflectance_batch requires a batch of samples, not a single mapping.")
@@ -2154,6 +2881,8 @@ class SpectralMapper:
                             k=k,
                             min_valid_bands=min_valid_bands,
                             neighbor_estimator=neighbor_estimator,
+                            knn_backend=knn_backend,
+                            knn_eps=knn_eps,
                             candidate_row_indices=candidate_rows,
                         )
                     )
@@ -2173,6 +2902,8 @@ class SpectralMapper:
                 k=k,
                 min_valid_bands=min_valid_bands,
                 neighbor_estimator=neighbor_estimator,
+                knn_backend=knn_backend,
+                knn_eps=knn_eps,
                 candidate_row_indices=candidate_rows,
             )
 
@@ -2189,6 +2920,8 @@ class SpectralMapper:
                         output_mode=output_mode,
                         k=k,
                         neighbor_estimator=neighbor_estimator,
+                        knn_backend=knn_backend,
+                        knn_eps=knn_eps,
                         segment_retrievals=sample_retrievals,
                     )
                 )
@@ -2247,17 +2980,24 @@ def benchmark_mapping(
     *,
     k: int = 10,
     test_fraction: float = 0.2,
+    max_test_rows: int | None = None,
     random_seed: int = 0,
     neighbor_estimator: str = "mean",
+    knn_backend: str = "numpy",
+    knn_eps: float = 0.0,
 ) -> dict[str, object]:
     _validate_mapping_request(
         "target_sensor",
         k=k,
         min_valid_bands=1,
         neighbor_estimator=neighbor_estimator,
+        knn_backend=knn_backend,
+        knn_eps=knn_eps,
     )
     if not 0 < test_fraction < 1:
         raise MappingInputError("test_fraction must be between 0 and 1.", context={"test_fraction": test_fraction})
+    if max_test_rows is not None and int(max_test_rows) < 1:
+        raise MappingInputError("max_test_rows must be at least 1 when provided.", context={"max_test_rows": max_test_rows})
 
     mapper = SpectralMapper(prepared_root)
     source_queries = mapper._source_queries(source_sensor)
@@ -2273,6 +3013,8 @@ def benchmark_mapping(
     rng = np.random.default_rng(random_seed)
     permutation = rng.permutation(row_count)
     test_count = max(1, int(math.ceil(row_count * test_fraction)))
+    if max_test_rows is not None:
+        test_count = min(test_count, int(max_test_rows))
     if test_count >= row_count:
         test_count = row_count - 1
     test_indices = permutation[:test_count]
@@ -2298,6 +3040,8 @@ def benchmark_mapping(
             k=k,
             min_valid_bands=1,
             neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
             candidate_row_indices=train_indices,
         )
         if result.target_reflectance is None or result.reconstructed_vnir is None or result.reconstructed_swir is None:
@@ -2320,6 +3064,9 @@ def benchmark_mapping(
         "target_sensor_id": target_sensor,
         "k": int(k),
         "neighbor_estimator": neighbor_estimator,
+        "knn_backend": knn_backend,
+        "knn_eps": float(knn_eps),
+        "max_test_rows": None if max_test_rows is None else int(max_test_rows),
         "random_seed": int(random_seed),
         "train_rows": int(train_indices.size),
         "test_rows": int(test_indices.size),
