@@ -6,6 +6,11 @@ This document defines how the spectral mapping design in
 `docs/spectral_mapping_usage_plan.md` should be turned into a stable Python
 package and a production-ready public release.
 
+This page is now a historical design reference. The package metadata, license,
+release workflows, GitHub Pages docs site, and public mapping runtime contract
+described here have since been implemented. For the current release procedure,
+see [`docs/release_process.md`](release_process.md).
+
 The target is a public PyPI package with a stable v1 contract that covers both:
 
 - the public Python and CLI interfaces,

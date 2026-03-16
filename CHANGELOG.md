@@ -5,6 +5,44 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.2.0] - 2026-03-16
+
+### Added
+
+- Optional KNN backends:
+  `scipy_ckdtree`, `faiss`, `pynndescent`, and `scann`
+- Prepare-time persistence for supported ANN indexes and prepared-runtime
+  manifest tracking through `knn_index_artifacts`
+- Heuristic mapping confidence diagnostics at both segment and top-level result
+  scope
+- Full-library benchmark automation through
+  [`scripts/run_full_library_benchmarks.py`](scripts/run_full_library_benchmarks.py),
+  threshold configuration in [`benchmarks/default_thresholds.json`](benchmarks/default_thresholds.json),
+  and the scheduled GitHub Actions workflow
+  [`.github/workflows/full-library-benchmarks.yml`](.github/workflows/full-library-benchmarks.yml)
+- Optional-backend GitHub Actions smoke coverage for persisted-index prepare and
+  ANN query paths
+
+### Changed
+
+- The prepared-runtime schema is now `1.2.0`
+- Runtime preparation can record interpolation repair summary statistics and
+  persisted ANN index artifacts in `manifest.json`
+- The public mapping API and CLI now expose row-exclusion controls, neighbor
+  diagnostics, heuristic confidence scores, and backend selection for KNN
+  search
+- Official mapping examples now use the full prepared SIAC library with exact
+  held-out row exclusion instead of the earlier toy catalogue
+
+### Fixed
+
+- The full-library benchmark runner no longer accumulates default estimator,
+  backend, or `k` values when explicit CLI arguments are supplied
+- Prepared-runtime checksum hashing now correctly includes file contents for all
+  runtime artifacts, including persisted ANN index directories
+- SIAC sparse-gap interpolation is now constrained and recorded, rather than
+  silently extrapolating arbitrary internal gaps
+
 ## [0.1.0] - 2026-03-15
 
 ### Added
