@@ -237,6 +237,22 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertEqual(result.neighbor_ids_by_segment["vnir"], ("fixture_source:vnir_high:vnir_high",))
             self.assertEqual(result.neighbor_ids_by_segment["swir"], ("fixture_source:vnir_high:vnir_high",))
 
+    def test_candidate_row_indices_can_exclude_by_row_id_and_sample_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+
+            mapper = SpectralMapper(fixture["prepared_root"])
+            by_sample = mapper.candidate_row_indices(exclude_sample_names=["vnir_high"])
+            by_row_id = mapper.candidate_row_indices(exclude_row_ids=["fixture_source:vnir_high:vnir_high"])
+
+            self.assertEqual(by_sample.tolist(), [0, 2, 3])
+            self.assertEqual(by_row_id.tolist(), [0, 2, 3])
+
+            with self.assertRaises(MappingInputError):
+                mapper.candidate_row_indices(exclude_sample_names=["missing_sample"])
+            with self.assertRaises(MappingInputError):
+                mapper.candidate_row_indices(exclude_row_ids=["fixture_source:missing:missing"])
+
     def test_full_spectrum_output_blends_vnir_and_swir_segment_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -1498,6 +1514,55 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(payload["command"], "map-reflectance")
             self.assertEqual(payload["error_code"], "invalid_input_csv")
 
+    def test_map_reflectance_command_can_exclude_sample_name_from_neighbors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "query.csv"
+            output_path = root / "mapped.csv"
+
+            _write_csv(
+                input_path,
+                ["band_id", "reflectance"],
+                [
+                    {"band_id": "blue", "reflectance": 0.80},
+                    {"band_id": "swir", "reflectance": 0.20},
+                ],
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "map-reflectance",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--target-sensor",
+                        "sensor_b",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "target_sensor",
+                        "--k",
+                        "1",
+                        "--exclude-sample-name",
+                        "vnir_high",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["excluded_sample_names"], ["vnir_high"])
+            self.assertNotIn(b"\r\n", output_path.read_bytes())
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertAlmostEqual(float(rows[0]["reflectance"]), 0.6, places=6)
+            self.assertAlmostEqual(float(rows[1]["reflectance"]), 0.25, places=6)
+
     def test_map_reflectance_batch_command_accepts_long_input_and_writes_wide_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1646,6 +1711,104 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(payload["command"], "map-reflectance-batch")
             self.assertEqual(payload["error_code"], "invalid_input_csv")
             self.assertEqual(payload["context"]["sample_id"], "beta")
+
+    def test_map_reflectance_batch_command_can_self_exclude_sample_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_self_exclude.csv"
+            output_path = root / "batch_self_exclude_output.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "base", "blue": 0.15, "swir": 0.25},
+                    {"sample_id": "vnir_high", "blue": 0.80, "swir": 0.20},
+                ],
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "map-reflectance-batch",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--target-sensor",
+                        "sensor_b",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "target_sensor",
+                        "--k",
+                        "1",
+                        "--self-exclude-sample-id",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["self_exclude_sample_id"])
+            self.assertNotIn(b"\r\n", output_path.read_bytes())
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual([row["sample_id"] for row in rows], ["base", "vnir_high"])
+            self.assertAlmostEqual(float(rows[0]["target_vnir"]), 0.1, places=6)
+            self.assertAlmostEqual(float(rows[0]["target_swir"]), 0.2, places=6)
+            self.assertAlmostEqual(float(rows[1]["target_vnir"]), 0.6, places=6)
+            self.assertAlmostEqual(float(rows[1]["target_swir"]), 0.25, places=6)
+
+    def test_map_reflectance_batch_self_exclude_ignores_unmatched_sample_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_self_exclude_unmatched.csv"
+            output_path = root / "batch_self_exclude_unmatched_output.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "external_label", "blue": 0.15, "swir": 0.25},
+                ],
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "map-reflectance-batch",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--target-sensor",
+                        "sensor_b",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "target_sensor",
+                        "--k",
+                        "1",
+                        "--self-exclude-sample-id",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["self_exclude_sample_id"])
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual([row["sample_id"] for row in rows], ["external_label"])
+            self.assertAlmostEqual(float(rows[0]["target_vnir"]), 0.15, places=6)
+            self.assertAlmostEqual(float(rows[0]["target_swir"]), 0.25, places=6)
 
     def test_validate_prepared_library_command_and_version_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

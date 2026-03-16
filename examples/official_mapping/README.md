@@ -21,9 +21,9 @@ The public examples use four held-out targets from the synthetic catalogue:
 - `turbid_water`
 - `asphalt`
 
-Those target spectra are simulated to each source sensor, but they are omitted
-from the example `siac/` runtime so the mapper cannot retrieve the identical row
-as its own nearest neighbor.
+Those target spectra are simulated to each source sensor. Each example query
+then excludes only the matching `sample_name` from candidate retrieval, so the
+mapper cannot self-match while the rest of the catalogue remains available.
 
 Regenerate everything from the official upstream sources with:
 

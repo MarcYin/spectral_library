@@ -7,14 +7,14 @@
         "segments": {
           "swir": {
             "neighbor_distances": [
-              0.060085543902193964,
-              0.09525373030632868,
-              0.1199702343777732
+              0.060085543902193804,
+              0.09525373030632875,
+              0.0956909231288985
             ],
             "neighbor_ids": [
               "official_example:shrubland:shrubland",
               "official_example:gypsum_sand:gypsum_sand",
-              "official_example:dry_grass:dry_grass"
+              "official_example:bright_soil:bright_soil"
             ],
             "query_band_ids": [
               "swir1",
@@ -25,14 +25,14 @@
           },
           "vnir": {
             "neighbor_distances": [
-              0.060910949483687554,
-              0.10216382809743613,
-              0.20295599249215507
+              0.06091094948368749,
+              0.10216382809743617,
+              0.1963123659963558
             ],
             "neighbor_ids": [
               "official_example:shrubland:shrubland",
               "official_example:dry_grass:dry_grass",
-              "official_example:dark_soil:dark_soil"
+              "official_example:bright_soil:bright_soil"
             ],
             "query_band_ids": [
               "ultra_blue",
@@ -50,26 +50,26 @@
       },
       "neighbor_distances_by_segment": {
         "swir": [
-          0.060085543902193964,
-          0.09525373030632868,
-          0.1199702343777732
+          0.060085543902193804,
+          0.09525373030632875,
+          0.0956909231288985
         ],
         "vnir": [
-          0.060910949483687554,
-          0.10216382809743613,
-          0.20295599249215507
+          0.06091094948368749,
+          0.10216382809743617,
+          0.1963123659963558
         ]
       },
       "neighbor_ids_by_segment": {
         "swir": [
           "official_example:shrubland:shrubland",
           "official_example:gypsum_sand:gypsum_sand",
-          "official_example:dry_grass:dry_grass"
+          "official_example:bright_soil:bright_soil"
         ],
         "vnir": [
           "official_example:shrubland:shrubland",
           "official_example:dry_grass:dry_grass",
-          "official_example:dark_soil:dark_soil"
+          "official_example:bright_soil:bright_soil"
         ]
       },
       "sample_id": "dense_vegetation",
@@ -94,9 +94,9 @@
         "segments": {
           "swir": {
             "neighbor_distances": [
-              0.010471186687870022,
-              0.06965132843935025,
-              0.07083472877626705
+              0.010471186687870239,
+              0.06965132843935026,
+              0.07083472877626724
             ],
             "neighbor_ids": [
               "official_example:gypsum_sand:gypsum_sand",
@@ -112,9 +112,9 @@
           },
           "vnir": {
             "neighbor_distances": [
-              0.015294553751167552,
-              0.07220198190996231,
-              0.07827979494887423
+              0.015294553751167318,
+              0.07220198190996226,
+              0.0782797949488742
             ],
             "neighbor_ids": [
               "official_example:concrete:concrete",
@@ -137,14 +137,14 @@
       },
       "neighbor_distances_by_segment": {
         "swir": [
-          0.010471186687870022,
-          0.06965132843935025,
-          0.07083472877626705
+          0.010471186687870239,
+          0.06965132843935026,
+          0.07083472877626724
         ],
         "vnir": [
-          0.015294553751167552,
-          0.07220198190996231,
-          0.07827979494887423
+          0.015294553751167318,
+          0.07220198190996226,
+          0.0782797949488742
         ]
       },
       "neighbor_ids_by_segment": {
@@ -182,13 +182,13 @@
           "swir": {
             "neighbor_distances": [
               0.0,
-              0.2065557882441663,
-              0.25956627422163936
+              0.12545583604080876,
+              0.2065557882441663
             ],
             "neighbor_ids": [
               "official_example:clear_water:clear_water",
-              "official_example:dark_soil:dark_soil",
-              "official_example:dry_grass:dry_grass"
+              "official_example:asphalt:asphalt",
+              "official_example:dark_soil:dark_soil"
             ],
             "query_band_ids": [
               "swir1",
@@ -199,14 +199,14 @@
           },
           "vnir": {
             "neighbor_distances": [
-              0.045322935805077826,
-              0.04941238927350821,
-              0.12031007965756071
+              0.03709675810983821,
+              0.04532293580507785,
+              0.04941238927350821
             ],
             "neighbor_ids": [
+              "official_example:asphalt:asphalt",
               "official_example:dark_soil:dark_soil",
-              "official_example:clear_water:clear_water",
-              "official_example:concrete:concrete"
+              "official_example:clear_water:clear_water"
             ],
             "query_band_ids": [
               "ultra_blue",
@@ -225,25 +225,25 @@
       "neighbor_distances_by_segment": {
         "swir": [
           0.0,
-          0.2065557882441663,
-          0.25956627422163936
+          0.12545583604080876,
+          0.2065557882441663
         ],
         "vnir": [
-          0.045322935805077826,
-          0.04941238927350821,
-          0.12031007965756071
+          0.03709675810983821,
+          0.04532293580507785,
+          0.04941238927350821
         ]
       },
       "neighbor_ids_by_segment": {
         "swir": [
           "official_example:clear_water:clear_water",
-          "official_example:dark_soil:dark_soil",
-          "official_example:dry_grass:dry_grass"
+          "official_example:asphalt:asphalt",
+          "official_example:dark_soil:dark_soil"
         ],
         "vnir": [
+          "official_example:asphalt:asphalt",
           "official_example:dark_soil:dark_soil",
-          "official_example:clear_water:clear_water",
-          "official_example:concrete:concrete"
+          "official_example:clear_water:clear_water"
         ]
       },
       "sample_id": "turbid_water",
@@ -268,14 +268,14 @@
         "segments": {
           "swir": {
             "neighbor_distances": [
-              0.08228538423625763,
+              0.08228538423625766,
               0.1254558329919187,
-              0.1438015234537671
+              0.1254558329919187
             ],
             "neighbor_ids": [
               "official_example:dark_soil:dark_soil",
               "official_example:clear_water:clear_water",
-              "official_example:dry_grass:dry_grass"
+              "official_example:turbid_water:turbid_water"
             ],
             "query_band_ids": [
               "swir1",
@@ -286,14 +286,14 @@
           },
           "vnir": {
             "neighbor_distances": [
-              0.04274026918758692,
-              0.04293748459460916,
-              0.1290072373000395
+              0.03709675937152784,
+              0.04274026918758693,
+              0.04293748459460916
             ],
             "neighbor_ids": [
+              "official_example:turbid_water:turbid_water",
               "official_example:dark_soil:dark_soil",
-              "official_example:clear_water:clear_water",
-              "official_example:dry_grass:dry_grass"
+              "official_example:clear_water:clear_water"
             ],
             "query_band_ids": [
               "ultra_blue",
@@ -311,26 +311,26 @@
       },
       "neighbor_distances_by_segment": {
         "swir": [
-          0.08228538423625763,
+          0.08228538423625766,
           0.1254558329919187,
-          0.1438015234537671
+          0.1254558329919187
         ],
         "vnir": [
-          0.04274026918758692,
-          0.04293748459460916,
-          0.1290072373000395
+          0.03709675937152784,
+          0.04274026918758693,
+          0.04293748459460916
         ]
       },
       "neighbor_ids_by_segment": {
         "swir": [
           "official_example:dark_soil:dark_soil",
           "official_example:clear_water:clear_water",
-          "official_example:dry_grass:dry_grass"
+          "official_example:turbid_water:turbid_water"
         ],
         "vnir": [
+          "official_example:turbid_water:turbid_water",
           "official_example:dark_soil:dark_soil",
-          "official_example:clear_water:clear_water",
-          "official_example:dry_grass:dry_grass"
+          "official_example:clear_water:clear_water"
         ]
       },
       "sample_id": "asphalt",

@@ -29,9 +29,10 @@ class OfficialExamplesTests(unittest.TestCase):
         self.assertIn("example_design", payload)
         self.assertEqual(payload["example_design"]["strategy"], "held_out_exact_library_spectra")
         self.assertEqual(len(payload["example_design"]["held_out_samples"]), 4)
-        self.assertEqual(len(payload["example_design"]["runtime_candidate_samples"]), 6)
+        self.assertEqual(payload["example_design"]["self_exclusion_policy"], "exclude_matching_sample_name_only")
+        self.assertEqual(len(payload["example_design"]["catalogue_samples"]), 10)
         self.assertEqual(
-            payload["example_design"]["runtime_candidate_samples"],
+            payload["example_design"]["catalogue_samples"],
             [row["sample_name"] for row in metadata_rows],
         )
         self.assertEqual(len(payload["sensors"]), 4)
@@ -70,7 +71,7 @@ class OfficialExamplesTests(unittest.TestCase):
                 source_sensors=["modis_terra", "sentinel2a_msi", "landsat8_oli", "landsat9_oli"],
             )
             manifest = validate_prepared_library(prepared_root)
-            self.assertEqual(manifest.row_count, 6)
+            self.assertEqual(manifest.row_count, 10)
 
             query_path = QUERIES_ROOT / "single" / "asphalt_landsat8_oli.csv"
             reflectance: dict[str, float] = {}
@@ -121,6 +122,8 @@ class OfficialExamplesTests(unittest.TestCase):
         self.assertIn("common comparable subset", doc_text)
         self.assertIn("dense_vegetation", doc_text)
         self.assertIn("landsat8_to_sentinel2a_holdout_batch.csv", doc_text)
+        self.assertIn("--self-exclude-sample-id", doc_text)
+        self.assertIn("--exclude-sample-name dense_vegetation", doc_text)
         self.assertIn(f"`{float(modis_rows[0]['reflectance']):.4f}`", doc_text)
         self.assertIn("[Mathematical Foundations](theory.md)", doc_text)
         self.assertIn("spectral-library prepare-mapping-library \\\n  --siac-root", doc_text)

@@ -7,14 +7,14 @@ OLI, and Landsat 9 OLI.
 
 It uses four held-out class targets drawn from the synthetic catalogue itself:
 one vegetation spectrum, one soil spectrum, one water spectrum, and one urban
-spectrum. Those targets are simulated to each source sensor, but omitted from
-the prepared runtime so the mapper must reconstruct them from the remaining
-candidate spectra.
+spectrum. Those targets are simulated to each source sensor. For each query,
+the examples exclude only the matching `sample_name` from candidate retrieval,
+leaving the rest of the catalogue available.
 
 <div class="fact-grid">
   <div><strong>4 sensors</strong><span>MODIS, Sentinel-2A, Landsat 8, Landsat 9</span></div>
   <div><strong>4 held-out targets</strong><span>vegetation, soil, water, urban</span></div>
-  <div><strong>6 runtime candidates</strong><span>dry_grass, shrubland, dark_soil, concrete, clear_water, gypsum_sand</span></div>
+  <div><strong>10 catalogue spectra</strong><span>dense_vegetation, dry_grass, shrubland, bright_soil, dark_soil, concrete, asphalt, clear_water, turbid_water, gypsum_sand</span></div>
   <div><strong>Scored subset</strong><span>blue, green, red, nir, swir1, swir2</span></div>
   <div><strong>Regenerated</strong><span>2026-03-16 UTC</span></div>
 </div>
@@ -57,22 +57,31 @@ Recorded upstream artifacts for this commit:
 
 | Sample id | Class | What it demonstrates |
 | --- | --- | --- |
-| `dense_vegetation` | `vegetation` | Dense green canopy spectrum withheld from the example runtime candidate set. |
-| `bright_soil` | `soil` | Bright mineral soil spectrum withheld from the example runtime candidate set. |
-| `turbid_water` | `water` | Turbid water spectrum withheld from the example runtime candidate set. |
-| `asphalt` | `urban` | Asphalt urban-material spectrum withheld from the example runtime candidate set. |
+| `dense_vegetation` | `vegetation` | Dense green canopy spectrum used as a query while excluding only the matching sample_name. |
+| `bright_soil` | `soil` | Bright mineral soil spectrum used as a query while excluding only the matching sample_name. |
+| `turbid_water` | `water` | Turbid water spectrum used as a query while excluding only the matching sample_name. |
+| `asphalt` | `urban` | Asphalt urban-material spectrum used as a query while excluding only the matching sample_name. |
 
-The example `siac/` runtime contains only these candidate spectra:
+The example `siac/` runtime keeps the full ten-spectrum catalogue:
 
+- `dense_vegetation`
 - `dry_grass`
 - `shrubland`
+- `bright_soil`
 - `dark_soil`
 - `concrete`
+- `asphalt`
 - `clear_water`
+- `turbid_water`
 - `gypsum_sand`
 
-That means the exact target spectra cannot appear in the neighbor list. The
-docs therefore show a real hold-out reconstruction problem, not a self-match.
+Each example command excludes only its own query spectrum:
+
+- single-sample runs use `--exclude-sample-name <sample_id>`
+- the batch run uses `--self-exclude-sample-id`
+
+That keeps the other held-out targets available as neighbors while still
+preventing self-matches.
 
 ## Band Correspondence
 
@@ -143,9 +152,9 @@ evaluated only on the common comparable subset
 Observed range in the bundled example:
 
 - lowest comparable mean absolute band error:
-  `0.0512` for Landsat 8 -> Sentinel-2A
+  `0.0478` for Sentinel-2A -> MODIS Terra
 - highest comparable mean absolute band error:
-  `0.0568` for MODIS Terra -> Landsat 9
+  `0.0496` for Landsat 9 -> Landsat 8
 
 The full pairwise summary, including `evaluated_band_ids` and
 `evaluated_band_count`, is in
@@ -168,6 +177,7 @@ spectral-library map-reflectance \
   --input examples/official_mapping/queries/single/dense_vegetation_modis_terra.csv \
   --output-mode target_sensor \
   --k 3 \
+  --exclude-sample-name dense_vegetation \
   --output build/official_mapping_runtime/dense_vegetation_modis_to_sentinel2a.csv
 ```
 
@@ -176,13 +186,13 @@ Reference output:
 
 | Band | Truth | Mapped |
 | --- | --- | --- |
-| `ultra_blue` | `0.0351` | `0.1065` |
-| `blue` | `0.0479` | `0.1182` |
-| `green` | `0.0845` | `0.1436` |
-| `red` | `0.0268` | `0.1173` |
-| `nir` | `0.5631` | `0.3316` |
-| `swir1` | `0.4505` | `0.3367` |
-| `swir2` | `0.2858` | `0.2764` |
+| `ultra_blue` | `0.0351` | `0.1022` |
+| `blue` | `0.0479` | `0.1129` |
+| `green` | `0.0845` | `0.1369` |
+| `red` | `0.0268` | `0.1131` |
+| `nir` | `0.5631` | `0.3350` |
+| `swir1` | `0.4505` | `0.3470` |
+| `swir2` | `0.2858` | `0.3217` |
 
 The `ultra_blue` band is shown in the example table because it is a real target
 output for Sentinel-2A, but it is intentionally excluded from the pairwise
@@ -199,6 +209,7 @@ spectral-library map-reflectance \
   --input examples/official_mapping/queries/single/bright_soil_sentinel2a_msi.csv \
   --output-mode target_sensor \
   --k 3 \
+  --exclude-sample-name bright_soil \
   --output build/official_mapping_runtime/bright_soil_sentinel2a_to_landsat9.csv
 ```
 
@@ -215,6 +226,7 @@ spectral-library map-reflectance \
   --input examples/official_mapping/queries/single/asphalt_landsat8_oli.csv \
   --output-mode target_sensor \
   --k 3 \
+  --exclude-sample-name asphalt \
   --output build/official_mapping_runtime/asphalt_landsat8_to_modis.csv
 ```
 
@@ -234,6 +246,7 @@ spectral-library map-reflectance-batch \
   --input examples/official_mapping/queries/batch/landsat8_holdout_batch.csv \
   --output-mode target_sensor \
   --k 3 \
+  --self-exclude-sample-id \
   --output build/official_mapping_runtime/landsat8_to_sentinel2a_holdout_batch.csv \
   --diagnostics-output build/official_mapping_runtime/landsat8_to_sentinel2a_holdout_batch_diagnostics.json
 ```
@@ -255,6 +268,7 @@ spectral-library map-reflectance \
   --input examples/official_mapping/queries/single/turbid_water_sentinel2a_msi.csv \
   --output-mode full_spectrum \
   --k 3 \
+  --exclude-sample-name turbid_water \
   --output build/official_mapping_runtime/turbid_water_sentinel2a_full_spectrum.csv
 ```
 

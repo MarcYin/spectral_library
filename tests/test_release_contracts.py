@@ -144,8 +144,34 @@ class CliContractTests(unittest.TestCase):
         benchmark_options = {option for action in command_parsers["benchmark-mapping"]._actions for option in action.option_strings}
 
         self.assertTrue({"--siac-root", "--srf-root", "--source-sensor", "--output-root"}.issubset(prepare_options))
-        self.assertTrue({"--prepared-root", "--source-sensor", "--target-sensor", "--input", "--output-mode", "--k", "--output"}.issubset(map_options))
-        self.assertTrue({"--prepared-root", "--source-sensor", "--target-sensor", "--input", "--output-mode", "--k", "--output", "--diagnostics-output"}.issubset(batch_options))
+        self.assertTrue(
+            {
+                "--prepared-root",
+                "--source-sensor",
+                "--target-sensor",
+                "--input",
+                "--output-mode",
+                "--k",
+                "--output",
+                "--exclude-row-id",
+                "--exclude-sample-name",
+            }.issubset(map_options)
+        )
+        self.assertTrue(
+            {
+                "--prepared-root",
+                "--source-sensor",
+                "--target-sensor",
+                "--input",
+                "--output-mode",
+                "--k",
+                "--output",
+                "--diagnostics-output",
+                "--exclude-row-id",
+                "--exclude-sample-name",
+                "--self-exclude-sample-id",
+            }.issubset(batch_options)
+        )
         self.assertTrue({"--prepared-root", "--source-sensor", "--target-sensor", "--report"}.issubset(benchmark_options))
 
     def test_cli_json_error_envelope_is_stable(self) -> None:

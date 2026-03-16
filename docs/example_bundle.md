@@ -32,6 +32,7 @@ The bundle keeps the public examples reproducible:
 - the SRF sources are official and recorded with hashes
 - the input queries are committed
 - the four public targets are explicit held-out library spectra recorded in the manifest
+- the runtime keeps the full catalogue and each published example self-excludes only the matching query sample
 - the output tables and figures are generated from the same committed fixture
 
 ## Regenerate The Bundle

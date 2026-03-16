@@ -212,25 +212,25 @@ HELD_OUT_TARGETS = (
         sample_id="dense_vegetation",
         landcover_group="vegetation",
         title="Vegetation holdout",
-        description="Dense green canopy spectrum withheld from the example runtime candidate set.",
+        description="Dense green canopy spectrum used as a query while excluding only the matching sample_name.",
     ),
     HeldOutTarget(
         sample_id="bright_soil",
         landcover_group="soil",
         title="Soil holdout",
-        description="Bright mineral soil spectrum withheld from the example runtime candidate set.",
+        description="Bright mineral soil spectrum used as a query while excluding only the matching sample_name.",
     ),
     HeldOutTarget(
         sample_id="turbid_water",
         landcover_group="water",
         title="Water holdout",
-        description="Turbid water spectrum withheld from the example runtime candidate set.",
+        description="Turbid water spectrum used as a query while excluding only the matching sample_name.",
     ),
     HeldOutTarget(
         sample_id="asphalt",
         landcover_group="urban",
         title="Urban holdout",
-        description="Asphalt urban-material spectrum withheld from the example runtime candidate set.",
+        description="Asphalt urban-material spectrum used as a query while excluding only the matching sample_name.",
     ),
 )
 HELD_OUT_TARGETS_BY_ID = {target.sample_id: target for target in HELD_OUT_TARGETS}
@@ -263,8 +263,8 @@ HOLDOUT_BATCH_SOURCE_SENSOR = "landsat8_oli"
 HOLDOUT_BATCH_TARGET_SENSOR = "sentinel2a_msi"
 
 
-def _runtime_candidate_sample_ids(library_spectra: dict[str, np.ndarray]) -> list[str]:
-    return [sample_id for sample_id in library_spectra if sample_id not in HELD_OUT_TARGETS_BY_ID]
+def _catalogue_sample_ids(library_spectra: dict[str, np.ndarray]) -> list[str]:
+    return list(library_spectra)
 
 
 def _single_query_path(sample_id: str, sensor_id: str) -> Path:
@@ -753,6 +753,8 @@ def _write_selected_cli_outputs() -> None:
                 "target_sensor",
                 "--k",
                 "3",
+                "--exclude-sample-name",
+                example.sample_id,
                 "--output",
                 str(_single_target_output_path(example.sample_id, example.source_sensor, example.target_sensor)),
             )
@@ -768,6 +770,8 @@ def _write_selected_cli_outputs() -> None:
             "full_spectrum",
             "--k",
             "3",
+            "--exclude-sample-name",
+            FULL_SPECTRUM_SAMPLE_ID,
             "--output",
             str(_full_spectrum_output_path(FULL_SPECTRUM_SAMPLE_ID, FULL_SPECTRUM_SOURCE_SENSOR)),
         )
@@ -785,6 +789,7 @@ def _write_selected_cli_outputs() -> None:
             "target_sensor",
             "--k",
             "3",
+            "--self-exclude-sample-id",
             "--output",
             str(_holdout_batch_output_path()),
             "--diagnostics-output",
@@ -804,22 +809,22 @@ def _write_pairwise_metrics(truth_rows_by_sensor: dict[str, dict[str, dict[str, 
         mapper = SpectralMapper(prepared_root)
 
         for source_sensor in SENSOR_BY_ID:
-            reflectance_rows = [truth_rows_by_sensor[source_sensor][sample_id] for sample_id in truth_rows_by_sensor[source_sensor]]
-            sample_ids = tuple(truth_rows_by_sensor[source_sensor])
             for target_sensor in SENSOR_BY_ID:
                 if source_sensor == target_sensor:
                     continue
-                result = mapper.map_reflectance_batch(
-                    source_sensor=source_sensor,
-                    reflectance_rows=reflectance_rows,
-                    sample_ids=sample_ids,
-                    output_mode="target_sensor",
-                    target_sensor=target_sensor,
-                    k=3,
-                )
                 sample_mae: list[float] = []
                 sample_rmse: list[float] = []
-                for sample_id, mapping_result in zip(result.sample_ids, result.results):
+                for sample_id, reflectance in truth_rows_by_sensor[source_sensor].items():
+                    mapping_result = mapper._map_reflectance_internal(
+                        source_sensor=source_sensor,
+                        reflectance=reflectance,
+                        valid_mask=None,
+                        output_mode="target_sensor",
+                        target_sensor=target_sensor,
+                        k=3,
+                        min_valid_bands=1,
+                        candidate_row_indices=mapper.candidate_row_indices(exclude_sample_names=[sample_id]),
+                    )
                     if mapping_result.target_reflectance is None:
                         raise RuntimeError(
                             f"Missing target_reflectance for {source_sensor} -> {target_sensor} sample {sample_id}."
@@ -1046,9 +1051,9 @@ The public examples use four held-out targets from the synthetic catalogue:
 - `turbid_water`
 - `asphalt`
 
-Those target spectra are simulated to each source sensor, but they are omitted
-from the example `siac/` runtime so the mapper cannot retrieve the identical row
-as its own nearest neighbor.
+Those target spectra are simulated to each source sensor. Each example query
+then excludes only the matching `sample_name` from candidate retrieval, so the
+mapper cannot self-match while the rest of the catalogue remains available.
 
 Regenerate everything from the official upstream sources with:
 
@@ -1080,8 +1085,8 @@ def _shell_block(*lines: str) -> str:
 def _render_official_sensor_examples_doc(
     *,
     generated_at_utc: str,
+    catalogue_samples: list[str],
     source_artifacts_by_sensor: dict[str, list[dict[str, object]]],
-    runtime_candidate_samples: list[str],
     truth_rows_by_sensor: dict[str, dict[str, dict[str, float]]],
 ) -> str:
     metrics_rows = _load_metric_rows()
@@ -1123,6 +1128,7 @@ def _render_official_sensor_examples_doc(
             f"  --input examples/official_mapping/queries/single/{example.sample_id}_{example.source_sensor}.csv",
             "  --output-mode target_sensor",
             "  --k 3",
+            f"  --exclude-sample-name {example.sample_id}",
             (
                 "  --output build/official_mapping_runtime/"
                 f"{_single_target_output_path(example.sample_id, example.source_sensor, example.target_sensor).name}"
@@ -1137,6 +1143,7 @@ def _render_official_sensor_examples_doc(
         f"  --input examples/official_mapping/queries/batch/{_holdout_batch_query_path().name}",
         "  --output-mode target_sensor",
         "  --k 3",
+        "  --self-exclude-sample-id",
         f"  --output build/official_mapping_runtime/{_holdout_batch_output_path().name}",
         f"  --diagnostics-output build/official_mapping_runtime/{_holdout_batch_diagnostics_path().name}",
     )
@@ -1147,6 +1154,7 @@ def _render_official_sensor_examples_doc(
         f"  --input examples/official_mapping/queries/single/{FULL_SPECTRUM_SAMPLE_ID}_{FULL_SPECTRUM_SOURCE_SENSOR}.csv",
         "  --output-mode full_spectrum",
         "  --k 3",
+        f"  --exclude-sample-name {FULL_SPECTRUM_SAMPLE_ID}",
         f"  --output build/official_mapping_runtime/{_full_spectrum_output_path(FULL_SPECTRUM_SAMPLE_ID, FULL_SPECTRUM_SOURCE_SENSOR).name}",
     )
 
@@ -1205,14 +1213,14 @@ OLI, and Landsat 9 OLI.
 
 It uses four held-out class targets drawn from the synthetic catalogue itself:
 one vegetation spectrum, one soil spectrum, one water spectrum, and one urban
-spectrum. Those targets are simulated to each source sensor, but omitted from
-the prepared runtime so the mapper must reconstruct them from the remaining
-candidate spectra.
+spectrum. Those targets are simulated to each source sensor. For each query,
+the examples exclude only the matching `sample_name` from candidate retrieval,
+leaving the rest of the catalogue available.
 
 <div class="fact-grid">
   <div><strong>4 sensors</strong><span>MODIS, Sentinel-2A, Landsat 8, Landsat 9</span></div>
   <div><strong>4 held-out targets</strong><span>vegetation, soil, water, urban</span></div>
-  <div><strong>6 runtime candidates</strong><span>{", ".join(runtime_candidate_samples)}</span></div>
+  <div><strong>10 catalogue spectra</strong><span>{", ".join(catalogue_samples)}</span></div>
   <div><strong>Scored subset</strong><span>{", ".join(COMPARABLE_PAIRWISE_BANDS)}</span></div>
   <div><strong>Regenerated</strong><span>{generated_at_utc[:10]} UTC</span></div>
 </div>
@@ -1247,17 +1255,26 @@ Recorded upstream artifacts for this commit:
 
 {chr(10).join(holdout_table_lines)}
 
-The example `siac/` runtime contains only these candidate spectra:
+The example `siac/` runtime keeps the full ten-spectrum catalogue:
 
-- `{runtime_candidate_samples[0]}`
-- `{runtime_candidate_samples[1]}`
-- `{runtime_candidate_samples[2]}`
-- `{runtime_candidate_samples[3]}`
-- `{runtime_candidate_samples[4]}`
-- `{runtime_candidate_samples[5]}`
+- `{catalogue_samples[0]}`
+- `{catalogue_samples[1]}`
+- `{catalogue_samples[2]}`
+- `{catalogue_samples[3]}`
+- `{catalogue_samples[4]}`
+- `{catalogue_samples[5]}`
+- `{catalogue_samples[6]}`
+- `{catalogue_samples[7]}`
+- `{catalogue_samples[8]}`
+- `{catalogue_samples[9]}`
 
-That means the exact target spectra cannot appear in the neighbor list. The
-docs therefore show a real hold-out reconstruction problem, not a self-match.
+Each example command excludes only its own query spectrum:
+
+- single-sample runs use `--exclude-sample-name <sample_id>`
+- the batch run uses `--self-exclude-sample-id`
+
+That keeps the other held-out targets available as neighbors while still
+preventing self-matches.
 
 ## Band Correspondence
 
@@ -1400,15 +1417,15 @@ Reference output:
 def _write_official_sensor_examples_doc(
     *,
     generated_at_utc: str,
+    catalogue_samples: list[str],
     source_artifacts_by_sensor: dict[str, list[dict[str, object]]],
-    runtime_candidate_samples: list[str],
     truth_rows_by_sensor: dict[str, dict[str, dict[str, float]]],
 ) -> None:
     OFFICIAL_SENSOR_DOC_PATH.write_text(
         _render_official_sensor_examples_doc(
             generated_at_utc=generated_at_utc,
+            catalogue_samples=catalogue_samples,
             source_artifacts_by_sensor=source_artifacts_by_sensor,
-            runtime_candidate_samples=runtime_candidate_samples,
             truth_rows_by_sensor=truth_rows_by_sensor,
         ),
         encoding="utf-8",
@@ -1465,12 +1482,8 @@ def build_official_mapping_examples() -> None:
 
     full_catalogue = build_library_spectra()
     truth_spectra = build_holdout_truth_spectra(full_catalogue)
-    runtime_candidate_samples = _runtime_candidate_sample_ids(full_catalogue)
-    runtime_library_spectra = {
-        sample_id: full_catalogue[sample_id]
-        for sample_id in runtime_candidate_samples
-    }
-    _write_siac_fixture(runtime_library_spectra)
+    catalogue_samples = _catalogue_sample_ids(full_catalogue)
+    _write_siac_fixture(full_catalogue)
 
     provenance_payload = {
         "generated_at_utc": generated_at_utc,
@@ -1479,8 +1492,8 @@ def build_official_mapping_examples() -> None:
         "example_design": {
             "strategy": "held_out_exact_library_spectra",
             "description": (
-                "Four exact spectra are selected from the synthetic catalogue as public targets, "
-                "then omitted from the SIAC-style runtime so mapping must reconstruct them from the remaining candidates."
+                "Four exact spectra are selected from the synthetic catalogue as public targets. "
+                "Each query excludes only its own sample_name at mapping time, leaving the rest of the catalogue available."
             ),
             "held_out_samples": [
                 {
@@ -1491,7 +1504,8 @@ def build_official_mapping_examples() -> None:
                 }
                 for target in HELD_OUT_TARGETS
             ],
-            "runtime_candidate_samples": runtime_candidate_samples,
+            "catalogue_samples": catalogue_samples,
+            "self_exclusion_policy": "exclude_matching_sample_name_only",
         },
         "sensors": [
             {
@@ -1535,8 +1549,8 @@ def build_official_mapping_examples() -> None:
     _write_examples_readme()
     _write_official_sensor_examples_doc(
         generated_at_utc=generated_at_utc,
+        catalogue_samples=catalogue_samples,
         source_artifacts_by_sensor=source_artifacts_by_sensor,
-        runtime_candidate_samples=runtime_candidate_samples,
         truth_rows_by_sensor=truth_rows_by_sensor,
     )
 

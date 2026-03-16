@@ -321,7 +321,7 @@ def _write_mapping_output(
                 raise SpectralLibraryError("invalid_result", "Mapping result is missing target_reflectance.")
             schema = mapper.get_sensor_schema(target_sensor or "")
             segment_by_band = {band.band_id: band.segment for band in schema.bands}
-            writer = csv.DictWriter(handle, fieldnames=["band_id", "segment", "reflectance"])
+            writer = csv.DictWriter(handle, fieldnames=["band_id", "segment", "reflectance"], lineterminator="\n")
             writer.writeheader()
             for band_id, reflectance in zip(result.target_band_ids, result.target_reflectance):
                 writer.writerow(
@@ -342,7 +342,7 @@ def _write_mapping_output(
         if reflectance is None or result.reconstructed_wavelength_nm is None:
             raise SpectralLibraryError("invalid_result", "Mapping result is missing reconstructed spectrum output.")
 
-        writer = csv.DictWriter(handle, fieldnames=["wavelength_nm", "reflectance"])
+        writer = csv.DictWriter(handle, fieldnames=["wavelength_nm", "reflectance"], lineterminator="\n")
         writer.writeheader()
         for wavelength_nm, value in zip(result.reconstructed_wavelength_nm, reflectance):
             writer.writerow({"wavelength_nm": int(wavelength_nm), "reflectance": float(value)})
@@ -363,7 +363,7 @@ def _write_batch_mapping_output(
             schema = mapper.get_sensor_schema(target_sensor or "")
             output_columns = schema.band_ids()
             fieldnames = ["sample_id", *output_columns]
-            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
             writer.writeheader()
             for sample_id, sample_result in zip(result.sample_ids, result.results):
                 if sample_result.target_reflectance is None:
@@ -396,7 +396,7 @@ def _write_batch_mapping_output(
             getter = lambda mapping_result: mapping_result.reconstructed_full_spectrum
 
         fieldnames = ["sample_id", *output_columns]
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for sample_id, sample_result in zip(result.sample_ids, result.results):
             reflectance = getter(sample_result)
@@ -572,7 +572,13 @@ def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
 def cmd_map_reflectance(args: argparse.Namespace) -> int:
     mapper = SpectralMapper(Path(args.prepared_root))
     reflectance, valid_mask = _load_reflectance_input(Path(args.input))
-    result = mapper.map_reflectance(
+    exclude_row_ids = _split_repeated_csv_arg(args.exclude_row_id)
+    exclude_sample_names = _split_repeated_csv_arg(args.exclude_sample_name)
+    candidate_row_indices = mapper.candidate_row_indices(
+        exclude_row_ids=exclude_row_ids,
+        exclude_sample_names=exclude_sample_names,
+    )
+    result = mapper._map_reflectance_internal(
         source_sensor=args.source_sensor,
         reflectance=reflectance,
         valid_mask=valid_mask,
@@ -580,6 +586,7 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
         target_sensor=args.target_sensor or None,
         k=args.k,
         min_valid_bands=args.min_valid_bands,
+        candidate_row_indices=candidate_row_indices,
     )
     output_path = Path(args.output)
     written_rows = _write_mapping_output(
@@ -597,6 +604,8 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
             "output_mode": args.output_mode,
             "output_path": str(output_path),
             "written_rows": written_rows,
+            "excluded_row_ids": exclude_row_ids,
+            "excluded_sample_names": exclude_sample_names,
         }
     )
     print(json.dumps(payload, indent=2, sort_keys=True))
@@ -606,16 +615,50 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
 def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
     mapper = SpectralMapper(Path(args.prepared_root))
     sample_ids, reflectance_rows, valid_mask_rows = _load_batch_reflectance_input(Path(args.input))
-    result = mapper.map_reflectance_batch(
-        source_sensor=args.source_sensor,
-        reflectance_rows=reflectance_rows,
-        valid_mask_rows=valid_mask_rows,
-        sample_ids=sample_ids,
-        output_mode=args.output_mode,
-        target_sensor=args.target_sensor or None,
-        k=args.k,
-        min_valid_bands=args.min_valid_bands,
-    )
+    exclude_row_ids = _split_repeated_csv_arg(args.exclude_row_id)
+    exclude_sample_names = _split_repeated_csv_arg(args.exclude_sample_name)
+    if exclude_row_ids or exclude_sample_names or args.self_exclude_sample_id:
+        base_candidate_row_indices = mapper.candidate_row_indices(
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+        )
+        results = []
+        for sample_index, (sample_id, reflectance, valid_mask) in enumerate(
+            zip(sample_ids, reflectance_rows, valid_mask_rows)
+        ):
+            try:
+                candidate_row_indices = base_candidate_row_indices
+                if args.self_exclude_sample_id and mapper.has_prepared_sample_name(sample_id):
+                    candidate_row_indices = mapper.candidate_row_indices(
+                        base_candidate_row_indices,
+                        exclude_sample_names=[sample_id],
+                    )
+                results.append(
+                    mapper._map_reflectance_internal(
+                        source_sensor=args.source_sensor,
+                        reflectance=reflectance,
+                        valid_mask=valid_mask,
+                        output_mode=args.output_mode,
+                        target_sensor=args.target_sensor or None,
+                        k=args.k,
+                        min_valid_bands=args.min_valid_bands,
+                        candidate_row_indices=candidate_row_indices,
+                    )
+                )
+            except SpectralLibraryError as error:
+                raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
+        result = BatchMappingResult(sample_ids=sample_ids, results=tuple(results))
+    else:
+        result = mapper.map_reflectance_batch(
+            source_sensor=args.source_sensor,
+            reflectance_rows=reflectance_rows,
+            valid_mask_rows=valid_mask_rows,
+            sample_ids=sample_ids,
+            output_mode=args.output_mode,
+            target_sensor=args.target_sensor or None,
+            k=args.k,
+            min_valid_bands=args.min_valid_bands,
+        )
     output_path = Path(args.output)
     written_rows, output_columns = _write_batch_mapping_output(
         mapper,
@@ -633,6 +676,9 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
         "output_columns": list(output_columns),
         "sample_count": len(result.results),
         "written_rows": written_rows,
+        "excluded_row_ids": exclude_row_ids,
+        "excluded_sample_names": exclude_sample_names,
+        "self_exclude_sample_id": bool(args.self_exclude_sample_id),
     }
     if args.diagnostics_output:
         diagnostics_path = Path(args.diagnostics_output)
@@ -710,6 +756,8 @@ def build_parser() -> argparse.ArgumentParser:
     map_parser.add_argument("--output-mode", choices=list(SUPPORTED_OUTPUT_MODES), required=True)
     map_parser.add_argument("--k", type=int, default=10)
     map_parser.add_argument("--min-valid-bands", type=int, default=1)
+    map_parser.add_argument("--exclude-row-id", action="append", default=[])
+    map_parser.add_argument("--exclude-sample-name", action="append", default=[])
     map_parser.add_argument("--output", required=True)
     map_parser.set_defaults(func=cmd_map_reflectance)
 
@@ -724,6 +772,9 @@ def build_parser() -> argparse.ArgumentParser:
     batch_map_parser.add_argument("--output-mode", choices=list(SUPPORTED_OUTPUT_MODES), required=True)
     batch_map_parser.add_argument("--k", type=int, default=10)
     batch_map_parser.add_argument("--min-valid-bands", type=int, default=1)
+    batch_map_parser.add_argument("--exclude-row-id", action="append", default=[])
+    batch_map_parser.add_argument("--exclude-sample-name", action="append", default=[])
+    batch_map_parser.add_argument("--self-exclude-sample-id", action="store_true")
     batch_map_parser.add_argument("--output", required=True)
     batch_map_parser.add_argument("--diagnostics-output", default="")
     batch_map_parser.set_defaults(func=cmd_map_reflectance_batch)

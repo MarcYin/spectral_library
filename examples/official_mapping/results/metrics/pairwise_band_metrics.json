@@ -22,8 +22,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.05616751706377059,
-      "rmse": 0.06915876602257409,
+      "mean_abs_error": 0.04870824310012941,
+      "rmse": 0.059848471721648235,
       "sample_count": 4
     },
     {
@@ -40,8 +40,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.05676586342967322,
-      "rmse": 0.06955626233808276,
+      "mean_abs_error": 0.04955032817478219,
+      "rmse": 0.060246707126517966,
       "sample_count": 4
     },
     {
@@ -58,8 +58,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.056768811649591314,
-      "rmse": 0.06955839481617104,
+      "mean_abs_error": 0.04954018049018071,
+      "rmse": 0.06024285955628214,
       "sample_count": 4
     },
     {
@@ -76,8 +76,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0524021348369413,
-      "rmse": 0.06922422185115487,
+      "mean_abs_error": 0.047760172145028784,
+      "rmse": 0.05870859496183732,
       "sample_count": 4
     },
     {
@@ -94,8 +94,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.05172211593857917,
-      "rmse": 0.06965340751740881,
+      "mean_abs_error": 0.04955032821724318,
+      "rmse": 0.060246707136538416,
       "sample_count": 4
     },
     {
@@ -112,8 +112,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.051724022730690794,
-      "rmse": 0.06965326572092559,
+      "mean_abs_error": 0.04954018053290271,
+      "rmse": 0.06024285956651151,
       "sample_count": 4
     },
     {
@@ -130,8 +130,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0524021348369413,
-      "rmse": 0.06922422185115487,
+      "mean_abs_error": 0.04776017226343336,
+      "rmse": 0.05870859498494643,
       "sample_count": 4
     },
     {
@@ -148,8 +148,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.051193711333912324,
-      "rmse": 0.06947164079665868,
+      "mean_abs_error": 0.04870824322143575,
+      "rmse": 0.05984847179276994,
       "sample_count": 4
     },
     {
@@ -166,8 +166,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.051724022730690794,
-      "rmse": 0.06965326572092559,
+      "mean_abs_error": 0.049540180610256584,
+      "rmse": 0.06024285962774127,
       "sample_count": 4
     },
     {
@@ -184,8 +184,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0524021348369413,
-      "rmse": 0.06922422185115487,
+      "mean_abs_error": 0.04776017226343336,
+      "rmse": 0.05870859498494643,
       "sample_count": 4
     },
     {
@@ -202,8 +202,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.051193711333912324,
-      "rmse": 0.06947164079665868,
+      "mean_abs_error": 0.04870824322143575,
+      "rmse": 0.05984847179276994,
       "sample_count": 4
     },
     {
@@ -220,8 +220,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.05172211593857917,
-      "rmse": 0.06965340751740881,
+      "mean_abs_error": 0.04955032829783476,
+      "rmse": 0.06024670720006282,
       "sample_count": 4
     }
   ]

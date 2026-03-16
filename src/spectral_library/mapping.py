@@ -979,7 +979,15 @@ class SpectralMapper:
         self._validate_checksums(verify_checksums=verify_checksums)
 
         self._sensor_schemas = self._load_prepared_sensor_schemas()
-        self._row_ids = self._load_row_ids()
+        self._row_ids, self._row_sample_names = self._load_row_metadata()
+        self._row_index_by_id = {row_id: index for index, row_id in enumerate(self._row_ids)}
+        row_indices_by_sample_name: dict[str, list[int]] = {}
+        for row_index, sample_name in enumerate(self._row_sample_names):
+            row_indices_by_sample_name.setdefault(sample_name, []).append(row_index)
+        self._row_indices_by_sample_name = {
+            sample_name: tuple(row_indices)
+            for sample_name, row_indices in row_indices_by_sample_name.items()
+        }
         self._hyperspectral_cache: dict[str, np.ndarray] = {}
         self._source_matrix_cache: dict[tuple[str, str], np.ndarray] = {}
         self._response_cache: dict[tuple[str, str, bool], np.ndarray] = {}
@@ -1027,7 +1035,7 @@ class SpectralMapper:
             schemas[schema.sensor_id] = schema
         return schemas
 
-    def _load_row_ids(self) -> tuple[str, ...]:
+    def _load_row_metadata(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         metadata_path = self.prepared_root / "mapping_metadata.parquet"
         connection = duckdb.connect()
         try:
@@ -1073,7 +1081,8 @@ class SpectralMapper:
                 "mapping_metadata.parquet contains duplicate prepared row identities.",
                 context={"prepared_root": str(self.prepared_root), "path": str(metadata_path)},
             )
-        return row_ids
+        sample_names = tuple(str(row[3]) for row in rows)
+        return row_ids, sample_names
 
     def _validate_prepared_layout(self) -> None:
         for segment in SEGMENTS:
@@ -1349,18 +1358,102 @@ class SpectralMapper:
             return None, ()
         return np.asarray(values, dtype=np.float64), tuple(band_ids)
 
-    def _candidate_rows(self, candidate_row_indices: Sequence[int] | None) -> np.ndarray:
+    def _candidate_rows(
+        self,
+        candidate_row_indices: Sequence[int] | None,
+        *,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+    ) -> np.ndarray:
         if candidate_row_indices is None:
-            return np.arange(self.manifest.row_count, dtype=np.int64)
-        candidate = np.asarray(candidate_row_indices, dtype=np.int64)
-        if candidate.ndim != 1 or candidate.size == 0:
-            raise MappingInputError("candidate_row_indices must be a non-empty one-dimensional sequence.")
-        if np.any(candidate < 0) or np.any(candidate >= self.manifest.row_count):
+            candidate = np.arange(self.manifest.row_count, dtype=np.int64)
+        else:
+            candidate = np.asarray(candidate_row_indices, dtype=np.int64)
+            if candidate.ndim != 1 or candidate.size == 0:
+                raise MappingInputError("candidate_row_indices must be a non-empty one-dimensional sequence.")
+            if np.any(candidate < 0) or np.any(candidate >= self.manifest.row_count):
+                raise MappingInputError(
+                    "candidate_row_indices must refer to valid prepared-library rows.",
+                    context={"row_count": self.manifest.row_count},
+                )
+            candidate = np.unique(candidate)
+
+        if not exclude_row_ids and not exclude_sample_names:
+            return candidate
+
+        excluded = self._excluded_candidate_indices(
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+        )
+        if excluded.size:
+            candidate = candidate[~np.isin(candidate, excluded)]
+        if candidate.size == 0:
             raise MappingInputError(
-                "candidate_row_indices must refer to valid prepared-library rows.",
-                context={"row_count": self.manifest.row_count},
+                "Candidate exclusions removed every prepared-library row.",
+                context={
+                    "row_count": self.manifest.row_count,
+                    "excluded_row_id_count": len(tuple(exclude_row_ids or ())),
+                    "excluded_sample_name_count": len(tuple(exclude_sample_names or ())),
+                },
             )
-        return np.unique(candidate)
+        return candidate
+
+    def _excluded_candidate_indices(
+        self,
+        *,
+        exclude_row_ids: Sequence[str] | None,
+        exclude_sample_names: Sequence[str] | None,
+    ) -> np.ndarray:
+        normalized_exclude_row_ids = tuple(
+            text for text in (str(value).strip() for value in (exclude_row_ids or ())) if text
+        )
+        normalized_exclude_sample_names = tuple(
+            text for text in (str(value).strip() for value in (exclude_sample_names or ())) if text
+        )
+
+        excluded_indices: set[int] = set()
+        if normalized_exclude_row_ids:
+            unknown_row_ids = sorted(
+                row_id for row_id in normalized_exclude_row_ids if row_id not in self._row_index_by_id
+            )
+            if unknown_row_ids:
+                raise MappingInputError(
+                    "exclude_row_ids must refer to existing prepared row ids.",
+                    context={"unknown_row_ids": unknown_row_ids},
+                )
+            excluded_indices.update(self._row_index_by_id[row_id] for row_id in normalized_exclude_row_ids)
+
+        if normalized_exclude_sample_names:
+            unknown_sample_names = sorted(
+                sample_name
+                for sample_name in normalized_exclude_sample_names
+                if sample_name not in self._row_indices_by_sample_name
+            )
+            if unknown_sample_names:
+                raise MappingInputError(
+                    "exclude_sample_names must refer to existing prepared sample_name values.",
+                    context={"unknown_sample_names": unknown_sample_names},
+                )
+            for sample_name in normalized_exclude_sample_names:
+                excluded_indices.update(self._row_indices_by_sample_name[sample_name])
+
+        return np.asarray(sorted(excluded_indices), dtype=np.int64)
+
+    def candidate_row_indices(
+        self,
+        candidate_row_indices: Sequence[int] | None = None,
+        *,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+    ) -> np.ndarray:
+        return self._candidate_rows(
+            candidate_row_indices,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+        )
+
+    def has_prepared_sample_name(self, sample_name: str) -> bool:
+        return str(sample_name).strip() in self._row_indices_by_sample_name
 
     def _build_mapping_result(
         self,
