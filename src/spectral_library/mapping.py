@@ -17,7 +17,7 @@ import numpy as np
 from ._version import __version__
 
 
-PREPARED_SCHEMA_VERSION = "1.0.0"
+PREPARED_SCHEMA_VERSION = "1.1.0"
 SUPPORTED_OUTPUT_MODES = (
     "target_sensor",
     "vnir_spectrum",
@@ -33,6 +33,8 @@ SWIR_START_NM = 800
 SWIR_END_NM = 2500
 FULL_BLEND_START_NM = 800
 FULL_BLEND_END_NM = 1000
+MAX_INTERNAL_INTERPOLATED_GAP_COUNT = 8
+MAX_INTERNAL_INTERPOLATED_RUN_COUNT = 8
 
 CANONICAL_WAVELENGTHS = np.arange(CANONICAL_START_NM, CANONICAL_END_NM + 1, dtype=np.int32)
 VNIR_WAVELENGTHS = np.arange(VNIR_START_NM, VNIR_END_NM + 1, dtype=np.int32)
@@ -261,6 +263,7 @@ class PreparedLibraryManifest:
     swir_wavelength_range_nm: tuple[int, int]
     array_dtype: str
     file_checksums: dict[str, str] = field(default_factory=dict)
+    interpolation_summary: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> "PreparedLibraryManifest":
@@ -277,6 +280,10 @@ class PreparedLibraryManifest:
             swir_wavelength_range_nm=tuple(int(value) for value in payload["swir_wavelength_range_nm"]),  # type: ignore[index]
             array_dtype=str(payload["array_dtype"]),
             file_checksums={str(key): str(value) for key, value in dict(payload["file_checksums"]).items()},  # type: ignore[arg-type]
+            interpolation_summary={
+                str(key): int(value)
+                for key, value in dict(payload.get("interpolation_summary") or {}).items()  # type: ignore[arg-type]
+            },
         )
 
     @classmethod
@@ -313,6 +320,11 @@ class PreparedLibraryManifest:
             "swir_wavelength_range_nm": list(self.swir_wavelength_range_nm),
             "array_dtype": self.array_dtype,
             "file_checksums": dict(self.file_checksums),
+            **(
+                {"interpolation_summary": dict(self.interpolation_summary)}
+                if self.interpolation_summary
+                else {}
+            ),
         }
 
 
@@ -520,6 +532,82 @@ def _sha256_paths(paths: Sequence[Path]) -> str:
     return digest.hexdigest()
 
 
+def _longest_true_run(mask: np.ndarray) -> int:
+    longest = 0
+    current = 0
+    for value in np.asarray(mask, dtype=bool):
+        if bool(value):
+            current += 1
+            if current > longest:
+                longest = current
+        else:
+            current = 0
+    return int(longest)
+
+
+def _summarize_missing_gap_counts(spectrum: np.ndarray) -> dict[str, int]:
+    missing_mask = np.isnan(spectrum)
+    if not missing_mask.any():
+        return {
+            "missing_count": 0,
+            "leading_gap_count": 0,
+            "trailing_gap_count": 0,
+            "internal_gap_count": 0,
+            "max_internal_gap_run_count": 0,
+        }
+
+    leading_gap_count = 0
+    while leading_gap_count < missing_mask.size and bool(missing_mask[leading_gap_count]):
+        leading_gap_count += 1
+
+    trailing_gap_count = 0
+    while trailing_gap_count < missing_mask.size and bool(missing_mask[missing_mask.size - 1 - trailing_gap_count]):
+        trailing_gap_count += 1
+
+    internal_start = leading_gap_count
+    internal_end = missing_mask.size - trailing_gap_count
+    internal_mask = np.asarray(missing_mask[internal_start:internal_end], dtype=bool)
+    return {
+        "missing_count": int(missing_mask.sum()),
+        "leading_gap_count": int(leading_gap_count),
+        "trailing_gap_count": int(trailing_gap_count),
+        "internal_gap_count": int(internal_mask.sum()),
+        "max_internal_gap_run_count": _longest_true_run(internal_mask),
+    }
+
+
+def _empty_interpolation_summary() -> dict[str, int]:
+    return {
+        "interpolated_row_count": 0,
+        "rows_with_leading_gaps": 0,
+        "rows_with_trailing_gaps": 0,
+        "rows_with_internal_gaps": 0,
+        "max_missing_count": 0,
+        "max_leading_gap_count": 0,
+        "max_trailing_gap_count": 0,
+        "max_internal_gap_count": 0,
+        "max_internal_gap_run_count": 0,
+    }
+
+
+def _update_interpolation_summary(summary: dict[str, int], gap_counts: Mapping[str, int]) -> None:
+    summary["interpolated_row_count"] += 1
+    if int(gap_counts["leading_gap_count"]) > 0:
+        summary["rows_with_leading_gaps"] += 1
+    if int(gap_counts["trailing_gap_count"]) > 0:
+        summary["rows_with_trailing_gaps"] += 1
+    if int(gap_counts["internal_gap_count"]) > 0:
+        summary["rows_with_internal_gaps"] += 1
+    summary["max_missing_count"] = max(summary["max_missing_count"], int(gap_counts["missing_count"]))
+    summary["max_leading_gap_count"] = max(summary["max_leading_gap_count"], int(gap_counts["leading_gap_count"]))
+    summary["max_trailing_gap_count"] = max(summary["max_trailing_gap_count"], int(gap_counts["trailing_gap_count"]))
+    summary["max_internal_gap_count"] = max(summary["max_internal_gap_count"], int(gap_counts["internal_gap_count"]))
+    summary["max_internal_gap_run_count"] = max(
+        summary["max_internal_gap_run_count"],
+        int(gap_counts["max_internal_gap_run_count"]),
+    )
+
+
 def _ordered_neighbor_rows(
     distances: np.ndarray,
     candidate_row_indices: np.ndarray,
@@ -648,7 +736,7 @@ def _load_siac_rows(
     spectra_path: Path,
     *,
     dtype: np.dtype[Any],
-) -> tuple[list[str], list[dict[str, object]], np.ndarray]:
+) -> tuple[list[str], list[dict[str, object]], np.ndarray, dict[str, int]]:
     if not metadata_path.exists() or not spectra_path.exists():
         raise PreparedLibraryBuildError(
             "SIAC tabular inputs are missing required files.",
@@ -694,6 +782,7 @@ def _load_siac_rows(
             )
 
         spectra_by_key: dict[tuple[str, str, str], np.ndarray] = {}
+        interpolation_summary = _empty_interpolation_summary()
         canonical_wavelengths = np.asarray(expected_wavelengths, dtype=np.float64)
         for row in spectra_reader:
             key = (row["source_id"], row["spectrum_id"], row["sample_name"])
@@ -725,6 +814,7 @@ def _load_siac_rows(
             spectrum = np.asarray(values, dtype=np.float64)
             if np.isnan(spectrum).any():
                 valid = np.isfinite(spectrum)
+                gap_counts = _summarize_missing_gap_counts(spectrum)
                 if int(valid.sum()) < 2:
                     raise PreparedLibraryBuildError(
                         "SIAC normalized spectra rows with missing nm_* cells must contain at least two numeric values.",
@@ -733,10 +823,35 @@ def _load_siac_rows(
                             "source_id": key[0],
                             "spectrum_id": key[1],
                             "sample_name": key[2],
-                            "missing_value_count": int(np.isnan(spectrum).sum()),
+                            "missing_value_count": int(gap_counts["missing_count"]),
+                        },
+                    )
+                if int(gap_counts["internal_gap_count"]) > MAX_INTERNAL_INTERPOLATED_GAP_COUNT:
+                    raise PreparedLibraryBuildError(
+                        "SIAC normalized spectra rows may only interpolate a small number of internal nm_* gaps.",
+                        context={
+                            "spectra_path": str(spectra_path),
+                            "source_id": key[0],
+                            "spectrum_id": key[1],
+                            "sample_name": key[2],
+                            "internal_gap_count": int(gap_counts["internal_gap_count"]),
+                            "max_allowed_internal_gap_count": MAX_INTERNAL_INTERPOLATED_GAP_COUNT,
+                        },
+                    )
+                if int(gap_counts["max_internal_gap_run_count"]) > MAX_INTERNAL_INTERPOLATED_RUN_COUNT:
+                    raise PreparedLibraryBuildError(
+                        "SIAC normalized spectra rows may only interpolate short contiguous internal nm_* gaps.",
+                        context={
+                            "spectra_path": str(spectra_path),
+                            "source_id": key[0],
+                            "spectrum_id": key[1],
+                            "sample_name": key[2],
+                            "max_internal_gap_run_count": int(gap_counts["max_internal_gap_run_count"]),
+                            "max_allowed_internal_gap_run_count": MAX_INTERNAL_INTERPOLATED_RUN_COUNT,
                         },
                     )
                 spectrum = np.interp(canonical_wavelengths, canonical_wavelengths[valid], spectrum[valid])
+                _update_interpolation_summary(interpolation_summary, gap_counts)
             spectra_by_key[key] = np.asarray(spectrum, dtype=dtype)
 
     aligned_metadata_rows: list[dict[str, object]] = []
@@ -761,7 +876,7 @@ def _load_siac_rows(
             context={"source_id": source_id, "spectrum_id": spectrum_id, "sample_name": sample_name},
         )
 
-    return ["row_index", *metadata_fieldnames], aligned_metadata_rows, hyperspectral
+    return ["row_index", *metadata_fieldnames], aligned_metadata_rows, hyperspectral, interpolation_summary
 
 
 def _write_mapping_metadata_parquet(path: Path, fieldnames: Sequence[str], rows: Sequence[Mapping[str, object]]) -> None:
@@ -971,7 +1086,11 @@ def prepare_mapping_library(
 
     metadata_path = Path(siac_root) / "tabular" / "siac_spectra_metadata.csv"
     spectra_path = Path(siac_root) / "tabular" / "siac_normalized_spectra.csv"
-    metadata_fieldnames, metadata_rows, hyperspectral = _load_siac_rows(metadata_path, spectra_path, dtype=dtype_np)
+    metadata_fieldnames, metadata_rows, hyperspectral, interpolation_summary = _load_siac_rows(
+        metadata_path,
+        spectra_path,
+        dtype=dtype_np,
+    )
 
     sensors = load_sensor_schemas(Path(srf_root))
     missing_source_sensors = [sensor_id for sensor_id in source_sensor_ids if sensor_id not in sensors]
@@ -1036,6 +1155,7 @@ def prepare_mapping_library(
         swir_wavelength_range_nm=(SWIR_START_NM, SWIR_END_NM),
         array_dtype=dtype_np.name,
         file_checksums=file_checksums,
+        interpolation_summary=interpolation_summary,
     )
     manifest_path = output_root / "manifest.json"
     _write_json(manifest_path, manifest.to_dict())
@@ -1546,6 +1666,44 @@ class SpectralMapper:
     def has_prepared_sample_name(self, sample_name: str) -> bool:
         return str(sample_name).strip() in self._row_indices_by_sample_name
 
+    def _normalized_batch_exclude_row_ids(
+        self,
+        exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None,
+        *,
+        sample_ids: Sequence[str],
+    ) -> tuple[str | None, ...]:
+        if exclude_row_ids_per_sample is None:
+            return (None,) * len(sample_ids)
+        if isinstance(exclude_row_ids_per_sample, Mapping):
+            sample_id_set = {str(sample_id) for sample_id in sample_ids}
+            unknown_sample_ids = sorted(
+                str(sample_id) for sample_id in exclude_row_ids_per_sample if str(sample_id) not in sample_id_set
+            )
+            if unknown_sample_ids:
+                raise MappingInputError(
+                    "exclude_row_ids_per_sample mapping keys must match sample_ids.",
+                    context={"unknown_sample_ids": unknown_sample_ids},
+                )
+            return tuple(
+                (
+                    text
+                    if (text := str(exclude_row_ids_per_sample.get(sample_id) or "").strip())
+                    else None
+                )
+                for sample_id in sample_ids
+            )
+        if isinstance(exclude_row_ids_per_sample, Sequence) and not isinstance(exclude_row_ids_per_sample, (str, bytes)):
+            values = list(exclude_row_ids_per_sample)
+            if len(values) != len(sample_ids):
+                raise MappingInputError(
+                    "exclude_row_ids_per_sample must have the same length as reflectance_rows.",
+                    context={"sample_count": len(sample_ids), "exclude_row_id_count": len(values)},
+                )
+            return tuple((text if (text := str(value or "").strip()) else None) for value in values)
+        raise MappingInputError(
+            "exclude_row_ids_per_sample must be a sequence aligned to reflectance_rows or a mapping keyed by sample_id."
+        )
+
     def _build_mapping_result(
         self,
         *,
@@ -1691,6 +1849,8 @@ class SpectralMapper:
         target_sensor: str | None = None,
         k: int = 10,
         min_valid_bands: int = 1,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
     ) -> MappingResult:
         return self._map_reflectance_internal(
             source_sensor=source_sensor,
@@ -1700,7 +1860,11 @@ class SpectralMapper:
             target_sensor=target_sensor,
             k=k,
             min_valid_bands=min_valid_bands,
-            candidate_row_indices=None,
+            candidate_row_indices=self._candidate_rows(
+                None,
+                exclude_row_ids=exclude_row_ids,
+                exclude_sample_names=exclude_sample_names,
+            ),
         )
 
     def map_reflectance_batch(
@@ -1714,6 +1878,10 @@ class SpectralMapper:
         target_sensor: str | None = None,
         k: int = 10,
         min_valid_bands: int = 1,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+        exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
+        self_exclude_sample_id: bool = False,
     ) -> BatchMappingResult:
         _validate_mapping_request(output_mode, k=k, min_valid_bands=min_valid_bands)
         if isinstance(reflectance_rows, Mapping):
@@ -1759,6 +1927,11 @@ class SpectralMapper:
         else:
             raise MappingInputError("valid_mask_rows must be a two-dimensional array or a sequence of per-sample masks.")
 
+        normalized_exclude_row_ids_per_sample = self._normalized_batch_exclude_row_ids(
+            exclude_row_ids_per_sample,
+            sample_ids=normalized_sample_ids,
+        )
+
         source_schema = self.get_sensor_schema(source_sensor)
         query_values_batch = np.empty((len(batch_rows), len(source_schema.bands)), dtype=np.float64)
         query_valid_mask_batch = np.empty((len(batch_rows), len(source_schema.bands)), dtype=bool)
@@ -1771,6 +1944,38 @@ class SpectralMapper:
                 raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
             query_values_batch[sample_index] = query_values
             query_valid_mask_batch[sample_index] = query_valid_mask
+
+        if exclude_row_ids or exclude_sample_names or self_exclude_sample_id or any(normalized_exclude_row_ids_per_sample):
+            base_candidate_rows = self._candidate_rows(
+                None,
+                exclude_row_ids=exclude_row_ids,
+                exclude_sample_names=exclude_sample_names,
+            )
+            results: list[MappingResult] = []
+            for sample_index, (sample_id, reflectance, valid_mask, sample_exclude_row_id) in enumerate(
+                zip(normalized_sample_ids, batch_rows, batch_valid_masks, normalized_exclude_row_ids_per_sample)
+            ):
+                try:
+                    candidate_rows = base_candidate_rows
+                    if sample_exclude_row_id:
+                        candidate_rows = self._candidate_rows(candidate_rows, exclude_row_ids=[sample_exclude_row_id])
+                    if self_exclude_sample_id and self.has_prepared_sample_name(sample_id):
+                        candidate_rows = self._candidate_rows(candidate_rows, exclude_sample_names=[sample_id])
+                    results.append(
+                        self._map_reflectance_internal(
+                            source_sensor=source_sensor,
+                            reflectance=reflectance,
+                            valid_mask=valid_mask,
+                            output_mode=output_mode,
+                            target_sensor=target_sensor,
+                            k=k,
+                            min_valid_bands=min_valid_bands,
+                            candidate_row_indices=candidate_rows,
+                        )
+                    )
+                except SpectralLibraryError as error:
+                    raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
+            return BatchMappingResult(sample_ids=normalized_sample_ids, results=tuple(results))
 
         candidate_rows = self._candidate_rows(None)
         segment_retrievals_by_segment: dict[str, tuple[_SegmentRetrieval, ...]] = {}

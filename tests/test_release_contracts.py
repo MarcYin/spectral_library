@@ -64,7 +64,18 @@ class PublicApiContractTests(unittest.TestCase):
         )
         self.assertEqual(
             tuple(inspect.signature(SpectralMapper.map_reflectance).parameters),
-            ("self", "source_sensor", "reflectance", "valid_mask", "output_mode", "target_sensor", "k", "min_valid_bands"),
+            (
+                "self",
+                "source_sensor",
+                "reflectance",
+                "valid_mask",
+                "output_mode",
+                "target_sensor",
+                "k",
+                "min_valid_bands",
+                "exclude_row_ids",
+                "exclude_sample_names",
+            ),
         )
         self.assertEqual(
             tuple(inspect.signature(SpectralMapper.map_reflectance_batch).parameters),
@@ -78,6 +89,10 @@ class PublicApiContractTests(unittest.TestCase):
                 "target_sensor",
                 "k",
                 "min_valid_bands",
+                "exclude_row_ids",
+                "exclude_sample_names",
+                "exclude_row_ids_per_sample",
+                "self_exclude_sample_id",
             ),
         )
 
@@ -114,6 +129,7 @@ class PublicApiContractTests(unittest.TestCase):
                 "swir_wavelength_range_nm",
                 "array_dtype",
                 "file_checksums",
+                "interpolation_summary",
             ),
         )
         self.assertEqual(tuple(SensorSRFSchema.__dataclass_fields__), ("sensor_id", "bands"))
@@ -123,6 +139,7 @@ class CliContractTests(unittest.TestCase):
     def test_cli_parser_exposes_public_commands_and_core_flags(self) -> None:
         parser = cli.build_parser()
         self.assertIn("--json-errors", parser._option_string_actions)
+        self.assertIn("--json-logs", parser._option_string_actions)
         subparsers_action = next(
             action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
         )
@@ -192,6 +209,28 @@ class CliContractTests(unittest.TestCase):
             self.assertEqual(payload["command"], "validate-prepared-library")
             self.assertEqual(payload["error_code"], "invalid_prepared_library")
 
+    def test_cli_json_log_envelope_is_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = cli.main_with_args(
+                    [
+                        "--json-logs",
+                        "validate-prepared-library",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            payloads = [json.loads(line) for line in stderr.getvalue().splitlines() if line.strip()]
+            self.assertEqual([payload["event"] for payload in payloads], ["command_started", "command_completed"])
+            for payload in payloads:
+                self.assertEqual(set(payload), {"command", "context", "event", "level", "timestamp"})
+                self.assertEqual(payload["command"], "validate-prepared-library")
+                self.assertEqual(payload["level"], "info")
+
 
 class PreparedRuntimeContractTests(unittest.TestCase):
     def test_manifest_and_checksum_payload_keys_are_stable(self) -> None:
@@ -214,14 +253,16 @@ class PreparedRuntimeContractTests(unittest.TestCase):
                     "swir_wavelength_range_nm",
                     "array_dtype",
                     "file_checksums",
+                    "interpolation_summary",
                 },
             )
-            self.assertEqual(manifest_payload["schema_version"], "1.0.0")
+            self.assertEqual(manifest_payload["schema_version"], "1.1.0")
             self.assertEqual(set(manifest_payload["file_checksums"]), set(manifest.file_checksums))
+            self.assertEqual(set(manifest_payload["interpolation_summary"]), set(manifest.interpolation_summary))
 
             checksums_payload = json.loads((fixture["prepared_root"] / "checksums.json").read_text(encoding="utf-8"))
             self.assertEqual(set(checksums_payload), {"files", "schema_version"})
-            self.assertEqual(checksums_payload["schema_version"], "1.0.0")
+            self.assertEqual(checksums_payload["schema_version"], "1.1.0")
             self.assertIn("manifest.json", checksums_payload["files"])
             self.assertIn("mapping_metadata.parquet", checksums_payload["files"])
             self.assertIn("sensor_schema.json", checksums_payload["files"])

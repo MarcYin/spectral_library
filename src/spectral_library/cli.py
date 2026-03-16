@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
@@ -33,6 +34,24 @@ from .siac import build_siac_library
 
 DEFAULT_MANIFEST = Path("manifests/sources.csv")
 DEFAULT_USER_AGENT = f"spectral-library/{__version__}"
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _emit_cli_log(args: argparse.Namespace, *, command: str, event: str, context: dict[str, object] | None = None) -> None:
+    if not bool(getattr(args, "json_logs", False)):
+        return
+    payload: dict[str, object] = {
+        "command": command,
+        "event": event,
+        "level": "info",
+        "timestamp": _utc_timestamp(),
+    }
+    if context:
+        payload["context"] = context
+    print(json.dumps(payload, sort_keys=True), file=sys.stderr)
 
 
 def _split_repeated_csv_arg(values: list[str] | None) -> list[str]:
@@ -572,6 +591,18 @@ def cmd_build_siac_library(args: argparse.Namespace) -> int:
 
 
 def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
+    _emit_cli_log(
+        args,
+        command="prepare-mapping-library",
+        event="command_started",
+        context={
+            "dtype": args.dtype,
+            "output_root": str(Path(args.output_root)),
+            "siac_root": str(Path(args.siac_root)),
+            "source_sensors": _split_repeated_csv_arg(args.source_sensor),
+            "srf_root": str(Path(args.srf_root)),
+        },
+    )
     manifest = prepare_mapping_library(
         Path(args.siac_root),
         Path(args.srf_root),
@@ -581,20 +612,41 @@ def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
     )
     payload = manifest.to_dict()
     payload["output_root"] = str(Path(args.output_root))
+    _emit_cli_log(
+        args,
+        command="prepare-mapping-library",
+        event="command_completed",
+        context={
+            "output_root": str(Path(args.output_root)),
+            "row_count": manifest.row_count,
+            "source_sensors": list(manifest.source_sensors),
+        },
+    )
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
 def cmd_map_reflectance(args: argparse.Namespace) -> int:
-    mapper = SpectralMapper(Path(args.prepared_root))
-    reflectance, valid_mask = _load_reflectance_input(Path(args.input))
     exclude_row_ids = _split_repeated_csv_arg(args.exclude_row_id)
     exclude_sample_names = _split_repeated_csv_arg(args.exclude_sample_name)
-    candidate_row_indices = mapper.candidate_row_indices(
-        exclude_row_ids=exclude_row_ids,
-        exclude_sample_names=exclude_sample_names,
+    _emit_cli_log(
+        args,
+        command="map-reflectance",
+        event="command_started",
+        context={
+            "input_path": str(Path(args.input)),
+            "k": args.k,
+            "min_valid_bands": args.min_valid_bands,
+            "output_mode": args.output_mode,
+            "output_path": str(Path(args.output)),
+            "prepared_root": str(Path(args.prepared_root)),
+            "source_sensor": args.source_sensor,
+            "target_sensor": args.target_sensor or None,
+        },
     )
-    result = mapper._map_reflectance_internal(
+    mapper = SpectralMapper(Path(args.prepared_root))
+    reflectance, valid_mask = _load_reflectance_input(Path(args.input))
+    result = mapper.map_reflectance(
         source_sensor=args.source_sensor,
         reflectance=reflectance,
         valid_mask=valid_mask,
@@ -602,7 +654,8 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
         target_sensor=args.target_sensor or None,
         k=args.k,
         min_valid_bands=args.min_valid_bands,
-        candidate_row_indices=candidate_row_indices,
+        exclude_row_ids=exclude_row_ids,
+        exclude_sample_names=exclude_sample_names,
     )
     output_path = Path(args.output)
     written_rows = _write_mapping_output(
@@ -624,62 +677,60 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
             "excluded_sample_names": exclude_sample_names,
         }
     )
+    _emit_cli_log(
+        args,
+        command="map-reflectance",
+        event="command_completed",
+        context={
+            "output_mode": args.output_mode,
+            "output_path": str(output_path),
+            "segment_statuses": {
+                segment: segment_payload["status"]
+                for segment, segment_payload in result.diagnostics["segments"].items()  # type: ignore[index]
+            },
+            "written_rows": written_rows,
+        },
+    )
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
 def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
-    mapper = SpectralMapper(Path(args.prepared_root))
-    sample_ids, reflectance_rows, valid_mask_rows, input_exclude_row_ids = _load_batch_reflectance_input(Path(args.input))
     exclude_row_ids = _split_repeated_csv_arg(args.exclude_row_id)
     exclude_sample_names = _split_repeated_csv_arg(args.exclude_sample_name)
-    if exclude_row_ids or exclude_sample_names or args.self_exclude_sample_id or any(input_exclude_row_ids):
-        base_candidate_row_indices = mapper.candidate_row_indices(
-            exclude_row_ids=exclude_row_ids,
-            exclude_sample_names=exclude_sample_names,
-        )
-        results = []
-        for sample_index, (sample_id, reflectance, valid_mask, input_exclude_row_id) in enumerate(
-            zip(sample_ids, reflectance_rows, valid_mask_rows, input_exclude_row_ids)
-        ):
-            try:
-                candidate_row_indices = base_candidate_row_indices
-                if input_exclude_row_id:
-                    candidate_row_indices = mapper.candidate_row_indices(
-                        candidate_row_indices,
-                        exclude_row_ids=[input_exclude_row_id],
-                    )
-                if args.self_exclude_sample_id and mapper.has_prepared_sample_name(sample_id):
-                    candidate_row_indices = mapper.candidate_row_indices(
-                        candidate_row_indices,
-                        exclude_sample_names=[sample_id],
-                    )
-                results.append(
-                    mapper._map_reflectance_internal(
-                        source_sensor=args.source_sensor,
-                        reflectance=reflectance,
-                        valid_mask=valid_mask,
-                        output_mode=args.output_mode,
-                        target_sensor=args.target_sensor or None,
-                        k=args.k,
-                        min_valid_bands=args.min_valid_bands,
-                        candidate_row_indices=candidate_row_indices,
-                    )
-                )
-            except SpectralLibraryError as error:
-                raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
-        result = BatchMappingResult(sample_ids=sample_ids, results=tuple(results))
-    else:
-        result = mapper.map_reflectance_batch(
-            source_sensor=args.source_sensor,
-            reflectance_rows=reflectance_rows,
-            valid_mask_rows=valid_mask_rows,
-            sample_ids=sample_ids,
-            output_mode=args.output_mode,
-            target_sensor=args.target_sensor or None,
-            k=args.k,
-            min_valid_bands=args.min_valid_bands,
-        )
+    _emit_cli_log(
+        args,
+        command="map-reflectance-batch",
+        event="command_started",
+        context={
+            "diagnostics_output": str(Path(args.diagnostics_output)) if args.diagnostics_output else None,
+            "input_path": str(Path(args.input)),
+            "k": args.k,
+            "min_valid_bands": args.min_valid_bands,
+            "output_mode": args.output_mode,
+            "output_path": str(Path(args.output)),
+            "prepared_root": str(Path(args.prepared_root)),
+            "self_exclude_sample_id": bool(args.self_exclude_sample_id),
+            "source_sensor": args.source_sensor,
+            "target_sensor": args.target_sensor or None,
+        },
+    )
+    mapper = SpectralMapper(Path(args.prepared_root))
+    sample_ids, reflectance_rows, valid_mask_rows, input_exclude_row_ids = _load_batch_reflectance_input(Path(args.input))
+    result = mapper.map_reflectance_batch(
+        source_sensor=args.source_sensor,
+        reflectance_rows=reflectance_rows,
+        valid_mask_rows=valid_mask_rows,
+        sample_ids=sample_ids,
+        output_mode=args.output_mode,
+        target_sensor=args.target_sensor or None,
+        k=args.k,
+        min_valid_bands=args.min_valid_bands,
+        exclude_row_ids=exclude_row_ids,
+        exclude_sample_names=exclude_sample_names,
+        exclude_row_ids_per_sample=input_exclude_row_ids,
+        self_exclude_sample_id=bool(args.self_exclude_sample_id),
+    )
     output_path = Path(args.output)
     written_rows, output_columns = _write_batch_mapping_output(
         mapper,
@@ -707,11 +758,37 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
         diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
         diagnostics_path.write_text(json.dumps(result.to_summary_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
         payload["diagnostics_output"] = str(diagnostics_path)
+    _emit_cli_log(
+        args,
+        command="map-reflectance-batch",
+        event="command_completed",
+        context={
+            "diagnostics_output": payload.get("diagnostics_output"),
+            "output_columns": list(output_columns),
+            "output_path": str(output_path),
+            "sample_count": len(result.results),
+            "written_rows": written_rows,
+        },
+    )
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
 def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
+    _emit_cli_log(
+        args,
+        command="benchmark-mapping",
+        event="command_started",
+        context={
+            "k": args.k,
+            "prepared_root": str(Path(args.prepared_root)),
+            "random_seed": args.random_seed,
+            "report": str(Path(args.report)),
+            "source_sensor": args.source_sensor,
+            "target_sensor": args.target_sensor,
+            "test_fraction": args.test_fraction,
+        },
+    )
     report = benchmark_mapping(
         Path(args.prepared_root),
         args.source_sensor,
@@ -723,6 +800,16 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
     report_path = Path(args.report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _emit_cli_log(
+        args,
+        command="benchmark-mapping",
+        event="command_completed",
+        context={
+            "report": str(report_path),
+            "test_rows": report["test_rows"],
+            "train_rows": report["train_rows"],
+        },
+    )
     print(
         json.dumps(
             {
@@ -739,6 +826,15 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
 
 
 def cmd_validate_prepared_library(args: argparse.Namespace) -> int:
+    _emit_cli_log(
+        args,
+        command="validate-prepared-library",
+        event="command_started",
+        context={
+            "checksums_verified": not args.no_verify_checksums,
+            "prepared_root": str(Path(args.prepared_root)),
+        },
+    )
     manifest = validate_prepared_library(
         Path(args.prepared_root),
         verify_checksums=not args.no_verify_checksums,
@@ -746,6 +842,16 @@ def cmd_validate_prepared_library(args: argparse.Namespace) -> int:
     payload = manifest.to_dict()
     payload["prepared_root"] = str(Path(args.prepared_root))
     payload["checksums_verified"] = not args.no_verify_checksums
+    _emit_cli_log(
+        args,
+        command="validate-prepared-library",
+        event="command_completed",
+        context={
+            "checksums_verified": not args.no_verify_checksums,
+            "prepared_root": str(Path(args.prepared_root)),
+            "row_count": manifest.row_count,
+        },
+    )
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
@@ -753,6 +859,7 @@ def cmd_validate_prepared_library(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="spectral-library")
     parser.add_argument("--json-errors", action="store_true", help="Emit machine-readable JSON errors.")
+    parser.add_argument("--json-logs", action="store_true", help="Emit structured JSON log events to stderr.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
