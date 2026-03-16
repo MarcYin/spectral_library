@@ -138,10 +138,10 @@ batch = mapper.map_reflectance_batch(
 )
 ```
 
-The bundled example runtime is a hold-out design: those four query targets are
-simulated from the synthetic catalogue, but omitted from the committed
-`examples/official_mapping/siac` candidate library so the mapper cannot return
-the identical row as its own neighbor.
+The bundled example runtime keeps the full synthetic catalogue. The published
+CLI examples then self-exclude the matching `sample_name` for each query so the
+mapper cannot return the identical row as its own neighbor while still keeping
+the rest of the catalogue available.
 
 ## Result Objects
 

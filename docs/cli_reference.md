@@ -77,6 +77,8 @@ Optional arguments:
 | --- | --- |
 | `--k` | nearest-neighbor count, default `10` |
 | `--min-valid-bands` | minimum valid source bands per segment, default `1` |
+| `--exclude-row-id` | exclude one or more prepared row ids from neighbor selection |
+| `--exclude-sample-name` | exclude one or more prepared `sample_name` values from neighbor selection |
 
 Single-sample input layouts:
 
@@ -118,6 +120,9 @@ Optional arguments:
 | --- | --- |
 | `--k` | nearest-neighbor count |
 | `--min-valid-bands` | minimum valid source bands per segment |
+| `--exclude-row-id` | exclude one or more prepared row ids for every batch sample |
+| `--exclude-sample-name` | exclude one or more prepared `sample_name` values for every batch sample |
+| `--self-exclude-sample-id` | exclude rows whose prepared `sample_name` matches each batch `sample_id` |
 | `--diagnostics-output` | optional JSON summary path |
 
 Batch input layouts:
