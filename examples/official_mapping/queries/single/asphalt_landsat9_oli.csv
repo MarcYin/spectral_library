@@ -1,0 +1,8 @@
+band_id,reflectance
+ultra_blue,0.0525357
+blue,0.05480619
+green,0.05976002
+red,0.06666077
+nir,0.08302772
+swir1,0.10966986
+swir2,0.13940345

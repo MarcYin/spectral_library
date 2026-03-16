@@ -22,9 +22,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.01818689327008775,
-      "rmse": 0.023369018202628895,
-      "sample_count": 3
+      "mean_abs_error": 0.05616751706377059,
+      "rmse": 0.06915876602257409,
+      "sample_count": 4
     },
     {
       "source_sensor": "modis_terra",
@@ -40,9 +40,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.018057553159265462,
-      "rmse": 0.023269720103769254,
-      "sample_count": 3
+      "mean_abs_error": 0.05676586342967322,
+      "rmse": 0.06955626233808276,
+      "sample_count": 4
     },
     {
       "source_sensor": "modis_terra",
@@ -58,9 +58,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.018061527359037554,
-      "rmse": 0.02327607116347093,
-      "sample_count": 3
+      "mean_abs_error": 0.056768811649591314,
+      "rmse": 0.06955839481617104,
+      "sample_count": 4
     },
     {
       "source_sensor": "sentinel2a_msi",
@@ -76,9 +76,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.018066858630409594,
-      "rmse": 0.023321807017696927,
-      "sample_count": 3
+      "mean_abs_error": 0.0524021348369413,
+      "rmse": 0.06922422185115487,
+      "sample_count": 4
     },
     {
       "source_sensor": "sentinel2a_msi",
@@ -94,9 +94,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.018057553159265462,
-      "rmse": 0.023269720103769254,
-      "sample_count": 3
+      "mean_abs_error": 0.05172211593857917,
+      "rmse": 0.06965340751740881,
+      "sample_count": 4
     },
     {
       "source_sensor": "sentinel2a_msi",
@@ -112,9 +112,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.018061527359037554,
-      "rmse": 0.02327607116347093,
-      "sample_count": 3
+      "mean_abs_error": 0.051724022730690794,
+      "rmse": 0.06965326572092559,
+      "sample_count": 4
     },
     {
       "source_sensor": "landsat8_oli",
@@ -130,9 +130,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.01770415151365698,
-      "rmse": 0.023062490583929517,
-      "sample_count": 3
+      "mean_abs_error": 0.0524021348369413,
+      "rmse": 0.06922422185115487,
+      "sample_count": 4
     },
     {
       "source_sensor": "landsat8_oli",
@@ -148,9 +148,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.01783470782052488,
-      "rmse": 0.023075794705019564,
-      "sample_count": 3
+      "mean_abs_error": 0.051193711333912324,
+      "rmse": 0.06947164079665868,
+      "sample_count": 4
     },
     {
       "source_sensor": "landsat8_oli",
@@ -166,9 +166,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.017678997204780236,
-      "rmse": 0.02293525412188896,
-      "sample_count": 3
+      "mean_abs_error": 0.051724022730690794,
+      "rmse": 0.06965326572092559,
+      "sample_count": 4
     },
     {
       "source_sensor": "landsat9_oli",
@@ -184,9 +184,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.01770415151365698,
-      "rmse": 0.023062490583929517,
-      "sample_count": 3
+      "mean_abs_error": 0.0524021348369413,
+      "rmse": 0.06922422185115487,
+      "sample_count": 4
     },
     {
       "source_sensor": "landsat9_oli",
@@ -202,9 +202,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.01783470782052488,
-      "rmse": 0.023075794705019564,
-      "sample_count": 3
+      "mean_abs_error": 0.051193711333912324,
+      "rmse": 0.06947164079665868,
+      "sample_count": 4
     },
     {
       "source_sensor": "landsat9_oli",
@@ -220,9 +220,9 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.017679481542799042,
-      "rmse": 0.02293618523226883,
-      "sample_count": 3
+      "mean_abs_error": 0.05172211593857917,
+      "rmse": 0.06965340751740881,
+      "sample_count": 4
     }
   ]
 }

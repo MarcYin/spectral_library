@@ -5,14 +5,18 @@ This page shows the bundled cross-sensor example runtime built from official
 relative spectral response sources for Terra MODIS, Sentinel-2A MSI, Landsat 8
 OLI, and Landsat 9 OLI.
 
-It is the fastest way to see what the public package does with real sensor SRFs
-before you prepare your own runtime.
+It uses four held-out class targets drawn from the synthetic catalogue itself:
+one vegetation spectrum, one soil spectrum, one water spectrum, and one urban
+spectrum. Those targets are simulated to each source sensor, but omitted from
+the prepared runtime so the mapper must reconstruct them from the remaining
+candidate spectra.
 
 <div class="fact-grid">
   <div><strong>4 sensors</strong><span>MODIS, Sentinel-2A, Landsat 8, Landsat 9</span></div>
-  <div><strong>7 semantic bands</strong><span>`ultra_blue`, `blue`, `green`, `red`, `nir`, `swir1`, `swir2`</span></div>
+  <div><strong>4 held-out targets</strong><span>vegetation, soil, water, urban</span></div>
+  <div><strong>6 runtime candidates</strong><span>dry_grass, shrubland, dark_soil, concrete, clear_water, gypsum_sand</span></div>
   <div><strong>Scored subset</strong><span>blue, green, red, nir, swir1, swir2</span></div>
-  <div><strong>Regenerated</strong><span>2026-03-15 UTC</span></div>
+  <div><strong>Regenerated</strong><span>2026-03-16 UTC</span></div>
 </div>
 
 Related pages:
@@ -30,7 +34,7 @@ Related pages:
 | Landsat 9 OLI | USGS [Spectral Characteristics Viewer band JSON](https://landsat.usgs.gov/spectral-characteristics-viewer) | [`examples/official_mapping/srfs/landsat9_oli.json`](../examples/official_mapping/srfs/landsat9_oli.json) |
 
 The reduced JSON files and derived figures were regenerated from the official
-upstream assets on `2026-03-15` UTC. Provenance, download timestamps,
+upstream assets on `2026-03-16` UTC. Provenance, download timestamps,
 and SHA-256 hashes are stored in
 [`examples/official_mapping/official_source_manifest.json`](../examples/official_mapping/official_source_manifest.json).
 
@@ -43,10 +47,32 @@ Recorded upstream artifacts for this commit:
 
 ## What The Example Demonstrates
 
+- held-out reconstruction on exact library spectra rather than synthetic mixtures
 - target-sensor mapping between MODIS, Sentinel-2A, Landsat 8, and Landsat 9
 - batch mapping from one CSV input
 - full-spectrum reconstruction over `400-2500 nm`
 - provenance tracking for official SRF inputs
+
+## Held-Out Target Design
+
+| Sample id | Class | What it demonstrates |
+| --- | --- | --- |
+| `dense_vegetation` | `vegetation` | Dense green canopy spectrum withheld from the example runtime candidate set. |
+| `bright_soil` | `soil` | Bright mineral soil spectrum withheld from the example runtime candidate set. |
+| `turbid_water` | `water` | Turbid water spectrum withheld from the example runtime candidate set. |
+| `asphalt` | `urban` | Asphalt urban-material spectrum withheld from the example runtime candidate set. |
+
+The example `siac/` runtime contains only these candidate spectra:
+
+- `dry_grass`
+- `shrubland`
+- `dark_soil`
+- `concrete`
+- `clear_water`
+- `gypsum_sand`
+
+That means the exact target spectra cannot appear in the neighbor list. The
+docs therefore show a real hold-out reconstruction problem, not a self-match.
 
 ## Band Correspondence
 
@@ -108,8 +134,8 @@ Selected official band responses used by the example runtime:
 
 ![Selected official band responses](assets/official_sensor_selected_bands.png)
 
-Mean absolute target-band error across three out-of-library synthetic truth
-spectra, evaluated only on the common comparable subset
+Mean absolute target-band error across the four held-out class targets,
+evaluated only on the common comparable subset
 `blue`, `green`, `red`, `nir`, `swir1`, `swir2`:
 
 ![Pairwise mapping error](assets/official_pairwise_band_mae.png)
@@ -117,119 +143,120 @@ spectra, evaluated only on the common comparable subset
 Observed range in the bundled example:
 
 - lowest comparable mean absolute band error:
-  `0.0177` for Landsat 8 -> Landsat 9
+  `0.0512` for Landsat 8 -> Sentinel-2A
 - highest comparable mean absolute band error:
-  `0.0182` for MODIS Terra -> Sentinel-2A
+  `0.0568` for MODIS Terra -> Landsat 9
 
 The full pairwise summary, including `evaluated_band_ids` and
 `evaluated_band_count`, is in
 [`examples/official_mapping/results/metrics/pairwise_band_metrics.csv`](../examples/official_mapping/results/metrics/pairwise_band_metrics.csv).
 
+Held-out Landsat 8 to Sentinel-2A batch comparison across vegetation, soil,
+water, and urban targets:
+
+![Held-out batch comparison](assets/official_holdout_batch_examples.png)
+
 ## Single-Sample Mapping Runs
 
-MODIS Terra to Sentinel-2A:
+MODIS Terra to Sentinel-2A on the vegetation holdout:
 
 ```bash
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
   --source-sensor modis_terra \
   --target-sensor sentinel2a_msi \
-  --input examples/official_mapping/queries/single/veg_soil_mix_modis_terra.csv \
+  --input examples/official_mapping/queries/single/dense_vegetation_modis_terra.csv \
   --output-mode target_sensor \
   --k 3 \
-  --output build/official_mapping_runtime/veg_soil_mix_modis_to_sentinel2a.csv
+  --output build/official_mapping_runtime/dense_vegetation_modis_to_sentinel2a.csv
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/veg_soil_mix_modis_to_sentinel2a.csv`](../examples/official_mapping/results/selected/veg_soil_mix_modis_to_sentinel2a.csv)
+[`examples/official_mapping/results/selected/dense_vegetation_modis_to_sentinel2a.csv`](../examples/official_mapping/results/selected/dense_vegetation_modis_to_sentinel2a.csv)
 
 | Band | Truth | Mapped |
 | --- | --- | --- |
-| `ultra_blue` | `0.0767` | `0.0588` |
-| `blue` | `0.0873` | `0.0718` |
-| `green` | `0.1148` | `0.1053` |
-| `red` | `0.0796` | `0.0581` |
-| `nir` | `0.4507` | `0.4521` |
-| `swir1` | `0.4124` | `0.3845` |
-| `swir2` | `0.3055` | `0.2970` |
+| `ultra_blue` | `0.0351` | `0.1065` |
+| `blue` | `0.0479` | `0.1182` |
+| `green` | `0.0845` | `0.1436` |
+| `red` | `0.0268` | `0.1173` |
+| `nir` | `0.5631` | `0.3316` |
+| `swir1` | `0.4505` | `0.3367` |
+| `swir2` | `0.2858` | `0.2764` |
 
 The `ultra_blue` band is shown in the example table because it is a real target
 output for Sentinel-2A, but it is intentionally excluded from the pairwise
 heatmap so every source-target cell is scored on the same comparable six-band
 subset.
 
-Visual comparison for that query:
-
-![MODIS to Sentinel-2A example](assets/official_modis_to_sentinel2a_example.png)
-
-Sentinel-2A to Landsat 9:
+Sentinel-2A to Landsat 9 on the soil holdout:
 
 ```bash
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
   --source-sensor sentinel2a_msi \
   --target-sensor landsat9_oli \
-  --input examples/official_mapping/queries/single/veg_soil_mix_sentinel2a_msi.csv \
+  --input examples/official_mapping/queries/single/bright_soil_sentinel2a_msi.csv \
   --output-mode target_sensor \
   --k 3 \
-  --output build/official_mapping_runtime/veg_soil_mix_sentinel2a_to_landsat9.csv
+  --output build/official_mapping_runtime/bright_soil_sentinel2a_to_landsat9.csv
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/veg_soil_mix_sentinel2a_to_landsat9.csv`](../examples/official_mapping/results/selected/veg_soil_mix_sentinel2a_to_landsat9.csv)
+[`examples/official_mapping/results/selected/bright_soil_sentinel2a_to_landsat9.csv`](../examples/official_mapping/results/selected/bright_soil_sentinel2a_to_landsat9.csv)
 
-Landsat 8 to MODIS:
+Landsat 8 to MODIS on the urban holdout:
 
 ```bash
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
   --source-sensor landsat8_oli \
   --target-sensor modis_terra \
-  --input examples/official_mapping/queries/single/veg_soil_mix_landsat8_oli.csv \
+  --input examples/official_mapping/queries/single/asphalt_landsat8_oli.csv \
   --output-mode target_sensor \
   --k 3 \
-  --output build/official_mapping_runtime/veg_soil_mix_landsat8_to_modis.csv
+  --output build/official_mapping_runtime/asphalt_landsat8_to_modis.csv
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/veg_soil_mix_landsat8_to_modis.csv`](../examples/official_mapping/results/selected/veg_soil_mix_landsat8_to_modis.csv)
+[`examples/official_mapping/results/selected/asphalt_landsat8_to_modis.csv`](../examples/official_mapping/results/selected/asphalt_landsat8_to_modis.csv)
 
 ## Batch Example
 
-The bundled batch CSV uses Landsat 8 as the source sensor for three truth
-mixtures:
+The bundled batch CSV uses Landsat 8 as the source sensor for the four held-out
+targets:
 
 ```bash
 spectral-library map-reflectance-batch \
   --prepared-root build/official_mapping_runtime \
   --source-sensor landsat8_oli \
   --target-sensor sentinel2a_msi \
-  --input examples/official_mapping/queries/batch/landsat8_truth_batch.csv \
+  --input examples/official_mapping/queries/batch/landsat8_holdout_batch.csv \
   --output-mode target_sensor \
   --k 3 \
-  --output build/official_mapping_runtime/landsat8_to_sentinel2a_batch.csv \
-  --diagnostics-output build/official_mapping_runtime/landsat8_to_sentinel2a_batch_diagnostics.json
+  --output build/official_mapping_runtime/landsat8_to_sentinel2a_holdout_batch.csv \
+  --diagnostics-output build/official_mapping_runtime/landsat8_to_sentinel2a_holdout_batch_diagnostics.json
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch.csv`](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch.csv)
+[`examples/official_mapping/results/selected/landsat8_to_sentinel2a_holdout_batch.csv`](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_holdout_batch.csv)
 
 Reference diagnostics:
-[`examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch_diagnostics.json`](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch_diagnostics.json)
+[`examples/official_mapping/results/selected/landsat8_to_sentinel2a_holdout_batch_diagnostics.json`](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_holdout_batch_diagnostics.json)
 
 ## Full-Spectrum Reconstruction
 
-Reconstruct the full `400-2500 nm` spectrum from the Sentinel-2A query:
+Reconstruct the full `400-2500 nm` spectrum from the water holdout:
 
 ```bash
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
   --source-sensor sentinel2a_msi \
-  --input examples/official_mapping/queries/single/veg_soil_mix_sentinel2a_msi.csv \
+  --input examples/official_mapping/queries/single/turbid_water_sentinel2a_msi.csv \
   --output-mode full_spectrum \
   --k 3 \
-  --output build/official_mapping_runtime/veg_soil_mix_sentinel2a_full_spectrum.csv
+  --output build/official_mapping_runtime/turbid_water_sentinel2a_full_spectrum.csv
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/veg_soil_mix_sentinel2a_full_spectrum.csv`](../examples/official_mapping/results/selected/veg_soil_mix_sentinel2a_full_spectrum.csv)
+[`examples/official_mapping/results/selected/turbid_water_sentinel2a_full_spectrum.csv`](../examples/official_mapping/results/selected/turbid_water_sentinel2a_full_spectrum.csv)

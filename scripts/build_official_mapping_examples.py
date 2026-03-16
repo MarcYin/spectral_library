@@ -98,6 +98,21 @@ class DownloadedArtifact:
         return payload
 
 
+@dataclass(frozen=True)
+class HeldOutTarget:
+    sample_id: str
+    landcover_group: str
+    title: str
+    description: str
+
+
+@dataclass(frozen=True)
+class SelectedExampleRun:
+    sample_id: str
+    source_sensor: str
+    target_sensor: str
+
+
 OFFICIAL_SENSORS = (
     SensorSelection(
         sensor_id="modis_terra",
@@ -192,6 +207,96 @@ PLOT_WINDOWS = {
     "swir1": (1540, 1685),
     "swir2": (2060, 2240),
 }
+HELD_OUT_TARGETS = (
+    HeldOutTarget(
+        sample_id="dense_vegetation",
+        landcover_group="vegetation",
+        title="Vegetation holdout",
+        description="Dense green canopy spectrum withheld from the example runtime candidate set.",
+    ),
+    HeldOutTarget(
+        sample_id="bright_soil",
+        landcover_group="soil",
+        title="Soil holdout",
+        description="Bright mineral soil spectrum withheld from the example runtime candidate set.",
+    ),
+    HeldOutTarget(
+        sample_id="turbid_water",
+        landcover_group="water",
+        title="Water holdout",
+        description="Turbid water spectrum withheld from the example runtime candidate set.",
+    ),
+    HeldOutTarget(
+        sample_id="asphalt",
+        landcover_group="urban",
+        title="Urban holdout",
+        description="Asphalt urban-material spectrum withheld from the example runtime candidate set.",
+    ),
+)
+HELD_OUT_TARGETS_BY_ID = {target.sample_id: target for target in HELD_OUT_TARGETS}
+LANDCOVER_GROUP_BY_SAMPLE = {
+    "dense_vegetation": "vegetation",
+    "dry_grass": "vegetation",
+    "shrubland": "vegetation",
+    "bright_soil": "soil",
+    "dark_soil": "soil",
+    "gypsum_sand": "soil",
+    "clear_water": "water",
+    "turbid_water": "water",
+    "concrete": "urban",
+    "asphalt": "urban",
+}
+SENSOR_FILE_LABELS = {
+    "modis_terra": "modis",
+    "sentinel2a_msi": "sentinel2a",
+    "landsat8_oli": "landsat8",
+    "landsat9_oli": "landsat9",
+}
+SELECTED_TARGET_SENSOR_RUNS = (
+    SelectedExampleRun("dense_vegetation", "modis_terra", "sentinel2a_msi"),
+    SelectedExampleRun("bright_soil", "sentinel2a_msi", "landsat9_oli"),
+    SelectedExampleRun("asphalt", "landsat8_oli", "modis_terra"),
+)
+FULL_SPECTRUM_SAMPLE_ID = "turbid_water"
+FULL_SPECTRUM_SOURCE_SENSOR = "sentinel2a_msi"
+HOLDOUT_BATCH_SOURCE_SENSOR = "landsat8_oli"
+HOLDOUT_BATCH_TARGET_SENSOR = "sentinel2a_msi"
+
+
+def _runtime_candidate_sample_ids(library_spectra: dict[str, np.ndarray]) -> list[str]:
+    return [sample_id for sample_id in library_spectra if sample_id not in HELD_OUT_TARGETS_BY_ID]
+
+
+def _single_query_path(sample_id: str, sensor_id: str) -> Path:
+    return QUERIES_ROOT / "single" / f"{sample_id}_{sensor_id}.csv"
+
+
+def _single_target_output_path(sample_id: str, source_sensor: str, target_sensor: str) -> Path:
+    return RESULTS_ROOT / "selected" / (
+        f"{sample_id}_{SENSOR_FILE_LABELS[source_sensor]}_to_{SENSOR_FILE_LABELS[target_sensor]}.csv"
+    )
+
+
+def _full_spectrum_output_path(sample_id: str, source_sensor: str) -> Path:
+    return RESULTS_ROOT / "selected" / f"{sample_id}_{SENSOR_FILE_LABELS[source_sensor]}_full_spectrum.csv"
+
+
+def _holdout_batch_query_path() -> Path:
+    return QUERIES_ROOT / "batch" / f"{SENSOR_FILE_LABELS[HOLDOUT_BATCH_SOURCE_SENSOR]}_holdout_batch.csv"
+
+
+def _holdout_batch_output_path() -> Path:
+    return RESULTS_ROOT / "selected" / (
+        f"{SENSOR_FILE_LABELS[HOLDOUT_BATCH_SOURCE_SENSOR]}_to_{SENSOR_FILE_LABELS[HOLDOUT_BATCH_TARGET_SENSOR]}_holdout_batch.csv"
+    )
+
+
+def _holdout_batch_diagnostics_path() -> Path:
+    return RESULTS_ROOT / "selected" / (
+        f"{SENSOR_FILE_LABELS[HOLDOUT_BATCH_SOURCE_SENSOR]}_to_{SENSOR_FILE_LABELS[HOLDOUT_BATCH_TARGET_SENSOR]}_holdout_batch_diagnostics.json"
+    )
+
+
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -447,12 +552,8 @@ def build_library_spectra() -> dict[str, np.ndarray]:
     }
 
 
-def build_truth_spectra(library_spectra: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    return {
-        "veg_soil_mix": _clip_reflectance(0.68 * library_spectra["dense_vegetation"] + 0.32 * library_spectra["bright_soil"]),
-        "urban_soil_mix": _clip_reflectance(0.55 * library_spectra["concrete"] + 0.45 * library_spectra["dark_soil"]),
-        "water_edge_mix": _clip_reflectance(0.58 * library_spectra["turbid_water"] + 0.42 * library_spectra["dry_grass"]),
-    }
+def build_holdout_truth_spectra(library_spectra: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    return {target.sample_id: library_spectra[target.sample_id] for target in HELD_OUT_TARGETS}
 
 
 def _write_siac_fixture(library_spectra: dict[str, np.ndarray]) -> None:
@@ -467,7 +568,7 @@ def _write_siac_fixture(library_spectra: dict[str, np.ndarray]) -> None:
             "spectrum_id": sample_name,
             "sample_name": sample_name,
             "source_name": "Official sensor example synthetic library",
-            "landcover_group": sample_name,
+            "landcover_group": LANDCOVER_GROUP_BY_SAMPLE.get(sample_name, "unclassified"),
         }
         for sample_name in library_spectra
     ]
@@ -633,100 +734,61 @@ def _write_selected_cli_outputs() -> None:
     selected_root = RESULTS_ROOT / "selected"
     selected_root.mkdir(parents=True, exist_ok=True)
 
-    query_map = {
-        "modis_terra": QUERIES_ROOT / "single" / "veg_soil_mix_modis_terra.csv",
-        "sentinel2a_msi": QUERIES_ROOT / "single" / "veg_soil_mix_sentinel2a_msi.csv",
-        "landsat8_oli": QUERIES_ROOT / "single" / "veg_soil_mix_landsat8_oli.csv",
-    }
-
     with tempfile.TemporaryDirectory(prefix="official_mapping_runtime_", dir=str(TMP_ROOT)) as tmpdir:
         prepared_root = Path(tmpdir) / "prepared"
         _prepare_example_runtime(prepared_root)
 
+        for example in SELECTED_TARGET_SENSOR_RUNS:
+            _run_cli(
+                "map-reflectance",
+                "--prepared-root",
+                str(prepared_root),
+                "--source-sensor",
+                example.source_sensor,
+                "--target-sensor",
+                example.target_sensor,
+                "--input",
+                str(_single_query_path(example.sample_id, example.source_sensor)),
+                "--output-mode",
+                "target_sensor",
+                "--k",
+                "3",
+                "--output",
+                str(_single_target_output_path(example.sample_id, example.source_sensor, example.target_sensor)),
+            )
         _run_cli(
             "map-reflectance",
             "--prepared-root",
             str(prepared_root),
             "--source-sensor",
-            "modis_terra",
-            "--target-sensor",
-            "sentinel2a_msi",
+            FULL_SPECTRUM_SOURCE_SENSOR,
             "--input",
-            str(query_map["modis_terra"]),
-            "--output-mode",
-            "target_sensor",
-            "--k",
-            "3",
-            "--output",
-            str(selected_root / "veg_soil_mix_modis_to_sentinel2a.csv"),
-        )
-        _run_cli(
-            "map-reflectance",
-            "--prepared-root",
-            str(prepared_root),
-            "--source-sensor",
-            "sentinel2a_msi",
-            "--target-sensor",
-            "landsat9_oli",
-            "--input",
-            str(query_map["sentinel2a_msi"]),
-            "--output-mode",
-            "target_sensor",
-            "--k",
-            "3",
-            "--output",
-            str(selected_root / "veg_soil_mix_sentinel2a_to_landsat9.csv"),
-        )
-        _run_cli(
-            "map-reflectance",
-            "--prepared-root",
-            str(prepared_root),
-            "--source-sensor",
-            "landsat8_oli",
-            "--target-sensor",
-            "modis_terra",
-            "--input",
-            str(query_map["landsat8_oli"]),
-            "--output-mode",
-            "target_sensor",
-            "--k",
-            "3",
-            "--output",
-            str(selected_root / "veg_soil_mix_landsat8_to_modis.csv"),
-        )
-        _run_cli(
-            "map-reflectance",
-            "--prepared-root",
-            str(prepared_root),
-            "--source-sensor",
-            "sentinel2a_msi",
-            "--input",
-            str(query_map["sentinel2a_msi"]),
+            str(_single_query_path(FULL_SPECTRUM_SAMPLE_ID, FULL_SPECTRUM_SOURCE_SENSOR)),
             "--output-mode",
             "full_spectrum",
             "--k",
             "3",
             "--output",
-            str(selected_root / "veg_soil_mix_sentinel2a_full_spectrum.csv"),
+            str(_full_spectrum_output_path(FULL_SPECTRUM_SAMPLE_ID, FULL_SPECTRUM_SOURCE_SENSOR)),
         )
         _run_cli(
             "map-reflectance-batch",
             "--prepared-root",
             str(prepared_root),
             "--source-sensor",
-            "landsat8_oli",
+            HOLDOUT_BATCH_SOURCE_SENSOR,
             "--target-sensor",
-            "sentinel2a_msi",
+            HOLDOUT_BATCH_TARGET_SENSOR,
             "--input",
-            str(QUERIES_ROOT / "batch" / "landsat8_truth_batch.csv"),
+            str(_holdout_batch_query_path()),
             "--output-mode",
             "target_sensor",
             "--k",
             "3",
             "--output",
-            str(selected_root / "landsat8_to_sentinel2a_batch.csv"),
+            str(_holdout_batch_output_path()),
             "--diagnostics-output",
-            str(selected_root / "landsat8_to_sentinel2a_batch_diagnostics.json"),
+            str(_holdout_batch_diagnostics_path()),
         )
 
 
@@ -896,7 +958,7 @@ def _plot_pairwise_heatmap(metrics: dict[tuple[str, str], dict[str, float]]) -> 
     image = axis.imshow(matrix, cmap="YlOrRd")
     axis.set_xticks(range(len(order)), [SENSOR_BY_ID[sensor_id].short_label for sensor_id in order], rotation=20, ha="right")
     axis.set_yticks(range(len(order)), [SENSOR_BY_ID[sensor_id].short_label for sensor_id in order])
-    axis.set_title("Mean absolute error on the common blue-green-red-nir-swir1-swir2 subset")
+    axis.set_title("Mean absolute error on four held-out class targets and the common six-band subset")
     for row_index in range(len(order)):
         for column_index in range(len(order)):
             if np.isnan(matrix[row_index, column_index]):
@@ -917,25 +979,46 @@ def _plot_pairwise_heatmap(metrics: dict[tuple[str, str], dict[str, float]]) -> 
     plt.close(figure)
 
 
-def _plot_modis_to_sentinel_example(sensor_payloads: dict[str, dict[str, object]], truth_rows_by_sensor: dict[str, dict[str, dict[str, float]]]) -> None:
-    result_path = RESULTS_ROOT / "selected" / "veg_soil_mix_modis_to_sentinel2a.csv"
-    rows = _load_result_rows(result_path)
-    mapped = {row["band_id"]: float(row["reflectance"]) for row in rows}
-    truth = truth_rows_by_sensor["sentinel2a_msi"]["veg_soil_mix"]
-    band_ids = [band["band_id"] for band in sensor_payloads["sentinel2a_msi"]["bands"]]  # type: ignore[index]
+def _plot_holdout_batch_examples(
+    sensor_payloads: dict[str, dict[str, object]],
+    truth_rows_by_sensor: dict[str, dict[str, dict[str, float]]],
+) -> None:
+    rows = _load_result_rows(_holdout_batch_output_path())
+    mapped_by_sample = {
+        row["sample_id"]: {
+            band_id: float(value)
+            for band_id, value in row.items()
+            if band_id != "sample_id" and value not in (None, "")
+        }
+        for row in rows
+    }
+    band_ids = [band["band_id"] for band in sensor_payloads[HOLDOUT_BATCH_TARGET_SENSOR]["bands"]]  # type: ignore[index]
 
+    figure, axes = plt.subplots(2, 2, figsize=(13, 8), constrained_layout=True)
     x = np.arange(len(band_ids))
     width = 0.38
-    figure, axis = plt.subplots(figsize=(9.5, 4.8))
-    axis.bar(x - width / 2, [truth[band_id] for band_id in band_ids], width=width, label="Truth", color="#2a9d8f")
-    axis.bar(x + width / 2, [mapped[band_id] for band_id in band_ids], width=width, label="Mapped from MODIS", color="#e76f51")
-    axis.set_xticks(x, [band_id.replace("_", "\n") for band_id in band_ids])
-    axis.set_ylabel("Reflectance")
-    axis.set_title("MODIS Terra to Sentinel-2A example on the veg_soil_mix query")
-    axis.grid(axis="y", alpha=0.25)
-    axis.legend(frameon=False)
-    figure.tight_layout()
-    figure.savefig(DOCS_ASSETS_ROOT / "official_modis_to_sentinel2a_example.png", dpi=180)
+
+    for axis, target in zip(axes.flatten(), HELD_OUT_TARGETS):
+        truth = truth_rows_by_sensor[HOLDOUT_BATCH_TARGET_SENSOR][target.sample_id]
+        mapped = mapped_by_sample[target.sample_id]
+        axis.bar(x - width / 2, [truth[band_id] for band_id in band_ids], width=width, label="Truth", color="#2a9d8f")
+        axis.bar(
+            x + width / 2,
+            [mapped[band_id] for band_id in band_ids],
+            width=width,
+            label=f"Mapped from {SENSOR_BY_ID[HOLDOUT_BATCH_SOURCE_SENSOR].short_label}",
+            color="#e76f51",
+        )
+        axis.set_xticks(x, [band_id.replace("_", "\n") for band_id in band_ids])
+        axis.set_ylim(0, 0.85)
+        axis.set_title(f"{target.title}: `{target.sample_id}`")
+        axis.grid(axis="y", alpha=0.25)
+
+    axes[0, 0].set_ylabel("Reflectance")
+    axes[1, 0].set_ylabel("Reflectance")
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="upper center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 1.02))
+    figure.savefig(DOCS_ASSETS_ROOT / "official_holdout_batch_examples.png", dpi=180)
     plt.close(figure)
 
 
@@ -952,9 +1035,20 @@ Contents:
 
 - `official_source_manifest.json`: upstream provenance for the selected band subsets
 - `srfs/`: package-ready sensor JSON files for the selected bands
-- `siac/`: a compact synthetic SIAC-style hyperspectral library on the public 400-2500 nm grid
-- `queries/`: single-sample and batch query CSVs used in the docs
+- `siac/`: a compact synthetic SIAC-style candidate library on the public 400-2500 nm grid
+- `queries/`: held-out single-sample and batch query CSVs used in the docs
 - `results/`: generated mapping outputs, truth tables, and pairwise error summaries
+
+The public examples use four held-out targets from the synthetic catalogue:
+
+- `dense_vegetation`
+- `bright_soil`
+- `turbid_water`
+- `asphalt`
+
+Those target spectra are simulated to each source sensor, but they are omitted
+from the example `siac/` runtime so the mapper cannot retrieve the identical row
+as its own nearest neighbor.
 
 Regenerate everything from the official upstream sources with:
 
@@ -987,16 +1081,24 @@ def _render_official_sensor_examples_doc(
     *,
     generated_at_utc: str,
     source_artifacts_by_sensor: dict[str, list[dict[str, object]]],
+    runtime_candidate_samples: list[str],
     truth_rows_by_sensor: dict[str, dict[str, dict[str, float]]],
 ) -> str:
     metrics_rows = _load_metric_rows()
     lowest = min(metrics_rows, key=lambda row: float(row["mean_abs_error"]))
     highest = max(metrics_rows, key=lambda row: float(row["mean_abs_error"]))
-
-    modis_to_s2_rows = _load_result_rows(RESULTS_ROOT / "selected" / "veg_soil_mix_modis_to_sentinel2a.csv")
-    mapped_modis_to_s2 = {row["band_id"]: float(row["reflectance"]) for row in modis_to_s2_rows}
-    truth_modis_to_s2 = truth_rows_by_sensor["sentinel2a_msi"]["veg_soil_mix"]
+    primary_example = SELECTED_TARGET_SENSOR_RUNS[0]
+    primary_rows = _load_result_rows(
+        _single_target_output_path(
+            primary_example.sample_id,
+            primary_example.source_sensor,
+            primary_example.target_sensor,
+        )
+    )
+    mapped_primary = {row["band_id"]: float(row["reflectance"]) for row in primary_rows}
+    truth_primary = truth_rows_by_sensor[primary_example.target_sensor][primary_example.sample_id]
     metric_band_text = ", ".join(f"`{band_id}`" for band_id in COMPARABLE_PAIRWISE_BANDS)
+
     prepare_runtime_block = _shell_block(
         "spectral-library prepare-mapping-library",
         "  --siac-root examples/official_mapping/siac",
@@ -1011,55 +1113,41 @@ def _render_official_sensor_examples_doc(
         "spectral-library validate-prepared-library",
         "  --prepared-root build/official_mapping_runtime",
     )
-    modis_to_s2_block = _shell_block(
-        "spectral-library map-reflectance",
-        "  --prepared-root build/official_mapping_runtime",
-        "  --source-sensor modis_terra",
-        "  --target-sensor sentinel2a_msi",
-        "  --input examples/official_mapping/queries/single/veg_soil_mix_modis_terra.csv",
-        "  --output-mode target_sensor",
-        "  --k 3",
-        "  --output build/official_mapping_runtime/veg_soil_mix_modis_to_sentinel2a.csv",
-    )
-    s2_to_l9_block = _shell_block(
-        "spectral-library map-reflectance",
-        "  --prepared-root build/official_mapping_runtime",
-        "  --source-sensor sentinel2a_msi",
-        "  --target-sensor landsat9_oli",
-        "  --input examples/official_mapping/queries/single/veg_soil_mix_sentinel2a_msi.csv",
-        "  --output-mode target_sensor",
-        "  --k 3",
-        "  --output build/official_mapping_runtime/veg_soil_mix_sentinel2a_to_landsat9.csv",
-    )
-    l8_to_modis_block = _shell_block(
-        "spectral-library map-reflectance",
-        "  --prepared-root build/official_mapping_runtime",
-        "  --source-sensor landsat8_oli",
-        "  --target-sensor modis_terra",
-        "  --input examples/official_mapping/queries/single/veg_soil_mix_landsat8_oli.csv",
-        "  --output-mode target_sensor",
-        "  --k 3",
-        "  --output build/official_mapping_runtime/veg_soil_mix_landsat8_to_modis.csv",
-    )
+
+    def _target_sensor_block(example: SelectedExampleRun) -> str:
+        return _shell_block(
+            "spectral-library map-reflectance",
+            "  --prepared-root build/official_mapping_runtime",
+            f"  --source-sensor {example.source_sensor}",
+            f"  --target-sensor {example.target_sensor}",
+            f"  --input examples/official_mapping/queries/single/{example.sample_id}_{example.source_sensor}.csv",
+            "  --output-mode target_sensor",
+            "  --k 3",
+            (
+                "  --output build/official_mapping_runtime/"
+                f"{_single_target_output_path(example.sample_id, example.source_sensor, example.target_sensor).name}"
+            ),
+        )
+
     batch_block = _shell_block(
         "spectral-library map-reflectance-batch",
         "  --prepared-root build/official_mapping_runtime",
-        "  --source-sensor landsat8_oli",
-        "  --target-sensor sentinel2a_msi",
-        "  --input examples/official_mapping/queries/batch/landsat8_truth_batch.csv",
+        f"  --source-sensor {HOLDOUT_BATCH_SOURCE_SENSOR}",
+        f"  --target-sensor {HOLDOUT_BATCH_TARGET_SENSOR}",
+        f"  --input examples/official_mapping/queries/batch/{_holdout_batch_query_path().name}",
         "  --output-mode target_sensor",
         "  --k 3",
-        "  --output build/official_mapping_runtime/landsat8_to_sentinel2a_batch.csv",
-        "  --diagnostics-output build/official_mapping_runtime/landsat8_to_sentinel2a_batch_diagnostics.json",
+        f"  --output build/official_mapping_runtime/{_holdout_batch_output_path().name}",
+        f"  --diagnostics-output build/official_mapping_runtime/{_holdout_batch_diagnostics_path().name}",
     )
     full_spectrum_block = _shell_block(
         "spectral-library map-reflectance",
         "  --prepared-root build/official_mapping_runtime",
-        "  --source-sensor sentinel2a_msi",
-        "  --input examples/official_mapping/queries/single/veg_soil_mix_sentinel2a_msi.csv",
+        f"  --source-sensor {FULL_SPECTRUM_SOURCE_SENSOR}",
+        f"  --input examples/official_mapping/queries/single/{FULL_SPECTRUM_SAMPLE_ID}_{FULL_SPECTRUM_SOURCE_SENSOR}.csv",
         "  --output-mode full_spectrum",
         "  --k 3",
-        "  --output build/official_mapping_runtime/veg_soil_mix_sentinel2a_full_spectrum.csv",
+        f"  --output build/official_mapping_runtime/{_full_spectrum_output_path(FULL_SPECTRUM_SAMPLE_ID, FULL_SPECTRUM_SOURCE_SENSOR).name}",
     )
 
     source_table_lines = [
@@ -1072,14 +1160,26 @@ def _render_official_sensor_examples_doc(
             f"[`examples/official_mapping/srfs/{sensor.filename}`](../examples/official_mapping/srfs/{sensor.filename}) |"
         )
 
-    modis_table_lines = [
+    holdout_table_lines = [
+        "| Sample id | Class | What it demonstrates |",
+        "| --- | --- | --- |",
+    ]
+    for target in HELD_OUT_TARGETS:
+        holdout_table_lines.append(
+            f"| `{target.sample_id}` | `{target.landcover_group}` | {target.description} |"
+        )
+
+    primary_table_lines = [
         "| Band | Truth | Mapped |",
         "| --- | --- | --- |",
     ]
-    for band_id in [str(band["band_id"]) for band in json.loads((SRF_ROOT / "sentinel2a_msi.json").read_text())["bands"]]:
-        modis_table_lines.append(
-            f"| `{band_id}` | `{_format_reflectance(truth_modis_to_s2[band_id])}` | "
-            f"`{_format_reflectance(mapped_modis_to_s2[band_id])}` |"
+    primary_band_ids = [
+        str(band["band_id"]) for band in json.loads((SRF_ROOT / f"{primary_example.target_sensor}.json").read_text())["bands"]
+    ]
+    for band_id in primary_band_ids:
+        primary_table_lines.append(
+            f"| `{band_id}` | `{_format_reflectance(truth_primary[band_id])}` | "
+            f"`{_format_reflectance(mapped_primary[band_id])}` |"
         )
 
     artifact_summary_lines: list[str] = []
@@ -1103,12 +1203,16 @@ This page shows the bundled cross-sensor example runtime built from official
 relative spectral response sources for Terra MODIS, Sentinel-2A MSI, Landsat 8
 OLI, and Landsat 9 OLI.
 
-It is the fastest way to see what the public package does with real sensor SRFs
-before you prepare your own runtime.
+It uses four held-out class targets drawn from the synthetic catalogue itself:
+one vegetation spectrum, one soil spectrum, one water spectrum, and one urban
+spectrum. Those targets are simulated to each source sensor, but omitted from
+the prepared runtime so the mapper must reconstruct them from the remaining
+candidate spectra.
 
 <div class="fact-grid">
   <div><strong>4 sensors</strong><span>MODIS, Sentinel-2A, Landsat 8, Landsat 9</span></div>
-  <div><strong>7 semantic bands</strong><span>`ultra_blue`, `blue`, `green`, `red`, `nir`, `swir1`, `swir2`</span></div>
+  <div><strong>4 held-out targets</strong><span>vegetation, soil, water, urban</span></div>
+  <div><strong>6 runtime candidates</strong><span>{", ".join(runtime_candidate_samples)}</span></div>
   <div><strong>Scored subset</strong><span>{", ".join(COMPARABLE_PAIRWISE_BANDS)}</span></div>
   <div><strong>Regenerated</strong><span>{generated_at_utc[:10]} UTC</span></div>
 </div>
@@ -1133,10 +1237,27 @@ Recorded upstream artifacts for this commit:
 
 ## What The Example Demonstrates
 
+- held-out reconstruction on exact library spectra rather than synthetic mixtures
 - target-sensor mapping between MODIS, Sentinel-2A, Landsat 8, and Landsat 9
 - batch mapping from one CSV input
 - full-spectrum reconstruction over `400-2500 nm`
 - provenance tracking for official SRF inputs
+
+## Held-Out Target Design
+
+{chr(10).join(holdout_table_lines)}
+
+The example `siac/` runtime contains only these candidate spectra:
+
+- `{runtime_candidate_samples[0]}`
+- `{runtime_candidate_samples[1]}`
+- `{runtime_candidate_samples[2]}`
+- `{runtime_candidate_samples[3]}`
+- `{runtime_candidate_samples[4]}`
+- `{runtime_candidate_samples[5]}`
+
+That means the exact target spectra cannot appear in the neighbor list. The
+docs therefore show a real hold-out reconstruction problem, not a self-match.
 
 ## Band Correspondence
 
@@ -1190,8 +1311,8 @@ Selected official band responses used by the example runtime:
 
 ![Selected official band responses](assets/official_sensor_selected_bands.png)
 
-Mean absolute target-band error across three out-of-library synthetic truth
-spectra, evaluated only on the common comparable subset
+Mean absolute target-band error across the four held-out class targets,
+evaluated only on the common comparable subset
 {metric_band_text}:
 
 ![Pairwise mapping error](assets/official_pairwise_band_mae.png)
@@ -1207,71 +1328,72 @@ The full pairwise summary, including `evaluated_band_ids` and
 `evaluated_band_count`, is in
 [`examples/official_mapping/results/metrics/pairwise_band_metrics.csv`](../examples/official_mapping/results/metrics/pairwise_band_metrics.csv).
 
+Held-out Landsat 8 to Sentinel-2A batch comparison across vegetation, soil,
+water, and urban targets:
+
+![Held-out batch comparison](assets/official_holdout_batch_examples.png)
+
 ## Single-Sample Mapping Runs
 
-MODIS Terra to Sentinel-2A:
+MODIS Terra to Sentinel-2A on the vegetation holdout:
 
 ```bash
-{modis_to_s2_block}
+{_target_sensor_block(SELECTED_TARGET_SENSOR_RUNS[0])}
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/veg_soil_mix_modis_to_sentinel2a.csv`](../examples/official_mapping/results/selected/veg_soil_mix_modis_to_sentinel2a.csv)
+[`examples/official_mapping/results/selected/{_single_target_output_path(SELECTED_TARGET_SENSOR_RUNS[0].sample_id, SELECTED_TARGET_SENSOR_RUNS[0].source_sensor, SELECTED_TARGET_SENSOR_RUNS[0].target_sensor).name}`](../examples/official_mapping/results/selected/{_single_target_output_path(SELECTED_TARGET_SENSOR_RUNS[0].sample_id, SELECTED_TARGET_SENSOR_RUNS[0].source_sensor, SELECTED_TARGET_SENSOR_RUNS[0].target_sensor).name})
 
-{chr(10).join(modis_table_lines)}
+{chr(10).join(primary_table_lines)}
 
 The `ultra_blue` band is shown in the example table because it is a real target
 output for Sentinel-2A, but it is intentionally excluded from the pairwise
 heatmap so every source-target cell is scored on the same comparable six-band
 subset.
 
-Visual comparison for that query:
-
-![MODIS to Sentinel-2A example](assets/official_modis_to_sentinel2a_example.png)
-
-Sentinel-2A to Landsat 9:
+Sentinel-2A to Landsat 9 on the soil holdout:
 
 ```bash
-{s2_to_l9_block}
+{_target_sensor_block(SELECTED_TARGET_SENSOR_RUNS[1])}
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/veg_soil_mix_sentinel2a_to_landsat9.csv`](../examples/official_mapping/results/selected/veg_soil_mix_sentinel2a_to_landsat9.csv)
+[`examples/official_mapping/results/selected/{_single_target_output_path(SELECTED_TARGET_SENSOR_RUNS[1].sample_id, SELECTED_TARGET_SENSOR_RUNS[1].source_sensor, SELECTED_TARGET_SENSOR_RUNS[1].target_sensor).name}`](../examples/official_mapping/results/selected/{_single_target_output_path(SELECTED_TARGET_SENSOR_RUNS[1].sample_id, SELECTED_TARGET_SENSOR_RUNS[1].source_sensor, SELECTED_TARGET_SENSOR_RUNS[1].target_sensor).name})
 
-Landsat 8 to MODIS:
+Landsat 8 to MODIS on the urban holdout:
 
 ```bash
-{l8_to_modis_block}
+{_target_sensor_block(SELECTED_TARGET_SENSOR_RUNS[2])}
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/veg_soil_mix_landsat8_to_modis.csv`](../examples/official_mapping/results/selected/veg_soil_mix_landsat8_to_modis.csv)
+[`examples/official_mapping/results/selected/{_single_target_output_path(SELECTED_TARGET_SENSOR_RUNS[2].sample_id, SELECTED_TARGET_SENSOR_RUNS[2].source_sensor, SELECTED_TARGET_SENSOR_RUNS[2].target_sensor).name}`](../examples/official_mapping/results/selected/{_single_target_output_path(SELECTED_TARGET_SENSOR_RUNS[2].sample_id, SELECTED_TARGET_SENSOR_RUNS[2].source_sensor, SELECTED_TARGET_SENSOR_RUNS[2].target_sensor).name})
 
 ## Batch Example
 
-The bundled batch CSV uses Landsat 8 as the source sensor for three truth
-mixtures:
+The bundled batch CSV uses Landsat 8 as the source sensor for the four held-out
+targets:
 
 ```bash
 {batch_block}
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch.csv`](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch.csv)
+[`examples/official_mapping/results/selected/{_holdout_batch_output_path().name}`](../examples/official_mapping/results/selected/{_holdout_batch_output_path().name})
 
 Reference diagnostics:
-[`examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch_diagnostics.json`](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_batch_diagnostics.json)
+[`examples/official_mapping/results/selected/{_holdout_batch_diagnostics_path().name}`](../examples/official_mapping/results/selected/{_holdout_batch_diagnostics_path().name})
 
 ## Full-Spectrum Reconstruction
 
-Reconstruct the full `400-2500 nm` spectrum from the Sentinel-2A query:
+Reconstruct the full `400-2500 nm` spectrum from the water holdout:
 
 ```bash
 {full_spectrum_block}
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/veg_soil_mix_sentinel2a_full_spectrum.csv`](../examples/official_mapping/results/selected/veg_soil_mix_sentinel2a_full_spectrum.csv)
+[`examples/official_mapping/results/selected/{_full_spectrum_output_path(FULL_SPECTRUM_SAMPLE_ID, FULL_SPECTRUM_SOURCE_SENSOR).name}`](../examples/official_mapping/results/selected/{_full_spectrum_output_path(FULL_SPECTRUM_SAMPLE_ID, FULL_SPECTRUM_SOURCE_SENSOR).name})
 """
 
 
@@ -1279,12 +1401,14 @@ def _write_official_sensor_examples_doc(
     *,
     generated_at_utc: str,
     source_artifacts_by_sensor: dict[str, list[dict[str, object]]],
+    runtime_candidate_samples: list[str],
     truth_rows_by_sensor: dict[str, dict[str, dict[str, float]]],
 ) -> None:
     OFFICIAL_SENSOR_DOC_PATH.write_text(
         _render_official_sensor_examples_doc(
             generated_at_utc=generated_at_utc,
             source_artifacts_by_sensor=source_artifacts_by_sensor,
+            runtime_candidate_samples=runtime_candidate_samples,
             truth_rows_by_sensor=truth_rows_by_sensor,
         ),
         encoding="utf-8",
@@ -1339,10 +1463,36 @@ def build_official_mapping_examples() -> None:
     for sensor in OFFICIAL_SENSORS:
         _json_write(SRF_ROOT / sensor.filename, sensor_payloads[sensor.sensor_id])
 
+    full_catalogue = build_library_spectra()
+    truth_spectra = build_holdout_truth_spectra(full_catalogue)
+    runtime_candidate_samples = _runtime_candidate_sample_ids(full_catalogue)
+    runtime_library_spectra = {
+        sample_id: full_catalogue[sample_id]
+        for sample_id in runtime_candidate_samples
+    }
+    _write_siac_fixture(runtime_library_spectra)
+
     provenance_payload = {
         "generated_at_utc": generated_at_utc,
         "description": "Official-source band subsets used for the documentation and mapping examples.",
         "comparison_band_ids": list(COMPARABLE_PAIRWISE_BANDS),
+        "example_design": {
+            "strategy": "held_out_exact_library_spectra",
+            "description": (
+                "Four exact spectra are selected from the synthetic catalogue as public targets, "
+                "then omitted from the SIAC-style runtime so mapping must reconstruct them from the remaining candidates."
+            ),
+            "held_out_samples": [
+                {
+                    "sample_id": target.sample_id,
+                    "landcover_group": target.landcover_group,
+                    "title": target.title,
+                    "description": target.description,
+                }
+                for target in HELD_OUT_TARGETS
+            ],
+            "runtime_candidate_samples": runtime_candidate_samples,
+        },
         "sensors": [
             {
                 "sensor_id": sensor.sensor_id,
@@ -1367,26 +1517,26 @@ def build_official_mapping_examples() -> None:
     }
     _json_write(EXAMPLES_ROOT / "official_source_manifest.json", provenance_payload)
 
-    library_spectra = build_library_spectra()
-    truth_spectra = build_truth_spectra(library_spectra)
-    _write_siac_fixture(library_spectra)
-
     truth_rows_by_sensor = _collect_reflectance_rows(truth_spectra, sensor_payloads)
     for sensor_id, sample_rows in truth_rows_by_sensor.items():
-        _write_single_query(QUERIES_ROOT / "single" / f"veg_soil_mix_{sensor_id}.csv", sample_rows["veg_soil_mix"])
+        for sample_id, reflectance in sample_rows.items():
+            _write_single_query(_single_query_path(sample_id, sensor_id), reflectance)
 
-    landsat8_band_ids = tuple(str(band["band_id"]) for band in sensor_payloads["landsat8_oli"]["bands"])  # type: ignore[index]
-    _write_batch_query(QUERIES_ROOT / "batch" / "landsat8_truth_batch.csv", truth_rows_by_sensor["landsat8_oli"], landsat8_band_ids)
+    source_band_ids = tuple(
+        str(band["band_id"]) for band in sensor_payloads[HOLDOUT_BATCH_SOURCE_SENSOR]["bands"]  # type: ignore[index]
+    )
+    _write_batch_query(_holdout_batch_query_path(), truth_rows_by_sensor[HOLDOUT_BATCH_SOURCE_SENSOR], source_band_ids)
     _write_truth_tables(truth_spectra, sensor_payloads)
     _write_selected_cli_outputs()
     metrics = _write_pairwise_metrics(truth_rows_by_sensor)
     _plot_selected_bands(sensor_payloads)
     _plot_pairwise_heatmap(metrics)
-    _plot_modis_to_sentinel_example(sensor_payloads, truth_rows_by_sensor)
+    _plot_holdout_batch_examples(sensor_payloads, truth_rows_by_sensor)
     _write_examples_readme()
     _write_official_sensor_examples_doc(
         generated_at_utc=generated_at_utc,
         source_artifacts_by_sensor=source_artifacts_by_sensor,
+        runtime_candidate_samples=runtime_candidate_samples,
         truth_rows_by_sensor=truth_rows_by_sensor,
     )
 

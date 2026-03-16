@@ -10,9 +10,20 @@ Contents:
 
 - `official_source_manifest.json`: upstream provenance for the selected band subsets
 - `srfs/`: package-ready sensor JSON files for the selected bands
-- `siac/`: a compact synthetic SIAC-style hyperspectral library on the public 400-2500 nm grid
-- `queries/`: single-sample and batch query CSVs used in the docs
+- `siac/`: a compact synthetic SIAC-style candidate library on the public 400-2500 nm grid
+- `queries/`: held-out single-sample and batch query CSVs used in the docs
 - `results/`: generated mapping outputs, truth tables, and pairwise error summaries
+
+The public examples use four held-out targets from the synthetic catalogue:
+
+- `dense_vegetation`
+- `bright_soil`
+- `turbid_water`
+- `asphalt`
+
+Those target spectra are simulated to each source sensor, but they are omitted
+from the example `siac/` runtime so the mapper cannot retrieve the identical row
+as its own nearest neighbor.
 
 Regenerate everything from the official upstream sources with:
 
