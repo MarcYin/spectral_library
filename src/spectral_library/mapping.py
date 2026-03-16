@@ -42,12 +42,16 @@ SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS = (
     "pynndescent",
     "scann",
 )
+SCANN_MIN_AH_TRAINING_SAMPLE_SIZE = 16
 KNN_BACKEND_INSTALL_HINTS = {
     "scipy_ckdtree": 'pip install "spectral-library[knn]"',
     "faiss": 'pip install "spectral-library[knn-faiss]"',
     "pynndescent": 'pip install "spectral-library[knn-pynndescent]"',
     "scann": 'pip install "spectral-library[knn-scann]"',
 }
+CONFIDENCE_POLICY_VERSION = "1"
+CONFIDENCE_REVIEW_THRESHOLD = 0.60
+CONFIDENCE_ACCEPT_THRESHOLD = 0.85
 SEGMENTS = ("vnir", "swir")
 CANONICAL_START_NM = 400
 CANONICAL_END_NM = 2500
@@ -917,7 +921,9 @@ def _build_scann_searcher(
         num_leaves_to_search=leaves_to_search,
         training_sample_size=training_sample_size,
     )
-    if hasattr(builder, "score_ah"):
+    # Tiny candidate sets cannot train ScaNN's asymmetric hashing path.
+    # Keep the tree-only index in that case so persisted ScaNN builds still work.
+    if hasattr(builder, "score_ah") and training_sample_size >= SCANN_MIN_AH_TRAINING_SAMPLE_SIZE:
         builder = builder.score_ah(2, anisotropic_quantization_threshold=0.2)
     if hasattr(builder, "reorder"):
         builder = builder.reorder(neighbor_count)
@@ -1150,6 +1156,34 @@ def _segment_confidence_payload(
         "distance": distance_score,
         "fit": fit_score,
         "weight_concentration": weight_concentration,
+    }
+
+
+def _confidence_policy_payload(confidence_score: float | None) -> dict[str, object]:
+    if confidence_score is None:
+        return {
+            "version": CONFIDENCE_POLICY_VERSION,
+            "band": "unavailable",
+            "recommended_action": "reject",
+            "review_threshold": CONFIDENCE_REVIEW_THRESHOLD,
+            "accept_threshold": CONFIDENCE_ACCEPT_THRESHOLD,
+        }
+    score = max(0.0, min(1.0, float(confidence_score)))
+    if score >= CONFIDENCE_ACCEPT_THRESHOLD:
+        band = "high"
+        action = "accept"
+    elif score >= CONFIDENCE_REVIEW_THRESHOLD:
+        band = "medium"
+        action = "manual_review"
+    else:
+        band = "low"
+        action = "reject"
+    return {
+        "version": CONFIDENCE_POLICY_VERSION,
+        "band": band,
+        "recommended_action": action,
+        "review_threshold": CONFIDENCE_REVIEW_THRESHOLD,
+        "accept_threshold": CONFIDENCE_ACCEPT_THRESHOLD,
     }
 
 
@@ -2609,6 +2643,7 @@ class SpectralMapper:
                 "source_fit_rmse": None if retrieval.source_fit_rmse is None else float(retrieval.source_fit_rmse),
                 "confidence_score": None if retrieval.confidence_score is None else float(retrieval.confidence_score),
                 "confidence_components": dict(retrieval.confidence_components),
+                "confidence_policy": _confidence_policy_payload(retrieval.confidence_score),
                 "neighbor_band_values": [
                     [float(value) for value in row]
                     for row in np.asarray(retrieval.neighbor_band_values, dtype=np.float64)
@@ -2619,6 +2654,7 @@ class SpectralMapper:
             diagnostics["confidence_score"] = float(np.average(np.asarray(confidence_scores), weights=np.asarray(confidence_weights)))
         else:
             diagnostics["confidence_score"] = 0.0
+        diagnostics["confidence_policy"] = _confidence_policy_payload(float(diagnostics["confidence_score"]))
 
         reconstructed_vnir = segment_outputs.get("vnir")
         reconstructed_swir = segment_outputs.get("swir")

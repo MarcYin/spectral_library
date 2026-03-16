@@ -322,6 +322,87 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertTrue(np.allclose(result.target_reflectance, np.array([0.79, 0.21]), atol=1e-4))
             self.assertEqual(result.diagnostics["knn_backend"], "faiss")
 
+    def test_prepare_mapping_library_can_persist_scann_indexes_with_tiny_candidate_sets(self) -> None:
+        class FakeScannSearcher:
+            def __init__(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float32)
+
+            def serialize(self, path: str) -> None:
+                target = Path(path)
+                target.mkdir(parents=True, exist_ok=True)
+                with (target / "data.pkl").open("wb") as handle:
+                    pickle.dump(self.data, handle)
+
+            def search_batched(self, query: np.ndarray, final_num_neighbors: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+                query_array = np.asarray(query, dtype=np.float32)
+                k = int(final_num_neighbors or 1)
+                squared_distances = np.sum((self.data[None, :, :] - query_array[:, None, :]) ** 2, axis=2)
+                ordered = np.argsort(squared_distances, axis=1)[:, :k]
+                selected = np.take_along_axis(squared_distances, ordered, axis=1)
+                return ordered, selected
+
+        class FakeScannBuilder:
+            def __init__(self, data: np.ndarray, k: int, metric: str) -> None:
+                del k, metric
+                self.data = np.asarray(data, dtype=np.float32)
+
+            def tree(self, **_: object) -> "FakeScannBuilder":
+                return self
+
+            def score_ah(self, *args: object, **kwargs: object) -> "FakeScannBuilder":
+                del args, kwargs
+                raise AssertionError("Tiny persisted ScaNN test should skip score_ah.")
+
+            def reorder(self, *_: object) -> "FakeScannBuilder":
+                return self
+
+            def build(self) -> FakeScannSearcher:
+                return FakeScannSearcher(self.data)
+
+        class FakeScannOps:
+            @staticmethod
+            def builder(data: np.ndarray, k: int, metric: str) -> FakeScannBuilder:
+                return FakeScannBuilder(data, k, metric)
+
+            @staticmethod
+            def load_searcher(path: str) -> FakeScannSearcher:
+                with (Path(path) / "data.pkl").open("rb") as handle:
+                    data = pickle.load(handle)
+                return FakeScannSearcher(np.asarray(data, dtype=np.float32))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = _build_fixture(Path(tmpdir))
+            with patch.object(mapping_module, "_load_scann_ops", return_value=FakeScannOps):
+                manifest = prepare_mapping_library(
+                    fixture["siac_root"],
+                    fixture["srf_root"],
+                    fixture["prepared_root"],
+                    ["sensor_a"],
+                    knn_index_backends=["scann"],
+                )
+
+                self.assertIn("scann", manifest.knn_index_artifacts)
+                self.assertEqual(
+                    manifest.knn_index_artifacts["scann"]["sensor_a"]["vnir"],
+                    "knn_indexes/scann_sensor_a_vnir",
+                )
+                self.assertTrue((fixture["prepared_root"] / "knn_indexes" / "scann_sensor_a_vnir").exists())
+
+                mapper = SpectralMapper(fixture["prepared_root"])
+                result = mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.79, "swir": 0.21},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    neighbor_estimator="simplex_mixture",
+                    knn_backend="scann",
+                )
+
+            assert result.target_reflectance is not None
+            self.assertTrue(np.allclose(result.target_reflectance, np.array([0.79, 0.21]), atol=1e-4))
+            self.assertEqual(result.diagnostics["knn_backend"], "scann")
+
     def test_spectral_mapper_identity_retrieval_matches_when_source_equals_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -781,6 +862,7 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertGreaterEqual(vnir_diag["confidence_score"], 0.0)
             self.assertLessEqual(vnir_diag["confidence_score"], 1.0)
             self.assertIn("coverage", vnir_diag["confidence_components"])
+            self.assertIn(vnir_diag["confidence_policy"]["band"], {"high", "medium", "low", "unavailable"})
             self.assertEqual(len(vnir_diag["neighbor_band_values"]), 1)
             self.assertAlmostEqual(vnir_diag["neighbor_band_values"][0][0], 0.8, places=6)
             self.assertEqual(swir_diag["query_band_ids"], ["swir"])
@@ -791,10 +873,12 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertAlmostEqual(swir_diag["source_fit_rmse"], 0.0, places=6)
             self.assertGreaterEqual(swir_diag["confidence_score"], 0.0)
             self.assertLessEqual(swir_diag["confidence_score"], 1.0)
+            self.assertIn(swir_diag["confidence_policy"]["recommended_action"], {"accept", "manual_review", "reject"})
             self.assertEqual(len(swir_diag["neighbor_band_values"]), 1)
             self.assertAlmostEqual(swir_diag["neighbor_band_values"][0][0], 0.2, places=6)
             self.assertGreaterEqual(result.diagnostics["confidence_score"], 0.0)
             self.assertLessEqual(result.diagnostics["confidence_score"], 1.0)
+            self.assertIn(result.diagnostics["confidence_policy"]["recommended_action"], {"accept", "manual_review", "reject"})
             self.assertEqual(result.diagnostics["knn_backend"], "numpy")
             self.assertAlmostEqual(result.diagnostics["knn_eps"], 0.0)
 
