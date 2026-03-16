@@ -2,37 +2,66 @@
   "results": [
     {
       "diagnostics": {
-        "k": 3,
+        "k": 10,
         "output_mode": "target_sensor",
         "segments": {
           "swir": {
             "neighbor_distances": [
-              0.060085543902193804,
-              0.09525373030632875,
-              0.0956909231288985
+              0.0015846271116341038,
+              0.003174097924079641,
+              0.003355373515074162,
+              0.0037659406962058843,
+              0.00387642444272599,
+              0.003956528889597949,
+              0.004232982678874966,
+              0.0044065222487924115,
+              0.004470762873331585,
+              0.0044771077777168685
             ],
             "neighbor_ids": [
-              "official_example:shrubland:shrubland",
-              "official_example:gypsum_sand:gypsum_sand",
-              "official_example:bright_soil:bright_soil"
+              "bssl:bssl_012485:31582",
+              "bssl:bssl_009574:22995",
+              "bssl:bssl_004684:12657",
+              "bssl:bssl_009591:23046",
+              "bssl:bssl_002405:5858",
+              "bssl:bssl_004211:11258",
+              "bssl:bssl_011627:29141",
+              "bssl:bssl_009428:22553",
+              "bssl:bssl_004201:11229",
+              "bssl:bssl_004349:11660"
             ],
             "query_band_ids": [
+              "nir",
               "swir1",
               "swir2"
             ],
             "status": "ok",
-            "valid_band_count": 2
+            "valid_band_count": 3
           },
           "vnir": {
             "neighbor_distances": [
-              0.06091094948368749,
-              0.10216382809743617,
-              0.1963123659963558
+              0.0024056600060136683,
+              0.002435692875433036,
+              0.002470241188099495,
+              0.0033254064137200018,
+              0.003388156216982685,
+              0.003651140356167491,
+              0.003734127839428451,
+              0.003749038790612077,
+              0.003918030764541943,
+              0.003928792798496496
             ],
             "neighbor_ids": [
-              "official_example:shrubland:shrubland",
-              "official_example:dry_grass:dry_grass",
-              "official_example:bright_soil:bright_soil"
+              "ossl:ossl_007980:444a0836c7a9588496ea53c30e2310db",
+              "ossl:ossl_010995:c4c49468f582c78ff5c03fa1c02730f3",
+              "ossl:ossl_014621:cfa065ba3353ad8e17402810a0f7effc",
+              "ossl:ossl_012824:19f752b4ec440b50a2b05a086de43010",
+              "ossl:ossl_017201:383c7e9a0de21df7e84c68c6b12b9444",
+              "ossl:ossl_016631:d71967d7fa80a82110bab18ee3bccdaa",
+              "ossl:ossl_011877:97af3e28ab09ed3d3c8db9bb439c6a3c",
+              "ossl:ossl_005114:d4f689b133042f82082873cfff15fca9",
+              "ossl:ossl_018416:857004f345e62ac93df71bfcf068d8c7",
+              "ossl:ossl_004517:d388c362e3dc9f1b2239385b15deb0e8"
             ],
             "query_band_ids": [
               "ultra_blue",
@@ -50,31 +79,59 @@
       },
       "neighbor_distances_by_segment": {
         "swir": [
-          0.060085543902193804,
-          0.09525373030632875,
-          0.0956909231288985
+          0.0015846271116341038,
+          0.003174097924079641,
+          0.003355373515074162,
+          0.0037659406962058843,
+          0.00387642444272599,
+          0.003956528889597949,
+          0.004232982678874966,
+          0.0044065222487924115,
+          0.004470762873331585,
+          0.0044771077777168685
         ],
         "vnir": [
-          0.06091094948368749,
-          0.10216382809743617,
-          0.1963123659963558
+          0.0024056600060136683,
+          0.002435692875433036,
+          0.002470241188099495,
+          0.0033254064137200018,
+          0.003388156216982685,
+          0.003651140356167491,
+          0.003734127839428451,
+          0.003749038790612077,
+          0.003918030764541943,
+          0.003928792798496496
         ]
       },
       "neighbor_ids_by_segment": {
         "swir": [
-          "official_example:shrubland:shrubland",
-          "official_example:gypsum_sand:gypsum_sand",
-          "official_example:bright_soil:bright_soil"
+          "bssl:bssl_012485:31582",
+          "bssl:bssl_009574:22995",
+          "bssl:bssl_004684:12657",
+          "bssl:bssl_009591:23046",
+          "bssl:bssl_002405:5858",
+          "bssl:bssl_004211:11258",
+          "bssl:bssl_011627:29141",
+          "bssl:bssl_009428:22553",
+          "bssl:bssl_004201:11229",
+          "bssl:bssl_004349:11660"
         ],
         "vnir": [
-          "official_example:shrubland:shrubland",
-          "official_example:dry_grass:dry_grass",
-          "official_example:bright_soil:bright_soil"
+          "ossl:ossl_007980:444a0836c7a9588496ea53c30e2310db",
+          "ossl:ossl_010995:c4c49468f582c78ff5c03fa1c02730f3",
+          "ossl:ossl_014621:cfa065ba3353ad8e17402810a0f7effc",
+          "ossl:ossl_012824:19f752b4ec440b50a2b05a086de43010",
+          "ossl:ossl_017201:383c7e9a0de21df7e84c68c6b12b9444",
+          "ossl:ossl_016631:d71967d7fa80a82110bab18ee3bccdaa",
+          "ossl:ossl_011877:97af3e28ab09ed3d3c8db9bb439c6a3c",
+          "ossl:ossl_005114:d4f689b133042f82082873cfff15fca9",
+          "ossl:ossl_018416:857004f345e62ac93df71bfcf068d8c7",
+          "ossl:ossl_004517:d388c362e3dc9f1b2239385b15deb0e8"
         ]
       },
-      "sample_id": "dense_vegetation",
+      "sample_id": "asphalt_road",
       "segment_valid_band_counts": {
-        "swir": 2,
+        "swir": 3,
         "vnir": 5
       },
       "target_band_ids": [
@@ -89,37 +146,66 @@
     },
     {
       "diagnostics": {
-        "k": 3,
+        "k": 10,
         "output_mode": "target_sensor",
         "segments": {
           "swir": {
             "neighbor_distances": [
-              0.010471186687870239,
-              0.06965132843935026,
-              0.07083472877626724
+              0.004638456773847034,
+              0.006192257771674702,
+              0.008049489532138956,
+              0.008782033243297556,
+              0.008810735400193807,
+              0.008810735400193807,
+              0.00887036324101191,
+              0.00887036324101191,
+              0.009212833705371912,
+              0.009380101022275954
             ],
             "neighbor_ids": [
-              "official_example:gypsum_sand:gypsum_sand",
-              "official_example:shrubland:shrubland",
-              "official_example:concrete:concrete"
+              "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000510:Sanionia_uncinata_E_30123_S",
+              "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000455:Sanionia_uncinata_A_04223_O_(2)",
+              "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000433:Sanionia_uncinata_F_07223_O_(4)",
+              "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000366:Sanionia_uncinata_C_04223_O_(2)",
+              "emit_l2a_surface:emit_l2a_surface_002915:spectrum_00124",
+              "emit_adjusted_vegetation:emit_adjusted_vegetation_000124:spectrum_00124",
+              "emit_l2a_surface:emit_l2a_surface_002912:spectrum_00121",
+              "emit_adjusted_vegetation:emit_adjusted_vegetation_000121:spectrum_00121",
+              "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000263:Sanionia_uncinata_C_04223_O_mean",
+              "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000292:Sanionia_uncinata_F_07223_O_mean"
             ],
             "query_band_ids": [
+              "nir",
               "swir1",
               "swir2"
             ],
             "status": "ok",
-            "valid_band_count": 2
+            "valid_band_count": 3
           },
           "vnir": {
             "neighbor_distances": [
-              0.015294553751167318,
-              0.07220198190996226,
-              0.0782797949488742
+              0.00870060520915765,
+              0.009191180161154135,
+              0.0101683446710306,
+              0.01124130487575039,
+              0.01125846466329227,
+              0.011556266050427083,
+              0.012595408989019181,
+              0.012620387271555253,
+              0.013020499161478809,
+              0.013266356279111005
             ],
             "neighbor_ids": [
-              "official_example:concrete:concrete",
-              "official_example:gypsum_sand:gypsum_sand",
-              "official_example:dark_soil:dark_soil"
+              "ecostress_v1:ecostress_v1_003270:Quercus agrifolia 2",
+              "ecostress_v1:ecostress_v1_003309:Quercus douglasii 1",
+              "ecostress_v1:ecostress_v1_003021:Ehretia austin-smithii",
+              "ecostress_v1:ecostress_v1_003032:Eucalyptus maculata",
+              "cabo_leaf_v2:cabo_leaf_v2_000517:41905125",
+              "ecostress_v1:ecostress_v1_002993:Cedrus atlantica 'glauca'",
+              "ecostress_v1:ecostress_v1_002910:Betula lenta",
+              "ecostress_v1:ecostress_v1_002672:Ceanothus spinosus 2",
+              "ecostress_v1:ecostress_v1_003225:Podocarpus gracilior",
+              "ecostress_v1:ecostress_v1_003352:Quercus lobata 1"
             ],
             "query_band_ids": [
               "ultra_blue",
@@ -137,31 +223,59 @@
       },
       "neighbor_distances_by_segment": {
         "swir": [
-          0.010471186687870239,
-          0.06965132843935026,
-          0.07083472877626724
+          0.004638456773847034,
+          0.006192257771674702,
+          0.008049489532138956,
+          0.008782033243297556,
+          0.008810735400193807,
+          0.008810735400193807,
+          0.00887036324101191,
+          0.00887036324101191,
+          0.009212833705371912,
+          0.009380101022275954
         ],
         "vnir": [
-          0.015294553751167318,
-          0.07220198190996226,
-          0.0782797949488742
+          0.00870060520915765,
+          0.009191180161154135,
+          0.0101683446710306,
+          0.01124130487575039,
+          0.01125846466329227,
+          0.011556266050427083,
+          0.012595408989019181,
+          0.012620387271555253,
+          0.013020499161478809,
+          0.013266356279111005
         ]
       },
       "neighbor_ids_by_segment": {
         "swir": [
-          "official_example:gypsum_sand:gypsum_sand",
-          "official_example:shrubland:shrubland",
-          "official_example:concrete:concrete"
+          "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000510:Sanionia_uncinata_E_30123_S",
+          "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000455:Sanionia_uncinata_A_04223_O_(2)",
+          "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000433:Sanionia_uncinata_F_07223_O_(4)",
+          "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000366:Sanionia_uncinata_C_04223_O_(2)",
+          "emit_l2a_surface:emit_l2a_surface_002915:spectrum_00124",
+          "emit_adjusted_vegetation:emit_adjusted_vegetation_000124:spectrum_00124",
+          "emit_l2a_surface:emit_l2a_surface_002912:spectrum_00121",
+          "emit_adjusted_vegetation:emit_adjusted_vegetation_000121:spectrum_00121",
+          "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000263:Sanionia_uncinata_C_04223_O_mean",
+          "antarctic_vegetation_speclib:antarctic_vegetation_speclib_000292:Sanionia_uncinata_F_07223_O_mean"
         ],
         "vnir": [
-          "official_example:concrete:concrete",
-          "official_example:gypsum_sand:gypsum_sand",
-          "official_example:dark_soil:dark_soil"
+          "ecostress_v1:ecostress_v1_003270:Quercus agrifolia 2",
+          "ecostress_v1:ecostress_v1_003309:Quercus douglasii 1",
+          "ecostress_v1:ecostress_v1_003021:Ehretia austin-smithii",
+          "ecostress_v1:ecostress_v1_003032:Eucalyptus maculata",
+          "cabo_leaf_v2:cabo_leaf_v2_000517:41905125",
+          "ecostress_v1:ecostress_v1_002993:Cedrus atlantica 'glauca'",
+          "ecostress_v1:ecostress_v1_002910:Betula lenta",
+          "ecostress_v1:ecostress_v1_002672:Ceanothus spinosus 2",
+          "ecostress_v1:ecostress_v1_003225:Podocarpus gracilior",
+          "ecostress_v1:ecostress_v1_003352:Quercus lobata 1"
         ]
       },
-      "sample_id": "bright_soil",
+      "sample_id": "blue_spruce_needles",
       "segment_valid_band_counts": {
-        "swir": 2,
+        "swir": 3,
         "vnir": 5
       },
       "target_band_ids": [
@@ -176,37 +290,66 @@
     },
     {
       "diagnostics": {
-        "k": 3,
+        "k": 10,
         "output_mode": "target_sensor",
         "segments": {
           "swir": {
             "neighbor_distances": [
-              0.0,
-              0.12545583604080876,
-              0.2065557882441663
+              0.0010384049082500263,
+              0.0015120284513751433,
+              0.0016383409060060652,
+              0.0017658949655662566,
+              0.0019841739330016825,
+              0.002491365767488512,
+              0.0029704123927147574,
+              0.0032564036924730574,
+              0.0035700777364959355,
+              0.0037765522180265828
             ],
             "neighbor_ids": [
-              "official_example:clear_water:clear_water",
-              "official_example:asphalt:asphalt",
-              "official_example:dark_soil:dark_soil"
+              "hsdos:hsdos_003968:15011/11A/11-11-14/NIT/1",
+              "ossl:ossl_020663:add86a660a132842387502538fcedcc3",
+              "ossl:ossl_030257:b66ca259f3de0c5201203919e876a87d",
+              "hsdos:hsdos_003670:14015/02A/11-09-10/NIT/2",
+              "ossl:ossl_023115:1150ad9f2a4e42899b5633286b2781e9",
+              "ossl:ossl_037438:0e347adeef3059d8cab3b4f0f76c4aac",
+              "ossl:ossl_029579:82c37bf2bb6b3154748ea128603d8f6b",
+              "ossl:ossl_029666:807c3e1f748883d1d78a89fbb880cf09",
+              "ossl:ossl_031190:04d7c4124939e8e13c1dd61c03c78f9e",
+              "ossl:ossl_037369:c392259d6061f110d909ff435e274a40"
             ],
             "query_band_ids": [
+              "nir",
               "swir1",
               "swir2"
             ],
             "status": "ok",
-            "valid_band_count": 2
+            "valid_band_count": 3
           },
           "vnir": {
             "neighbor_distances": [
-              0.03709675810983821,
-              0.04532293580507785,
-              0.04941238927350821
+              0.007521632296620921,
+              0.007692705800494234,
+              0.00782053526068324,
+              0.007837673375142967,
+              0.008345277605380215,
+              0.008351808788143119,
+              0.008977475197491952,
+              0.00908482624239909,
+              0.009394189062415523,
+              0.009902434093317305
             ],
             "neighbor_ids": [
-              "official_example:asphalt:asphalt",
-              "official_example:dark_soil:dark_soil",
-              "official_example:clear_water:clear_water"
+              "ossl:ossl_000280:75396a6ac3fc5322415f32432aebfea8",
+              "bssl:bssl_012672:32009",
+              "bssl:bssl_012705:32042",
+              "ossl:ossl_006096:92b40915684bd14471cc8a5c3b816075",
+              "bssl:bssl_013062:33608",
+              "ossl:ossl_037109:be4b720b0856e42fac7fd2d6773800d4",
+              "bssl:bssl_012671:32008",
+              "ecostress_v1:ecostress_v1_002343:Light yellowish brown interior dry gravelly loam",
+              "bssl:bssl_006214:14211",
+              "ossl:ossl_000957:4d5508194034a04277a9f55dfa718f8c"
             ],
             "query_band_ids": [
               "ultra_blue",
@@ -224,31 +367,59 @@
       },
       "neighbor_distances_by_segment": {
         "swir": [
-          0.0,
-          0.12545583604080876,
-          0.2065557882441663
+          0.0010384049082500263,
+          0.0015120284513751433,
+          0.0016383409060060652,
+          0.0017658949655662566,
+          0.0019841739330016825,
+          0.002491365767488512,
+          0.0029704123927147574,
+          0.0032564036924730574,
+          0.0035700777364959355,
+          0.0037765522180265828
         ],
         "vnir": [
-          0.03709675810983821,
-          0.04532293580507785,
-          0.04941238927350821
+          0.007521632296620921,
+          0.007692705800494234,
+          0.00782053526068324,
+          0.007837673375142967,
+          0.008345277605380215,
+          0.008351808788143119,
+          0.008977475197491952,
+          0.00908482624239909,
+          0.009394189062415523,
+          0.009902434093317305
         ]
       },
       "neighbor_ids_by_segment": {
         "swir": [
-          "official_example:clear_water:clear_water",
-          "official_example:asphalt:asphalt",
-          "official_example:dark_soil:dark_soil"
+          "hsdos:hsdos_003968:15011/11A/11-11-14/NIT/1",
+          "ossl:ossl_020663:add86a660a132842387502538fcedcc3",
+          "ossl:ossl_030257:b66ca259f3de0c5201203919e876a87d",
+          "hsdos:hsdos_003670:14015/02A/11-09-10/NIT/2",
+          "ossl:ossl_023115:1150ad9f2a4e42899b5633286b2781e9",
+          "ossl:ossl_037438:0e347adeef3059d8cab3b4f0f76c4aac",
+          "ossl:ossl_029579:82c37bf2bb6b3154748ea128603d8f6b",
+          "ossl:ossl_029666:807c3e1f748883d1d78a89fbb880cf09",
+          "ossl:ossl_031190:04d7c4124939e8e13c1dd61c03c78f9e",
+          "ossl:ossl_037369:c392259d6061f110d909ff435e274a40"
         ],
         "vnir": [
-          "official_example:asphalt:asphalt",
-          "official_example:dark_soil:dark_soil",
-          "official_example:clear_water:clear_water"
+          "ossl:ossl_000280:75396a6ac3fc5322415f32432aebfea8",
+          "bssl:bssl_012672:32009",
+          "bssl:bssl_012705:32042",
+          "ossl:ossl_006096:92b40915684bd14471cc8a5c3b816075",
+          "bssl:bssl_013062:33608",
+          "ossl:ossl_037109:be4b720b0856e42fac7fd2d6773800d4",
+          "bssl:bssl_012671:32008",
+          "ecostress_v1:ecostress_v1_002343:Light yellowish brown interior dry gravelly loam",
+          "bssl:bssl_006214:14211",
+          "ossl:ossl_000957:4d5508194034a04277a9f55dfa718f8c"
         ]
       },
-      "sample_id": "turbid_water",
+      "sample_id": "pale_brown_silty_loam",
       "segment_valid_band_counts": {
-        "swir": 2,
+        "swir": 3,
         "vnir": 5
       },
       "target_band_ids": [
@@ -263,37 +434,66 @@
     },
     {
       "diagnostics": {
-        "k": 3,
+        "k": 10,
         "output_mode": "target_sensor",
         "segments": {
           "swir": {
             "neighbor_distances": [
-              0.08228538423625766,
-              0.1254558329919187,
-              0.1254558329919187
+              0.004210026055273431,
+              0.004210026055273431,
+              0.004477494637581185,
+              0.004501113276618082,
+              0.0045109603448648845,
+              0.004902893605946045,
+              0.005694067741748893,
+              0.005926577173014565,
+              0.006171391397798259,
+              0.006652568419436362
             ],
             "neighbor_ids": [
-              "official_example:dark_soil:dark_soil",
-              "official_example:clear_water:clear_water",
-              "official_example:turbid_water:turbid_water"
+              "usgs_v7:usgs_v7_000321:Seawater_Coast_Chl SW1        BECKa AREF",
+              "usgs_v7:usgs_v7_000322:Seawater_Open_Ocean SW2 lwch  BECKa AREF",
+              "santa_barbara_urban_reflectance:santa_barbara_urban_reflectance_000281:fscemm.022-",
+              "usgs_v7:usgs_v7_000152:Plastic_ABS GDS341 BlackPipe ASDFRa AREF",
+              "ossl:ossl_013265:bb5be61fb0a1a30e74858cc20ee389e9",
+              "ossl:ossl_007654:4addf18956f77cae747e5abb569ebc6f",
+              "usgs_v7:usgs_v7_000572:Carbon_Black GDS68           ASDFRa AREF",
+              "usgs_v7:usgs_v7_000008:Asphalt_Tar GDS346 Blck_Roof ASDFRa AREF",
+              "usgs_v7:usgs_v7_000126:Oil92_Water08 DWH10-3 0.05mm ASDHRa AREF",
+              "ecostress_v1:ecostress_v1_003445:Ice"
             ],
             "query_band_ids": [
+              "nir",
               "swir1",
               "swir2"
             ],
             "status": "ok",
-            "valid_band_count": 2
+            "valid_band_count": 3
           },
           "vnir": {
             "neighbor_distances": [
-              0.03709675937152784,
-              0.04274026918758693,
-              0.04293748459460916
+              0.0010395890999397833,
+              0.0011849867921197555,
+              0.0016815242684543044,
+              0.001923552697392145,
+              0.0022033772640097783,
+              0.0022447095057581386,
+              0.003115696919239297,
+              0.0032681414193347666,
+              0.0035094493413791563,
+              0.0035148980750482543
             ],
             "neighbor_ids": [
-              "official_example:turbid_water:turbid_water",
-              "official_example:dark_soil:dark_soil",
-              "official_example:clear_water:clear_water"
+              "ecostress_v1:ecostress_v1_001697:Chalcocite Cu_2S",
+              "ecostress_v1:ecostress_v1_000638:Tourmaline Na(Mg_3,Fe_3^2+)Al_6(BO_3)_3Si_6O_18(OH)_4",
+              "ecostress_v1:ecostress_v1_000609:Tourmaline Na(Mg_3,Fe_3^2+)Al_6(BO_3)_3Si_6O_18(OH)_4",
+              "santa_barbara_urban_reflectance:santa_barbara_urban_reflectance_000281:fscemm.022-",
+              "usgs_v7:usgs_v7_000008:Asphalt_Tar GDS346 Blck_Roof ASDFRa AREF",
+              "ecostress_v1:ecostress_v1_000701:Riebeckite Na_2(Fe^2+,Mg)_3,Fe_2^3+Si_8O_22(OH)_2",
+              "ecostress_v1:ecostress_v1_001698:Chalcocite Cu_2S",
+              "santa_barbara_urban_reflectance:santa_barbara_urban_reflectance_000010:frrkof.008-",
+              "ossl:ossl_015395:8be5dd93400b7f8c1e32f312615698db",
+              "ecostress_v1:ecostress_v1_000062:Black tar paper"
             ],
             "query_band_ids": [
               "ultra_blue",
@@ -311,31 +511,59 @@
       },
       "neighbor_distances_by_segment": {
         "swir": [
-          0.08228538423625766,
-          0.1254558329919187,
-          0.1254558329919187
+          0.004210026055273431,
+          0.004210026055273431,
+          0.004477494637581185,
+          0.004501113276618082,
+          0.0045109603448648845,
+          0.004902893605946045,
+          0.005694067741748893,
+          0.005926577173014565,
+          0.006171391397798259,
+          0.006652568419436362
         ],
         "vnir": [
-          0.03709675937152784,
-          0.04274026918758693,
-          0.04293748459460916
+          0.0010395890999397833,
+          0.0011849867921197555,
+          0.0016815242684543044,
+          0.001923552697392145,
+          0.0022033772640097783,
+          0.0022447095057581386,
+          0.003115696919239297,
+          0.0032681414193347666,
+          0.0035094493413791563,
+          0.0035148980750482543
         ]
       },
       "neighbor_ids_by_segment": {
         "swir": [
-          "official_example:dark_soil:dark_soil",
-          "official_example:clear_water:clear_water",
-          "official_example:turbid_water:turbid_water"
+          "usgs_v7:usgs_v7_000321:Seawater_Coast_Chl SW1        BECKa AREF",
+          "usgs_v7:usgs_v7_000322:Seawater_Open_Ocean SW2 lwch  BECKa AREF",
+          "santa_barbara_urban_reflectance:santa_barbara_urban_reflectance_000281:fscemm.022-",
+          "usgs_v7:usgs_v7_000152:Plastic_ABS GDS341 BlackPipe ASDFRa AREF",
+          "ossl:ossl_013265:bb5be61fb0a1a30e74858cc20ee389e9",
+          "ossl:ossl_007654:4addf18956f77cae747e5abb569ebc6f",
+          "usgs_v7:usgs_v7_000572:Carbon_Black GDS68           ASDFRa AREF",
+          "usgs_v7:usgs_v7_000008:Asphalt_Tar GDS346 Blck_Roof ASDFRa AREF",
+          "usgs_v7:usgs_v7_000126:Oil92_Water08 DWH10-3 0.05mm ASDHRa AREF",
+          "ecostress_v1:ecostress_v1_003445:Ice"
         ],
         "vnir": [
-          "official_example:turbid_water:turbid_water",
-          "official_example:dark_soil:dark_soil",
-          "official_example:clear_water:clear_water"
+          "ecostress_v1:ecostress_v1_001697:Chalcocite Cu_2S",
+          "ecostress_v1:ecostress_v1_000638:Tourmaline Na(Mg_3,Fe_3^2+)Al_6(BO_3)_3Si_6O_18(OH)_4",
+          "ecostress_v1:ecostress_v1_000609:Tourmaline Na(Mg_3,Fe_3^2+)Al_6(BO_3)_3Si_6O_18(OH)_4",
+          "santa_barbara_urban_reflectance:santa_barbara_urban_reflectance_000281:fscemm.022-",
+          "usgs_v7:usgs_v7_000008:Asphalt_Tar GDS346 Blck_Roof ASDFRa AREF",
+          "ecostress_v1:ecostress_v1_000701:Riebeckite Na_2(Fe^2+,Mg)_3,Fe_2^3+Si_8O_22(OH)_2",
+          "ecostress_v1:ecostress_v1_001698:Chalcocite Cu_2S",
+          "santa_barbara_urban_reflectance:santa_barbara_urban_reflectance_000010:frrkof.008-",
+          "ossl:ossl_015395:8be5dd93400b7f8c1e32f312615698db",
+          "ecostress_v1:ecostress_v1_000062:Black tar paper"
         ]
       },
-      "sample_id": "asphalt",
+      "sample_id": "tap_water",
       "segment_valid_band_counts": {
-        "swir": 2,
+        "swir": 3,
         "vnir": 5
       },
       "target_band_ids": [
@@ -350,9 +578,9 @@
     }
   ],
   "sample_ids": [
-    "dense_vegetation",
-    "bright_soil",
-    "turbid_water",
-    "asphalt"
+    "asphalt_road",
+    "blue_spruce_needles",
+    "pale_brown_silty_loam",
+    "tap_water"
   ]
 }

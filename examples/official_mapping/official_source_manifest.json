@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-03-16T10:06:16.877278+00:00",
+  "generated_at_utc": "2026-03-16T14:28:07.373716+00:00",
   "description": "Official-source band subsets used for the documentation and mapping examples.",
   "comparison_band_ids": [
     "blue",
@@ -10,47 +10,85 @@
     "swir2"
   ],
   "example_design": {
-    "strategy": "held_out_exact_library_spectra",
-    "description": "Four exact spectra are selected from the synthetic catalogue as public targets. Each query excludes only its own sample_name at mapping time, leaving the rest of the catalogue available.",
+    "strategy": "held_out_exact_rows_from_external_full_siac_library",
+    "description": "Four exact spectra are selected from the previously composed full SIAC library as public targets. Each query excludes only its own prepared row_id at mapping time, leaving the rest of the full library available.",
     "held_out_samples": [
       {
-        "sample_id": "dense_vegetation",
+        "sample_id": "blue_spruce_needles",
+        "row_id": "usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF",
+        "source_id": "usgs_v7",
+        "spectrum_id": "usgs_v7_002183",
+        "sample_name": "Blue_Spruce DW92-5 needles    BECKa AREF",
+        "source_name": "USGS Spectral Library v7",
         "landcover_group": "vegetation",
         "title": "Vegetation holdout",
-        "description": "Dense green canopy spectrum used as a query while excluding only the matching sample_name."
+        "description": "USGS v7 blue spruce needles spectrum used as a query while excluding only the matching prepared row id."
       },
       {
-        "sample_id": "bright_soil",
+        "sample_id": "pale_brown_silty_loam",
+        "row_id": "ecostress_v1:ecostress_v1_002334:Pale brown silty loam",
+        "source_id": "ecostress_v1",
+        "spectrum_id": "ecostress_v1_002334",
+        "sample_name": "Pale brown silty loam",
+        "source_name": "ECOSTRESS Spectral Library v1.0",
         "landcover_group": "soil",
         "title": "Soil holdout",
-        "description": "Bright mineral soil spectrum used as a query while excluding only the matching sample_name."
+        "description": "ECOSTRESS pale brown silty loam spectrum used as a query while excluding only the matching prepared row id."
       },
       {
-        "sample_id": "turbid_water",
+        "sample_id": "tap_water",
+        "row_id": "ecostress_v1:ecostress_v1_003451:Tap water",
+        "source_id": "ecostress_v1",
+        "spectrum_id": "ecostress_v1_003451",
+        "sample_name": "Tap water",
+        "source_name": "ECOSTRESS Spectral Library v1.0",
         "landcover_group": "water",
         "title": "Water holdout",
-        "description": "Turbid water spectrum used as a query while excluding only the matching sample_name."
+        "description": "ECOSTRESS tap water spectrum used as a query while excluding only the matching prepared row id."
       },
       {
-        "sample_id": "asphalt",
+        "sample_id": "asphalt_road",
+        "row_id": "usgs_v7:usgs_v7_000004:Asphalt GDS376 Blck_Road old ASDFRa AREF",
+        "source_id": "usgs_v7",
+        "spectrum_id": "usgs_v7_000004",
+        "sample_name": "Asphalt GDS376 Blck_Road old ASDFRa AREF",
+        "source_name": "USGS Spectral Library v7",
         "landcover_group": "urban",
         "title": "Urban holdout",
-        "description": "Asphalt urban-material spectrum used as a query while excluding only the matching sample_name."
+        "description": "USGS v7 asphalt road spectrum used as a query while excluding only the matching prepared row id."
       }
     ],
-    "catalogue_samples": [
-      "dense_vegetation",
-      "dry_grass",
-      "shrubland",
-      "bright_soil",
-      "dark_soil",
-      "concrete",
-      "asphalt",
-      "clear_water",
-      "turbid_water",
-      "gypsum_sand"
-    ],
-    "self_exclusion_policy": "exclude_matching_sample_name_only"
+    "library_reference": {
+      "mode": "external_full_siac_library",
+      "siac_root": "build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37",
+      "metadata_csv": "build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37/tabular/siac_spectra_metadata.csv",
+      "spectra_csv": "build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37/tabular/siac_normalized_spectra.csv",
+      "row_count": 77125,
+      "landcover_counts": {
+        "soil": 60905,
+        "unlabeled": 5932,
+        "urban": 1474,
+        "vegetation": 8723,
+        "water": 91
+      },
+      "build_summary_path": "build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37/build_summary.json",
+      "build_summary": {
+        "classified_spectra": 71193,
+        "excluded_source_ids": [
+          "ghisacasia_v001",
+          "understory_estonia_czech"
+        ],
+        "landcover_counts": {
+          "soil": 60905,
+          "urban": 1474,
+          "vegetation": 8723,
+          "water": 91
+        },
+        "total_spectra": 77125
+      }
+    },
+    "self_exclusion_policy": "exclude_matching_row_id_only",
+    "example_k": 10
   },
   "sensors": [
     {
@@ -65,7 +103,7 @@
           "url": "https://mcst.gsfc.nasa.gov/sites/default/files/file_attachments/Terra_RSR_in-band.xlsx",
           "sha256": "f14498183f9258ed691999313a13fc425edb2eb2d89ca676f79abbb6f48ad637",
           "size_bytes": 427103,
-          "downloaded_at_utc": "2026-03-16T10:06:16.877705+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:07.965314+00:00",
           "local_name": "Terra_RSR_in-band.xlsx",
           "etag": "\"6845f-610f906a512e5\"",
           "last_modified": "Fri, 09 Feb 2024 20:46:44 GMT"
@@ -122,7 +160,7 @@
           "url": "https://sentiwiki.copernicus.eu/__attachments/1692737/COPE-GSEG-EOPG-TN-15-0007%20-%20Sentinel-2%20Spectral%20Response%20Functions%202024%20-%204.0.xlsx",
           "sha256": "1a9edc27d692a570911a460d589f188da0fc3e27f0b0bd1ad322059c380519b0",
           "size_bytes": 1339179,
-          "downloaded_at_utc": "2026-03-16T10:06:18.221242+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:09.606608+00:00",
           "local_name": "Sentinel-2_Spectral_Response_Functions_2024_4.0.xlsx",
           "etag": "\"05a866b9653a4d2bc442df394ea6cc7a\""
         }
@@ -184,7 +222,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat8OLITIRS1.json",
           "sha256": "eac3cad7cb80a43bddb933607c9b27d9f90960602461ca90fba8964555020795",
           "size_bytes": 2399,
-          "downloaded_at_utc": "2026-03-16T10:06:18.749087+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:10.122120+00:00",
           "local_name": "Landsat8OLITIRS1.json",
           "etag": "\"95f-60903fc75d386\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:45 GMT",
@@ -195,7 +233,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat8OLITIRS2.json",
           "sha256": "9f1c84f0ae4e7ab9e2a8ca350b7d2f4f32a19e807684dfcde7d83a4093a9800d",
           "size_bytes": 6763,
-          "downloaded_at_utc": "2026-03-16T10:06:19.493732+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:10.941315+00:00",
           "local_name": "Landsat8OLITIRS2.json",
           "etag": "\"1a6b-60903fc7ad0ef\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:45 GMT",
@@ -206,7 +244,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat8OLITIRS3.json",
           "sha256": "e14e09142bfdf6d1c6c28964935567b67c7413697b6ae1a0cdab2acf402aa560",
           "size_bytes": 7218,
-          "downloaded_at_utc": "2026-03-16T10:06:20.212956+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:11.815828+00:00",
           "local_name": "Landsat8OLITIRS3.json",
           "etag": "\"1c32-60903fc7f8bef\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:46 GMT",
@@ -217,7 +255,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat8OLITIRS4.json",
           "sha256": "5fd742b51174422957c30081f18a588d1afaca635f5eaeb6aa5e7a9403c67be1",
           "size_bytes": 4883,
-          "downloaded_at_utc": "2026-03-16T10:06:21.035706+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:12.806004+00:00",
           "local_name": "Landsat8OLITIRS4.json",
           "etag": "\"1313-60903fc7fab2f\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:46 GMT",
@@ -228,7 +266,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat8OLITIRS5.json",
           "sha256": "d67d2a2b3ed833bfd30501ba1c5c91bcc6e4b86b5f52e8a9b02f7bf0a283806e",
           "size_bytes": 5519,
-          "downloaded_at_utc": "2026-03-16T10:06:21.757556+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:13.594646+00:00",
           "local_name": "Landsat8OLITIRS5.json",
           "etag": "\"158f-60903fc849127\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:46 GMT",
@@ -239,7 +277,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat8OLITIRS6.json",
           "sha256": "1f11f134b29dbd813e223519cd564745dc1ed7dd17c3f8815f9324099aa888f7",
           "size_bytes": 14044,
-          "downloaded_at_utc": "2026-03-16T10:06:22.476143+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:14.436904+00:00",
           "local_name": "Landsat8OLITIRS6.json",
           "etag": "\"36dc-60903fc849127\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:46 GMT",
@@ -250,7 +288,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat8OLITIRS7.json",
           "sha256": "9849f924327a10763cb05cadfbbf97152fa9a907e7a9b6d2fc6be9a32b701526",
           "size_bytes": 24487,
-          "downloaded_at_utc": "2026-03-16T10:06:23.196984+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:15.455667+00:00",
           "local_name": "Landsat8OLITIRS7.json",
           "etag": "\"5fa7-60903fc897338\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:46 GMT",
@@ -315,7 +353,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat9OLITIRS1.json",
           "sha256": "aa5642c4168e5aaeb9e4be82bc635d95c80d434300bb2343eec02238d3f6f01f",
           "size_bytes": 2462,
-          "downloaded_at_utc": "2026-03-16T10:06:24.164789+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:16.697411+00:00",
           "local_name": "Landsat9OLITIRS1.json",
           "etag": "\"99e-60903fc9379c1\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:47 GMT",
@@ -326,7 +364,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat9OLITIRS2.json",
           "sha256": "ed573882223f71cdda2119a7d29530f8f2557c33bc6ced2119a48e38ea9cc1b8",
           "size_bytes": 7101,
-          "downloaded_at_utc": "2026-03-16T10:06:24.891277+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:17.621803+00:00",
           "local_name": "Landsat9OLITIRS2.json",
           "etag": "\"1bbd-60903fc9d3611\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:47 GMT",
@@ -337,7 +375,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat9OLITIRS3.json",
           "sha256": "6d6d6f4567f987c01f7b664aba1d288262cf987d0ffcf8692cb86c7e544d9cd0",
           "size_bytes": 7393,
-          "downloaded_at_utc": "2026-03-16T10:06:25.641069+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:18.520562+00:00",
           "local_name": "Landsat9OLITIRS3.json",
           "etag": "\"1ce1-60903fc9d610a\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:47 GMT",
@@ -348,7 +386,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat9OLITIRS4.json",
           "sha256": "525b561ca2806851c32147b3a1a84512dd497bed97e722da015f688583410801",
           "size_bytes": 5009,
-          "downloaded_at_utc": "2026-03-16T10:06:26.461391+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:19.338862+00:00",
           "local_name": "Landsat9OLITIRS4.json",
           "etag": "\"1391-60903fca24702\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:48 GMT",
@@ -359,7 +397,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat9OLITIRS5.json",
           "sha256": "8bafd07066f5af096495d7e2b4e346f2c96d1e67d5b24a7f214439b014cbbf2d",
           "size_bytes": 5522,
-          "downloaded_at_utc": "2026-03-16T10:06:27.189033+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:20.212456+00:00",
           "local_name": "Landsat9OLITIRS5.json",
           "etag": "\"1592-60903fca24aea\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:48 GMT",
@@ -370,7 +408,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat9OLITIRS6.json",
           "sha256": "69f4f5c46d451d5fad028558c4809958fad4741b62973e1ea9dbfc56f610e31a",
           "size_bytes": 14053,
-          "downloaded_at_utc": "2026-03-16T10:06:27.899096+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:21.165403+00:00",
           "local_name": "Landsat9OLITIRS6.json",
           "etag": "\"36e5-60903fca7540b\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:48 GMT",
@@ -381,7 +419,7 @@
           "url": "https://landsat.usgs.gov/landsat/spectral_viewer/c3-master/htdocs/data/bands/Landsat9OLITIRS7.json",
           "sha256": "ba38f81b69c490acd8896f6d409f0aa8da12fda37017254203ec18281af890ca",
           "size_bytes": 24486,
-          "downloaded_at_utc": "2026-03-16T10:06:28.742744+00:00",
+          "downloaded_at_utc": "2026-03-16T14:28:22.021802+00:00",
           "local_name": "Landsat9OLITIRS7.json",
           "etag": "\"5fa6-60903fca7540b\"",
           "last_modified": "Tue, 31 Oct 2023 14:29:48 GMT",

@@ -5,17 +5,19 @@ This page shows the bundled cross-sensor example runtime built from official
 relative spectral response sources for Terra MODIS, Sentinel-2A MSI, Landsat 8
 OLI, and Landsat 9 OLI.
 
-It uses four held-out class targets drawn from the synthetic catalogue itself:
-one vegetation spectrum, one soil spectrum, one water spectrum, and one urban
-spectrum. Those targets are simulated to each source sensor. For each query,
-the examples exclude only the matching `sample_name` from candidate retrieval,
-leaving the rest of the catalogue available.
+It uses four held-out class targets drawn from the previously composed full
+SIAC library: one vegetation spectrum, one soil spectrum, one water spectrum,
+and one urban spectrum. Those targets are simulated to each source sensor. For
+each query, the examples exclude only the matching prepared `row_id`, leaving
+the rest of the external full library available.
 
 <div class="fact-grid">
   <div><strong>4 sensors</strong><span>MODIS, Sentinel-2A, Landsat 8, Landsat 9</span></div>
   <div><strong>4 held-out targets</strong><span>vegetation, soil, water, urban</span></div>
-  <div><strong>10 catalogue spectra</strong><span>dense_vegetation, dry_grass, shrubland, bright_soil, dark_soil, concrete, asphalt, clear_water, turbid_water, gypsum_sand</span></div>
+  <div><strong>77,125 library rows</strong><span>external full SIAC retrieval database</span></div>
+  <div><strong>Example k</strong><span>public default `k = 10`</span></div>
   <div><strong>Scored subset</strong><span>blue, green, red, nir, swir1, swir2</span></div>
+  <div><strong>Library root</strong><span>`build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37`</span></div>
   <div><strong>Regenerated</strong><span>2026-03-16 UTC</span></div>
 </div>
 
@@ -47,7 +49,7 @@ Recorded upstream artifacts for this commit:
 
 ## What The Example Demonstrates
 
-- held-out reconstruction on exact library spectra rather than synthetic mixtures
+- held-out reconstruction on exact full-library spectra rather than synthetic mixtures
 - target-sensor mapping between MODIS, Sentinel-2A, Landsat 8, and Landsat 9
 - batch mapping from one CSV input
 - full-spectrum reconstruction over `400-2500 nm`
@@ -55,33 +57,37 @@ Recorded upstream artifacts for this commit:
 
 ## Held-Out Target Design
 
-| Sample id | Class | What it demonstrates |
-| --- | --- | --- |
-| `dense_vegetation` | `vegetation` | Dense green canopy spectrum used as a query while excluding only the matching sample_name. |
-| `bright_soil` | `soil` | Bright mineral soil spectrum used as a query while excluding only the matching sample_name. |
-| `turbid_water` | `water` | Turbid water spectrum used as a query while excluding only the matching sample_name. |
-| `asphalt` | `urban` | Asphalt urban-material spectrum used as a query while excluding only the matching sample_name. |
+| Sample id | Class | Source | Prepared row id |
+| --- | --- | --- | --- |
+| `blue_spruce_needles` | `vegetation` | USGS Spectral Library v7 | `usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF` |
+| `pale_brown_silty_loam` | `soil` | ECOSTRESS Spectral Library v1.0 | `ecostress_v1:ecostress_v1_002334:Pale brown silty loam` |
+| `tap_water` | `water` | ECOSTRESS Spectral Library v1.0 | `ecostress_v1:ecostress_v1_003451:Tap water` |
+| `asphalt_road` | `urban` | USGS Spectral Library v7 | `usgs_v7:usgs_v7_000004:Asphalt GDS376 Blck_Road old ASDFRa AREF` |
 
-The example `siac/` runtime keeps the full ten-spectrum catalogue:
+The retrieval library itself is not vendored under `examples/official_mapping`
+because it contains `77,125` rows. Instead, the committed bundle
+records the expected external SIAC root and the exact held-out rows in
+[`examples/official_mapping/official_source_manifest.json`](../examples/official_mapping/official_source_manifest.json).
 
-- `dense_vegetation`
-- `dry_grass`
-- `shrubland`
-- `bright_soil`
-- `dark_soil`
-- `concrete`
-- `asphalt`
-- `clear_water`
-- `turbid_water`
-- `gypsum_sand`
+Current full-library landcover counts:
+
+- `soil`: `60,905` rows
+- `unlabeled`: `5,932` rows
+- `urban`: `1,474` rows
+- `vegetation`: `8,723` rows
+- `water`: `91` rows
 
 Each example command excludes only its own query spectrum:
 
-- single-sample runs use `--exclude-sample-name <sample_id>`
-- the batch run uses `--self-exclude-sample-id`
+- single-sample runs use `--exclude-row-id <row_id>`
+- the batch input file carries an `exclude_row_id` column, one exact row id per query
 
 That keeps the other held-out targets available as neighbors while still
 preventing self-matches.
+
+All generated outputs on this page use the public default `k = 10`.
+The overlay figure below plots the top `5` neighbors from
+each segment’s `k = 10` retrieval for readability.
 
 ## Band Correspondence
 
@@ -101,27 +107,27 @@ at the corresponding official sheet.
 
 ## Rebuild The Example Bundle
 
-Regenerate the sensor JSON, SIAC-style example library, example queries,
-results, and plot assets:
+Regenerate the sensor JSON, example queries, results, and plot assets:
 
 ```bash
 python3 -m pip install ".[internal-build]"
-python3 scripts/build_official_mapping_examples.py
+python3 scripts/build_official_mapping_examples.py --siac-root build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37
 ```
 
 That script downloads the official source assets, writes the reduced sensor
 schemas into `examples/official_mapping/srfs`, rebuilds the example queries and
-outputs, refreshes the figures in `docs/assets`, and rewrites this page from
-the generated outputs. It requires network access to fetch the upstream
-official source files.
+outputs against the external full SIAC library, refreshes the figures in
+`docs/assets`, and rewrites this page from the generated outputs. It requires
+network access for the upstream SRF files and expects the full SIAC library to
+already exist at `build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37` or at the path passed by `--siac-root`.
 
 ## Prepare The Runtime
 
-Use the bundled SIAC-style library and the official-source SRF JSONs:
+Use the previously composed full SIAC library and the official-source SRF JSONs:
 
 ```bash
 spectral-library prepare-mapping-library \
-  --siac-root examples/official_mapping/siac \
+  --siac-root build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37 \
   --srf-root examples/official_mapping/srfs \
   --source-sensor modis_terra \
   --source-sensor sentinel2a_msi \
@@ -152,9 +158,9 @@ evaluated only on the common comparable subset
 Observed range in the bundled example:
 
 - lowest comparable mean absolute band error:
-  `0.0478` for Sentinel-2A -> MODIS Terra
+  `0.0023` for Sentinel-2A -> Landsat 8
 - highest comparable mean absolute band error:
-  `0.0496` for Landsat 9 -> Landsat 8
+  `0.0031` for Sentinel-2A -> MODIS Terra
 
 The full pairwise summary, including `evaluated_band_ids` and
 `evaluated_band_count`, is in
@@ -165,6 +171,34 @@ water, and urban targets:
 
 ![Held-out batch comparison](assets/official_holdout_batch_examples.png)
 
+## Neighbor Overlay Diagnostic
+
+The figure below shows the two retrievals independently for each held-out
+Landsat 8 query:
+
+- left panel: the visible-to-NIR retrieval over `400-1000 nm`
+- right panel: the NIR-to-SWIR retrieval over `800-2500 nm`
+
+Even when the input query includes all Landsat 8 reflective bands, the runtime
+does **not** do one joint KNN search across the entire source vector. It always
+builds two query vectors, retrieves neighbors independently for each segment,
+and only then combines the reconstructed segments into the final full-spectrum
+product.
+
+Each panel overlays:
+
+- the held-out hyperspectral query spectrum
+- the segment-specific Landsat 8 query inputs used in that retrieval
+- the top `5` neighbors from the segment’s `k = 10`
+  search on the full library, labeled with source-space distance
+
+This makes one important behavior explicit: KNN is query-centric within each
+segment. It ranks candidates by distance to that segment’s query features, but
+it does not require the neighbors to be mutually similar or to share the same
+landcover label.
+
+![Holdout neighbor overlays](assets/official_holdout_neighbor_overlays.png)
+
 ## Single-Sample Mapping Runs
 
 MODIS Terra to Sentinel-2A on the vegetation holdout:
@@ -174,25 +208,24 @@ spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
   --source-sensor modis_terra \
   --target-sensor sentinel2a_msi \
-  --input examples/official_mapping/queries/single/dense_vegetation_modis_terra.csv \
+  --input examples/official_mapping/queries/single/blue_spruce_needles_modis_terra.csv \
   --output-mode target_sensor \
-  --k 3 \
-  --exclude-sample-name dense_vegetation \
-  --output build/official_mapping_runtime/dense_vegetation_modis_to_sentinel2a.csv
+  --exclude-row-id 'usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF' \
+  --output build/official_mapping_runtime/blue_spruce_needles_modis_to_sentinel2a.csv
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/dense_vegetation_modis_to_sentinel2a.csv`](../examples/official_mapping/results/selected/dense_vegetation_modis_to_sentinel2a.csv)
+[`examples/official_mapping/results/selected/blue_spruce_needles_modis_to_sentinel2a.csv`](../examples/official_mapping/results/selected/blue_spruce_needles_modis_to_sentinel2a.csv)
 
 | Band | Truth | Mapped |
 | --- | --- | --- |
-| `ultra_blue` | `0.0351` | `0.1022` |
-| `blue` | `0.0479` | `0.1129` |
-| `green` | `0.0845` | `0.1369` |
-| `red` | `0.0268` | `0.1131` |
-| `nir` | `0.5631` | `0.3350` |
-| `swir1` | `0.4505` | `0.3470` |
-| `swir2` | `0.2858` | `0.3217` |
+| `ultra_blue` | `0.0856` | `0.0668` |
+| `blue` | `0.0858` | `0.0730` |
+| `green` | `0.1065` | `0.1041` |
+| `red` | `0.0621` | `0.0676` |
+| `nir` | `0.3979` | `0.3974` |
+| `swir1` | `0.0971` | `0.0937` |
+| `swir2` | `0.0356` | `0.0323` |
 
 The `ultra_blue` band is shown in the example table because it is a real target
 output for Sentinel-2A, but it is intentionally excluded from the pairwise
@@ -206,15 +239,14 @@ spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
   --source-sensor sentinel2a_msi \
   --target-sensor landsat9_oli \
-  --input examples/official_mapping/queries/single/bright_soil_sentinel2a_msi.csv \
+  --input examples/official_mapping/queries/single/pale_brown_silty_loam_sentinel2a_msi.csv \
   --output-mode target_sensor \
-  --k 3 \
-  --exclude-sample-name bright_soil \
-  --output build/official_mapping_runtime/bright_soil_sentinel2a_to_landsat9.csv
+  --exclude-row-id 'ecostress_v1:ecostress_v1_002334:Pale brown silty loam' \
+  --output build/official_mapping_runtime/pale_brown_silty_loam_sentinel2a_to_landsat9.csv
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/bright_soil_sentinel2a_to_landsat9.csv`](../examples/official_mapping/results/selected/bright_soil_sentinel2a_to_landsat9.csv)
+[`examples/official_mapping/results/selected/pale_brown_silty_loam_sentinel2a_to_landsat9.csv`](../examples/official_mapping/results/selected/pale_brown_silty_loam_sentinel2a_to_landsat9.csv)
 
 Landsat 8 to MODIS on the urban holdout:
 
@@ -223,15 +255,14 @@ spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
   --source-sensor landsat8_oli \
   --target-sensor modis_terra \
-  --input examples/official_mapping/queries/single/asphalt_landsat8_oli.csv \
+  --input examples/official_mapping/queries/single/asphalt_road_landsat8_oli.csv \
   --output-mode target_sensor \
-  --k 3 \
-  --exclude-sample-name asphalt \
-  --output build/official_mapping_runtime/asphalt_landsat8_to_modis.csv
+  --exclude-row-id 'usgs_v7:usgs_v7_000004:Asphalt GDS376 Blck_Road old ASDFRa AREF' \
+  --output build/official_mapping_runtime/asphalt_road_landsat8_to_modis.csv
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/asphalt_landsat8_to_modis.csv`](../examples/official_mapping/results/selected/asphalt_landsat8_to_modis.csv)
+[`examples/official_mapping/results/selected/asphalt_road_landsat8_to_modis.csv`](../examples/official_mapping/results/selected/asphalt_road_landsat8_to_modis.csv)
 
 ## Batch Example
 
@@ -245,11 +276,14 @@ spectral-library map-reflectance-batch \
   --target-sensor sentinel2a_msi \
   --input examples/official_mapping/queries/batch/landsat8_holdout_batch.csv \
   --output-mode target_sensor \
-  --k 3 \
-  --self-exclude-sample-id \
   --output build/official_mapping_runtime/landsat8_to_sentinel2a_holdout_batch.csv \
   --diagnostics-output build/official_mapping_runtime/landsat8_to_sentinel2a_holdout_batch_diagnostics.json
 ```
+
+The batch input file
+[`examples/official_mapping/queries/batch/landsat8_holdout_batch.csv`](../examples/official_mapping/queries/batch/landsat8_holdout_batch.csv)
+includes an `exclude_row_id` column, so each query removes only its own exact
+prepared row from the shared full-library runtime.
 
 Reference output:
 [`examples/official_mapping/results/selected/landsat8_to_sentinel2a_holdout_batch.csv`](../examples/official_mapping/results/selected/landsat8_to_sentinel2a_holdout_batch.csv)
@@ -265,12 +299,11 @@ Reconstruct the full `400-2500 nm` spectrum from the water holdout:
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
   --source-sensor sentinel2a_msi \
-  --input examples/official_mapping/queries/single/turbid_water_sentinel2a_msi.csv \
+  --input examples/official_mapping/queries/single/tap_water_sentinel2a_msi.csv \
   --output-mode full_spectrum \
-  --k 3 \
-  --exclude-sample-name turbid_water \
-  --output build/official_mapping_runtime/turbid_water_sentinel2a_full_spectrum.csv
+  --exclude-row-id 'ecostress_v1:ecostress_v1_003451:Tap water' \
+  --output build/official_mapping_runtime/tap_water_sentinel2a_full_spectrum.csv
 ```
 
 Reference output:
-[`examples/official_mapping/results/selected/turbid_water_sentinel2a_full_spectrum.csv`](../examples/official_mapping/results/selected/turbid_water_sentinel2a_full_spectrum.csv)
+[`examples/official_mapping/results/selected/tap_water_sentinel2a_full_spectrum.csv`](../examples/official_mapping/results/selected/tap_water_sentinel2a_full_spectrum.csv)

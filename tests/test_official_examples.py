@@ -12,7 +12,6 @@ from spectral_library import SensorSRFSchema, SpectralMapper, prepare_mapping_li
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES_ROOT = REPO_ROOT / "examples" / "official_mapping"
 SRF_ROOT = EXAMPLES_ROOT / "srfs"
-SIAC_ROOT = EXAMPLES_ROOT / "siac"
 QUERIES_ROOT = EXAMPLES_ROOT / "queries"
 METRICS_ROOT = EXAMPLES_ROOT / "results" / "metrics"
 DOC_PATH = REPO_ROOT / "docs" / "official_sensor_examples.md"
@@ -22,19 +21,26 @@ COMMON_METRIC_BANDS = ("blue", "green", "red", "nir", "swir1", "swir2")
 class OfficialExamplesTests(unittest.TestCase):
     def test_official_source_manifest_records_hashes(self) -> None:
         payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
-        with (SIAC_ROOT / "tabular" / "siac_spectra_metadata.csv").open("r", encoding="utf-8", newline="") as handle:
-            metadata_rows = list(csv.DictReader(handle))
+        library_reference = payload["example_design"]["library_reference"]
         self.assertIn("generated_at_utc", payload)
         self.assertEqual(tuple(payload["comparison_band_ids"]), COMMON_METRIC_BANDS)
         self.assertIn("example_design", payload)
-        self.assertEqual(payload["example_design"]["strategy"], "held_out_exact_library_spectra")
+        self.assertEqual(payload["example_design"]["strategy"], "held_out_exact_rows_from_external_full_siac_library")
         self.assertEqual(len(payload["example_design"]["held_out_samples"]), 4)
-        self.assertEqual(payload["example_design"]["self_exclusion_policy"], "exclude_matching_sample_name_only")
-        self.assertEqual(len(payload["example_design"]["catalogue_samples"]), 10)
+        self.assertEqual(payload["example_design"]["self_exclusion_policy"], "exclude_matching_row_id_only")
+        self.assertEqual(payload["example_design"]["example_k"], 10)
+        self.assertEqual(library_reference["mode"], "external_full_siac_library")
         self.assertEqual(
-            payload["example_design"]["catalogue_samples"],
-            [row["sample_name"] for row in metadata_rows],
+            library_reference["siac_root"],
+            "build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37",
         )
+        self.assertEqual(library_reference["row_count"], 77125)
+        self.assertEqual(library_reference["landcover_counts"]["water"], 91)
+        self.assertNotIn("catalogue_samples", payload["example_design"])
+        held_out = payload["example_design"]["held_out_samples"]
+        self.assertEqual(held_out[0]["sample_id"], "blue_spruce_needles")
+        self.assertIn("row_id", held_out[0])
+        self.assertIn("source_name", held_out[0])
         self.assertEqual(len(payload["sensors"]), 4)
 
         for sensor in payload["sensors"]:
@@ -61,31 +67,44 @@ class OfficialExamplesTests(unittest.TestCase):
             self.assertEqual(schema.sensor_id, sensor_id)
             self.assertEqual(schema.band_ids(), band_ids)
 
-    def test_official_example_fixture_prepares_and_maps(self) -> None:
+    def test_official_example_full_library_prepares_and_maps_when_available(self) -> None:
+        payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
+        siac_root = REPO_ROOT / payload["example_design"]["library_reference"]["siac_root"]
+        if not siac_root.exists():
+            self.skipTest("Full SIAC library is not available in this checkout.")
+
         with tempfile.TemporaryDirectory() as tmpdir:
             prepared_root = Path(tmpdir) / "prepared"
             prepare_mapping_library(
-                siac_root=SIAC_ROOT,
+                siac_root=siac_root,
                 srf_root=SRF_ROOT,
                 output_root=prepared_root,
-                source_sensors=["modis_terra", "sentinel2a_msi", "landsat8_oli", "landsat9_oli"],
+                source_sensors=["landsat8_oli"],
             )
             manifest = validate_prepared_library(prepared_root)
-            self.assertEqual(manifest.row_count, 10)
+            self.assertEqual(manifest.row_count, payload["example_design"]["library_reference"]["row_count"])
 
-            query_path = QUERIES_ROOT / "single" / "asphalt_landsat8_oli.csv"
+            query_path = QUERIES_ROOT / "single" / "asphalt_road_landsat8_oli.csv"
             reflectance: dict[str, float] = {}
             with query_path.open("r", encoding="utf-8", newline="") as handle:
                 for row in csv.DictReader(handle):
                     reflectance[row["band_id"]] = float(row["reflectance"])
 
             mapper = SpectralMapper(prepared_root, verify_checksums=True)
-            result = mapper.map_reflectance(
+            target_row_id = next(
+                sample["row_id"]
+                for sample in payload["example_design"]["held_out_samples"]
+                if sample["sample_id"] == "asphalt_road"
+            )
+            result = mapper._map_reflectance_internal(
                 source_sensor="landsat8_oli",
                 reflectance=reflectance,
+                valid_mask=None,
                 output_mode="target_sensor",
                 target_sensor="sentinel2a_msi",
-                k=3,
+                k=10,
+                min_valid_bands=1,
+                candidate_row_indices=mapper.candidate_row_indices(exclude_row_ids=[target_row_id]),
             )
 
             self.assertEqual(
@@ -100,7 +119,7 @@ class OfficialExamplesTests(unittest.TestCase):
     def test_pairwise_metrics_and_generated_doc_are_in_sync(self) -> None:
         with (METRICS_ROOT / "pairwise_band_metrics.csv").open("r", encoding="utf-8", newline="") as handle:
             metric_rows = list(csv.DictReader(handle))
-        with (EXAMPLES_ROOT / "results" / "selected" / "dense_vegetation_modis_to_sentinel2a.csv").open(
+        with (EXAMPLES_ROOT / "results" / "selected" / "blue_spruce_needles_modis_to_sentinel2a.csv").open(
             "r",
             encoding="utf-8",
             newline="",
@@ -118,12 +137,13 @@ class OfficialExamplesTests(unittest.TestCase):
         self.assertIn("Generated by scripts/build_official_mapping_examples.py", doc_text)
         self.assertIn(f"`{float(lowest['mean_abs_error']):.4f}` for {lowest['source_label']} -> {lowest['target_label']}", doc_text)
         self.assertIn(f"`{float(highest['mean_abs_error']):.4f}` for {highest['source_label']} -> {highest['target_label']}", doc_text)
-        self.assertIn("held-out reconstruction on exact library spectra", doc_text)
+        self.assertIn("held-out reconstruction on exact full-library spectra", doc_text)
         self.assertIn("common comparable subset", doc_text)
-        self.assertIn("dense_vegetation", doc_text)
+        self.assertIn("blue_spruce_needles", doc_text)
         self.assertIn("landsat8_to_sentinel2a_holdout_batch.csv", doc_text)
-        self.assertIn("--self-exclude-sample-id", doc_text)
-        self.assertIn("--exclude-sample-name dense_vegetation", doc_text)
+        self.assertIn("exclude_row_id", doc_text)
+        self.assertIn("--exclude-row-id 'usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles", doc_text)
+        self.assertIn("public default `k = 10`", doc_text)
         self.assertIn(f"`{float(modis_rows[0]['reflectance']):.4f}`", doc_text)
         self.assertIn("[Mathematical Foundations](theory.md)", doc_text)
         self.assertIn("spectral-library prepare-mapping-library \\\n  --siac-root", doc_text)

@@ -116,4 +116,6 @@ For reproducible cross-sensor examples built from official MODIS, Sentinel-2A,
 Landsat 8, and Landsat 9 response functions, see
 [`docs/official_sensor_examples.md`](docs/official_sensor_examples.md) and the
 bundled example assets in
-[`examples/official_mapping`](examples/official_mapping/README.md).
+[`examples/official_mapping`](examples/official_mapping/README.md). Those
+official examples expect the previously composed full SIAC library recorded in
+the example manifest, rather than a vendored mini runtime.
