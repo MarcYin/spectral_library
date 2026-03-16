@@ -84,6 +84,7 @@ jobs:
               raise SystemExit(f"Missing public exports: {missing}")
           PY
           spectral-library --help >/dev/null
+          spectral-library-internal --help >/dev/null
           spectral-library prepare-mapping-library \
             --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
             --srf-root "${RUNNER_TEMP}/mapping-smoke/srfs" \
@@ -204,3 +205,15 @@ jobs:
             --knn-backend "${{ matrix.backend }}" \
             --knn-eps "${{ matrix.knn_eps }}" \
             --report "${RUNNER_TEMP}/mapping-smoke/ann_benchmark.json"
+          PYTHONPATH=src python scripts/run_full_library_benchmarks.py \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
+            --source-sensor sensor_a \
+            --source-sensor sensor_b \
+            --neighbor-estimator simplex_mixture \
+            --knn-backend numpy \
+            --knn-backend "${{ matrix.backend }}" \
+            --k 2 \
+            --max-test-rows 2 \
+            --output-root "${RUNNER_TEMP}/mapping-smoke/ann_qualification" \
+            --thresholds benchmarks/default_thresholds.json \
+            --fail-on-thresholds

@@ -86,6 +86,7 @@ jobs:
               raise SystemExit(f"Missing public exports: {missing}")
           PY
           spectral-library --help >/dev/null
+          spectral-library-internal --help >/dev/null
           spectral-library prepare-mapping-library \
             --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
             --srf-root "${RUNNER_TEMP}/mapping-smoke/srfs" \

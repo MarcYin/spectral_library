@@ -145,7 +145,7 @@ class CliCommandTests(unittest.TestCase):
                     manifest_row(source_id="src2", fetch_adapter="manual_portal", status="review_required"),
                 ],
             )
-            args = cli.build_parser().parse_args(
+            args = cli.build_internal_parser().parse_args(
                 [
                     "plan-matrix",
                     "--manifest",
@@ -457,7 +457,7 @@ class CliCommandTests(unittest.TestCase):
         mock_main_with_args.assert_called_once_with()
 
     def test_build_parser_defaults_and_version_import(self) -> None:
-        parser = cli.build_parser()
+        parser = cli.build_internal_parser()
         args = parser.parse_args(["plan-matrix"])
         self.assertEqual(args.manifest, str(cli.DEFAULT_MANIFEST))
         self.assertEqual(__version__, "0.2.0")

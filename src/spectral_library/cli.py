@@ -39,6 +39,24 @@ from .siac import build_siac_library
 
 DEFAULT_MANIFEST = Path("manifests/sources.csv")
 DEFAULT_USER_AGENT = f"spectral-library/{__version__}"
+PUBLIC_COMMANDS = (
+    "prepare-mapping-library",
+    "map-reflectance",
+    "map-reflectance-batch",
+    "benchmark-mapping",
+    "validate-prepared-library",
+)
+INTERNAL_COMMANDS = (
+    "plan-matrix",
+    "fetch-source",
+    "fetch-batch",
+    "assemble-database",
+    "tidy-results",
+    "normalize-sources",
+    "plot-quality",
+    "filter-coverage",
+    "build-siac-library",
+)
 
 
 def _utc_timestamp() -> str:
@@ -1040,13 +1058,15 @@ def cmd_validate_prepared_library(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="spectral-library")
+def _build_base_parser(*, prog: str) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument("--json-errors", action="store_true", help="Emit machine-readable JSON errors.")
     parser.add_argument("--json-logs", action="store_true", help="Emit structured JSON log events to stderr.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    return parser
 
+
+def _add_public_subparsers(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     prepare_mapping_parser = subparsers.add_parser(
         "prepare-mapping-library",
         help="Build a prepared runtime layer for retrieval-based spectral mapping.",
@@ -1132,7 +1152,16 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--no-verify-checksums", action="store_true")
     validate_parser.set_defaults(func=cmd_validate_prepared_library)
 
-    plan_parser = subparsers.add_parser("plan-matrix", help="Create a GitHub Actions matrix from the manifest.")
+
+def _add_internal_subparsers(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    *,
+    visible: bool,
+) -> None:
+    plan_parser = subparsers.add_parser(
+        "plan-matrix",
+        help="Create a GitHub Actions matrix from the manifest." if visible else argparse.SUPPRESS,
+    )
     plan_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     plan_parser.add_argument("--source-ids", default="")
     plan_parser.add_argument("--tiers", default="")
@@ -1142,7 +1171,10 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("--output", default="")
     plan_parser.set_defaults(func=cmd_plan_matrix)
 
-    fetch_parser = subparsers.add_parser("fetch-source", help="Fetch one source from the manifest.")
+    fetch_parser = subparsers.add_parser(
+        "fetch-source",
+        help="Fetch one source from the manifest." if visible else argparse.SUPPRESS,
+    )
     fetch_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     fetch_parser.add_argument("--source-id", required=True)
     fetch_parser.add_argument("--output-root", default="build/sources")
@@ -1150,7 +1182,10 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     fetch_parser.set_defaults(func=cmd_fetch_source)
 
-    batch_parser = subparsers.add_parser("fetch-batch", help="Fetch multiple sources and tidy their output directories.")
+    batch_parser = subparsers.add_parser(
+        "fetch-batch",
+        help="Fetch multiple sources and tidy their output directories." if visible else argparse.SUPPRESS,
+    )
     batch_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     batch_parser.add_argument("--output-root", default="build/local_sources")
     batch_parser.add_argument("--fetch-mode", choices=["metadata", "assets"], default="assets")
@@ -1165,19 +1200,25 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--no-tidy", action="store_true")
     batch_parser.set_defaults(func=cmd_fetch_batch)
 
-    assemble_parser = subparsers.add_parser("assemble-database", help="Assemble the catalog database from fetch outputs.")
+    assemble_parser = subparsers.add_parser(
+        "assemble-database",
+        help="Assemble the catalog database from fetch outputs." if visible else argparse.SUPPRESS,
+    )
     assemble_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     assemble_parser.add_argument("--results-root", default="build/sources")
     assemble_parser.add_argument("--output-root", default="build/assembled")
     assemble_parser.set_defaults(func=cmd_assemble_database)
 
-    tidy_parser = subparsers.add_parser("tidy-results", help="Reorganize fetched source directories into metadata/docs/data.")
+    tidy_parser = subparsers.add_parser(
+        "tidy-results",
+        help="Reorganize fetched source directories into metadata/docs/data." if visible else argparse.SUPPRESS,
+    )
     tidy_parser.add_argument("--results-root", default="build/local_sources")
     tidy_parser.set_defaults(func=cmd_tidy_results)
 
     normalize_parser = subparsers.add_parser(
         "normalize-sources",
-        help="Normalize downloaded spectra onto the shared 400-2500 nm, 1 nm grid.",
+        help="Normalize downloaded spectra onto the shared 400-2500 nm, 1 nm grid." if visible else argparse.SUPPRESS,
     )
     normalize_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     normalize_parser.add_argument("--results-root", default="build/local_sources")
@@ -1188,7 +1229,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     plot_parser = subparsers.add_parser(
         "plot-quality",
-        help="Generate QA plots from normalized tabular outputs.",
+        help="Generate QA plots from normalized tabular outputs." if visible else argparse.SUPPRESS,
     )
     plot_parser.add_argument("--normalized-root", default="build/normalized")
     plot_parser.add_argument("--output-root", default="")
@@ -1197,7 +1238,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     filter_parser = subparsers.add_parser(
         "filter-coverage",
-        help="Retain only normalized spectra above a minimum grid coverage threshold.",
+        help="Retain only normalized spectra above a minimum grid coverage threshold." if visible else argparse.SUPPRESS,
     )
     filter_parser.add_argument("--normalized-root", default="build/normalized")
     filter_parser.add_argument("--output-root", required=True)
@@ -1206,7 +1247,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     siac_parser = subparsers.add_parser(
         "build-siac-library",
-        help="Build the SIAC-oriented spectral library package from a normalized dataset.",
+        help="Build the SIAC-oriented spectral library package from a normalized dataset." if visible else argparse.SUPPRESS,
     )
     siac_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     siac_parser.add_argument("--normalized-root", default="build/normalized_rebuild_v9_final")
@@ -1215,19 +1256,58 @@ def build_parser() -> argparse.ArgumentParser:
     siac_parser.add_argument("--exclude-spectra-csv", default="")
     siac_parser.set_defaults(func=cmd_build_siac_library)
 
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = _build_base_parser(prog="spectral-library")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_public_subparsers(subparsers)
     return parser
 
 
-def main_with_args(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+def build_internal_parser() -> argparse.ArgumentParser:
+    parser = _build_base_parser(prog="spectral-library-internal")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_internal_subparsers(subparsers, visible=True)
+    return parser
+
+
+def _build_legacy_dispatch_parser() -> argparse.ArgumentParser:
+    parser = _build_base_parser(prog="spectral-library")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_public_subparsers(subparsers)
+    _add_internal_subparsers(subparsers, visible=False)
+    return parser
+
+
+def _first_command_position(argv: Sequence[str]) -> tuple[int | None, str | None]:
+    for index, token in enumerate(argv):
+        if not str(token).startswith("-"):
+            return index, str(token)
+    return None, None
+
+
+def _dispatch_parser_for_argv(argv: Sequence[str]) -> tuple[argparse.ArgumentParser, list[str]]:
+    argv_list = list(argv)
+    command_index, command_token = _first_command_position(argv_list)
+    if command_token == "internal":
+        if command_index is None:
+            return build_internal_parser(), argv_list
+        return build_internal_parser(), argv_list[:command_index] + argv_list[command_index + 1 :]
+    if command_token in INTERNAL_COMMANDS:
+        return _build_legacy_dispatch_parser(), argv_list
+    return build_parser(), argv_list
+
+
+def _run_parser(parser: argparse.ArgumentParser, argv: list[str]) -> int:
     args = parser.parse_args(argv)
     args._cli_started_monotonic = time.monotonic()
+    command_name = str(getattr(args, "command", ""))
     try:
         return args.func(args)
     except SpectralLibraryError as error:
         _emit_cli_log(
             args,
-            command=args.command,
+            command=command_name,
             event="command_failed",
             level="error",
             context={
@@ -1236,12 +1316,27 @@ def main_with_args(argv: list[str] | None = None) -> int:
                 **({"context": error.context} if error.context else {}),
             },
         )
-        _emit_cli_error(error, command=args.command, json_errors=bool(args.json_errors))
+        _emit_cli_error(error, command=command_name, json_errors=bool(args.json_errors))
         return 2
+
+
+def main_with_args(argv: list[str] | None = None) -> int:
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    parser, dispatched_argv = _dispatch_parser_for_argv(argv_list)
+    return _run_parser(parser, dispatched_argv)
+
+
+def main_internal_with_args(argv: list[str] | None = None) -> int:
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    return _run_parser(build_internal_parser(), argv_list)
 
 
 def main() -> int:
     return main_with_args()
+
+
+def main_internal() -> int:
+    return main_internal_with_args()
 
 
 if __name__ == "__main__":

@@ -99,6 +99,7 @@ dev = [
 
 [project.scripts]
 spectral-library = "spectral_library.cli:main"
+spectral-library-internal = "spectral_library.cli:main_internal"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -172,6 +172,7 @@ class CliContractTests(unittest.TestCase):
                 "validate-prepared-library",
             }.issubset(set(command_parsers))
         )
+        self.assertFalse(set(cli.INTERNAL_COMMANDS) & set(command_parsers))
 
         prepare_options = {option for action in command_parsers["prepare-mapping-library"]._actions for option in action.option_strings}
         map_options = {option for action in command_parsers["map-reflectance"]._actions for option in action.option_strings}
@@ -236,6 +237,15 @@ class CliContractTests(unittest.TestCase):
             )
         )
         self.assertTrue({"numpy", "scipy_ckdtree", "faiss", "pynndescent", "scann"}.issubset(backend_choices))
+
+    def test_internal_cli_parser_exposes_retained_maintainer_commands(self) -> None:
+        parser = cli.build_internal_parser()
+        subparsers_action = next(
+            action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+        )
+        command_parsers = subparsers_action.choices
+        self.assertTrue(set(cli.INTERNAL_COMMANDS).issubset(set(command_parsers)))
+        self.assertFalse(set(cli.PUBLIC_COMMANDS) & set(command_parsers))
 
     def test_cli_json_error_envelope_is_stable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

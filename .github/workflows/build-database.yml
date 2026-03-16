@@ -70,7 +70,7 @@ jobs:
           source_ids="${INPUT_SOURCE_IDS:-}"
           limit="${INPUT_LIMIT:-0}"
 
-          spectral-library plan-matrix \
+          spectral-library-internal plan-matrix \
             --manifest manifests/sources.csv \
             --tiers "$tiers" \
             --statuses "$statuses" \
@@ -130,7 +130,7 @@ jobs:
         env:
           FETCH_MODE: ${{ github.event.inputs.fetch_mode || 'metadata' }}
         run: |
-          spectral-library fetch-source \
+          spectral-library-internal fetch-source \
             --manifest manifests/sources.csv \
             --source-id "${{ matrix.source_id }}" \
             --output-root .cache/spectral-library \
@@ -169,7 +169,7 @@ jobs:
 
       - name: Assemble DuckDB and Parquet outputs
         run: |
-          spectral-library assemble-database \
+          spectral-library-internal assemble-database \
             --manifest manifests/sources.csv \
             --results-root build/downloaded \
             --output-root build/assembled
