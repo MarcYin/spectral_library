@@ -382,6 +382,62 @@ class MappingWorkflowTests(unittest.TestCase):
                     k=1,
                 )
 
+    def test_distance_weighted_neighbor_estimator_is_available_without_changing_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            mean_result = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance={"blue": 0.79, "swir": 0.21},
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=2,
+            )
+            weighted_result = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance={"blue": 0.79, "swir": 0.21},
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=2,
+                neighbor_estimator="distance_weighted_mean",
+            )
+
+            assert mean_result.target_reflectance is not None
+            assert weighted_result.target_reflectance is not None
+            self.assertTrue(np.allclose(mean_result.target_reflectance, np.array([0.70, 0.225])))
+            self.assertTrue(np.allclose(weighted_result.target_reflectance, np.array([0.79, 0.21])))
+            self.assertEqual(mean_result.diagnostics["neighbor_estimator"], "mean")
+            self.assertEqual(weighted_result.diagnostics["neighbor_estimator"], "distance_weighted_mean")
+
+    def test_mapping_diagnostics_include_query_and_neighbor_band_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            result = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance={"blue": 0.80, "swir": 0.20},
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=1,
+            )
+
+            vnir_diag = result.diagnostics["segments"]["vnir"]
+            swir_diag = result.diagnostics["segments"]["swir"]
+            self.assertEqual(vnir_diag["query_band_ids"], ["blue"])
+            self.assertEqual(vnir_diag["query_band_values"], [0.8])
+            self.assertEqual(vnir_diag["query_valid_mask"], [True])
+            self.assertEqual(vnir_diag["neighbor_ids"], ["fixture_source:vnir_high:vnir_high"])
+            self.assertEqual(len(vnir_diag["neighbor_band_values"]), 1)
+            self.assertAlmostEqual(vnir_diag["neighbor_band_values"][0][0], 0.8, places=6)
+            self.assertEqual(swir_diag["query_band_ids"], ["swir"])
+            self.assertEqual(swir_diag["query_band_values"], [0.2])
+            self.assertEqual(swir_diag["query_valid_mask"], [True])
+            self.assertEqual(swir_diag["neighbor_ids"], ["fixture_source:vnir_high:vnir_high"])
+            self.assertEqual(len(swir_diag["neighbor_band_values"]), 1)
+            self.assertAlmostEqual(swir_diag["neighbor_band_values"][0][0], 0.2, places=6)
+
     def test_benchmark_mapping_writes_target_and_spectral_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -397,9 +453,27 @@ class MappingWorkflowTests(unittest.TestCase):
 
             self.assertEqual(report["source_sensor_id"], "sensor_a")
             self.assertEqual(report["target_sensor_id"], "sensor_b")
+            self.assertEqual(report["neighbor_estimator"], "mean")
             self.assertEqual(report["target_sensor"]["band_ids"], ["target_vnir", "target_swir"])
             self.assertIn("retrieval", report["full_spectrum"])
             self.assertIn("regression_baseline", report["target_sensor"])
+
+    def test_benchmark_mapping_supports_distance_weighted_estimator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+
+            report = benchmark_mapping(
+                fixture["prepared_root"],
+                "sensor_a",
+                "sensor_b",
+                k=2,
+                test_fraction=0.25,
+                random_seed=0,
+                neighbor_estimator="distance_weighted_mean",
+            )
+
+            self.assertEqual(report["neighbor_estimator"], "distance_weighted_mean")
+            self.assertIn("retrieval", report["target_sensor"])
 
     def test_segment_isolation_keeps_swir_output_stable_when_only_vnir_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -512,6 +586,7 @@ class MappingWorkflowTests(unittest.TestCase):
                 target_sensor="sensor_a",
                 k=2,
                 min_valid_bands=1,
+                neighbor_estimator="mean",
                 candidate_row_indices=[0, 1],
             )
 
@@ -734,6 +809,20 @@ class MappingWorkflowTests(unittest.TestCase):
                     output_mode="vnir_spectrum",
                     min_valid_bands=0,
                 )
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance=[0.1, 0.2],
+                    output_mode="vnir_spectrum",
+                    neighbor_estimator="unsupported",
+                )
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance_batch(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[[0.1, 0.2]],
+                    output_mode="vnir_spectrum",
+                    neighbor_estimator="unsupported",
+                )
 
     def test_map_reflectance_validates_candidate_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -749,6 +838,7 @@ class MappingWorkflowTests(unittest.TestCase):
                     target_sensor=None,
                     k=1,
                     min_valid_bands=1,
+                    neighbor_estimator="mean",
                     candidate_row_indices=[],
                 )
             with self.assertRaises(MappingInputError):
@@ -760,6 +850,7 @@ class MappingWorkflowTests(unittest.TestCase):
                     target_sensor=None,
                     k=1,
                     min_valid_bands=1,
+                    neighbor_estimator="mean",
                     candidate_row_indices=[-1],
                 )
 
@@ -1431,6 +1522,7 @@ class MappingValidationTests(unittest.TestCase):
                     valid_mask=np.array([True]),
                     k=1,
                     min_valid_bands=1,
+                    neighbor_estimator="mean",
                     candidate_row_indices=np.array([0, 1], dtype=np.int64),
                 )
 
@@ -1443,6 +1535,7 @@ class MappingValidationTests(unittest.TestCase):
                     valid_mask=np.array([True]),
                     k=1,
                     min_valid_bands=1,
+                    neighbor_estimator="mean",
                     candidate_row_indices=np.array([], dtype=np.int64),
                 )
 
@@ -1511,6 +1604,7 @@ class MappingValidationTests(unittest.TestCase):
                     target_sensor=None,
                     k=1,
                     min_valid_bands=1,
+                    neighbor_estimator="mean",
                     candidate_row_indices=None,
                 )
             with self.assertRaises(MappingInputError):
@@ -1631,12 +1725,17 @@ class MappingCliTests(unittest.TestCase):
                         "0.25",
                         "--random-seed",
                         "0",
+                        "--neighbor-estimator",
+                        "distance_weighted_mean",
                         "--report",
                         str(report_path),
                     ]
                 )
             self.assertEqual(benchmark_exit, 0)
+            benchmark_payload = json.loads(stdout.getvalue())
+            self.assertEqual(benchmark_payload["neighbor_estimator"], "distance_weighted_mean")
             report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["neighbor_estimator"], "distance_weighted_mean")
             self.assertEqual(report["target_sensor_id"], "sensor_b")
             self.assertEqual(report["target_sensor"]["band_ids"], ["target_vnir", "target_swir"])
 
@@ -1811,8 +1910,8 @@ class MappingCliTests(unittest.TestCase):
                 input_path,
                 ["band_id", "reflectance"],
                 [
-                    {"band_id": "blue", "reflectance": 0.80},
-                    {"band_id": "swir", "reflectance": 0.20},
+                    {"band_id": "blue", "reflectance": 0.79},
+                    {"band_id": "swir", "reflectance": 0.21},
                 ],
             )
 
@@ -1834,7 +1933,9 @@ class MappingCliTests(unittest.TestCase):
                         "--output-mode",
                         "target_sensor",
                         "--k",
-                        "1",
+                        "2",
+                        "--neighbor-estimator",
+                        "distance_weighted_mean",
                         "--output",
                         str(output_path),
                     ]
@@ -1843,11 +1944,21 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             stdout_payload = json.loads(stdout.getvalue())
             self.assertEqual(stdout_payload["output_path"], str(output_path))
+            self.assertEqual(stdout_payload["neighbor_estimator"], "distance_weighted_mean")
+            with output_path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertAlmostEqual(float(rows[0]["reflectance"]), 0.79, places=6)
+            self.assertAlmostEqual(float(rows[1]["reflectance"]), 0.21, places=6)
             log_payloads = [json.loads(line) for line in stderr.getvalue().splitlines() if line.strip()]
             self.assertEqual([payload["event"] for payload in log_payloads], ["command_started", "command_completed"])
             self.assertEqual(log_payloads[0]["context"]["input_path"], str(input_path))
+            self.assertEqual(log_payloads[0]["context"]["neighbor_estimator"], "distance_weighted_mean")
+            self.assertEqual(log_payloads[0]["level"], "info")
             self.assertEqual(log_payloads[1]["context"]["written_rows"], 2)
             self.assertEqual(log_payloads[1]["context"]["segment_statuses"], {"swir": "ok", "vnir": "ok"})
+            self.assertEqual(log_payloads[1]["level"], "info")
+            self.assertIsInstance(log_payloads[1]["elapsed_ms"], int)
+            self.assertGreaterEqual(log_payloads[1]["elapsed_ms"], 0)
 
     def test_map_reflectance_batch_command_accepts_long_input_and_writes_wide_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2001,8 +2112,71 @@ class MappingCliTests(unittest.TestCase):
             log_payloads = [json.loads(line) for line in stderr.getvalue().splitlines() if line.strip()]
             self.assertEqual([payload["event"] for payload in log_payloads], ["command_started", "command_completed"])
             self.assertEqual(log_payloads[0]["context"]["input_path"], str(input_path))
+            self.assertEqual(log_payloads[0]["level"], "info")
             self.assertEqual(log_payloads[1]["context"]["sample_count"], 2)
             self.assertEqual(log_payloads[1]["context"]["output_columns"], ["target_vnir", "target_swir"])
+            self.assertEqual(log_payloads[1]["level"], "info")
+            self.assertIsInstance(log_payloads[1]["elapsed_ms"], int)
+            self.assertGreaterEqual(log_payloads[1]["elapsed_ms"], 0)
+
+    def test_map_reflectance_command_emits_failure_log_before_json_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "invalid_query.csv"
+
+            _write_csv(
+                input_path,
+                ["band_id", "reflectance"],
+                [
+                    {"band_id": "blue", "reflectance": "not-a-number"},
+                ],
+            )
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = cli.main_with_args(
+                    [
+                        "--json-logs",
+                        "--json-errors",
+                        "map-reflectance",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--target-sensor",
+                        "sensor_b",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "target_sensor",
+                        "--output",
+                        str(root / "unused.csv"),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(stdout.getvalue(), "")
+            stderr_text = stderr.getvalue()
+            first_newline = stderr_text.find("\n")
+            second_newline = stderr_text.find("\n", first_newline + 1)
+            self.assertGreaterEqual(first_newline, 0)
+            self.assertGreaterEqual(second_newline, 0)
+            started_payload = json.loads(stderr_text[:first_newline])
+            failed_payload = json.loads(stderr_text[first_newline + 1 : second_newline])
+            error_payload = json.loads(stderr_text[second_newline + 1 :])
+            self.assertEqual(started_payload["event"], "command_started")
+            self.assertEqual(started_payload["level"], "info")
+            self.assertEqual(failed_payload["event"], "command_failed")
+            self.assertEqual(failed_payload["level"], "error")
+            self.assertEqual(failed_payload["command"], "map-reflectance")
+            self.assertEqual(failed_payload["context"]["error_code"], "invalid_input_csv")
+            self.assertEqual(failed_payload["context"]["context"]["path"], str(input_path))
+            self.assertIsInstance(failed_payload["elapsed_ms"], int)
+            self.assertGreaterEqual(failed_payload["elapsed_ms"], 0)
+            self.assertEqual(error_payload["command"], "map-reflectance")
+            self.assertEqual(error_payload["error_code"], "invalid_input_csv")
 
     def test_map_reflectance_batch_command_reports_sample_context_in_json_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

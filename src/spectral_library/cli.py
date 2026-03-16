@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+import time
 
 from ._version import __version__
 from .batch import fetch_batch, tidy_source_directory
@@ -15,6 +16,7 @@ from .fetchers import get_fetcher
 from .manifest import filter_sources, load_manifest, manifest_sha256, split_csv_arg
 from .mapping import (
     CANONICAL_WAVELENGTHS,
+    SUPPORTED_NEIGHBOR_ESTIMATORS,
     SUPPORTED_OUTPUT_MODES,
     SWIR_WAVELENGTHS,
     VNIR_WAVELENGTHS,
@@ -40,17 +42,27 @@ def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _emit_cli_log(args: argparse.Namespace, *, command: str, event: str, context: dict[str, object] | None = None) -> None:
+def _emit_cli_log(
+    args: argparse.Namespace,
+    *,
+    command: str,
+    event: str,
+    context: dict[str, object] | None = None,
+    level: str = "info",
+) -> None:
     if not bool(getattr(args, "json_logs", False)):
         return
     payload: dict[str, object] = {
         "command": command,
         "event": event,
-        "level": "info",
+        "level": level,
         "timestamp": _utc_timestamp(),
     }
     if context:
         payload["context"] = context
+    started_at = getattr(args, "_cli_started_monotonic", None)
+    if started_at is not None and event != "command_started":
+        payload["elapsed_ms"] = int(round((time.monotonic() - float(started_at)) * 1000.0))
     print(json.dumps(payload, sort_keys=True), file=sys.stderr)
 
 
@@ -637,6 +649,7 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
             "input_path": str(Path(args.input)),
             "k": args.k,
             "min_valid_bands": args.min_valid_bands,
+            "neighbor_estimator": args.neighbor_estimator,
             "output_mode": args.output_mode,
             "output_path": str(Path(args.output)),
             "prepared_root": str(Path(args.prepared_root)),
@@ -654,6 +667,7 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
         target_sensor=args.target_sensor or None,
         k=args.k,
         min_valid_bands=args.min_valid_bands,
+        neighbor_estimator=args.neighbor_estimator,
         exclude_row_ids=exclude_row_ids,
         exclude_sample_names=exclude_sample_names,
     )
@@ -675,6 +689,7 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
             "written_rows": written_rows,
             "excluded_row_ids": exclude_row_ids,
             "excluded_sample_names": exclude_sample_names,
+            "neighbor_estimator": args.neighbor_estimator,
         }
     )
     _emit_cli_log(
@@ -711,6 +726,7 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
             "output_path": str(Path(args.output)),
             "prepared_root": str(Path(args.prepared_root)),
             "self_exclude_sample_id": bool(args.self_exclude_sample_id),
+            "neighbor_estimator": args.neighbor_estimator,
             "source_sensor": args.source_sensor,
             "target_sensor": args.target_sensor or None,
         },
@@ -726,6 +742,7 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
         target_sensor=args.target_sensor or None,
         k=args.k,
         min_valid_bands=args.min_valid_bands,
+        neighbor_estimator=args.neighbor_estimator,
         exclude_row_ids=exclude_row_ids,
         exclude_sample_names=exclude_sample_names,
         exclude_row_ids_per_sample=input_exclude_row_ids,
@@ -750,6 +767,7 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
         "written_rows": written_rows,
         "excluded_row_ids": exclude_row_ids,
         "excluded_sample_names": exclude_sample_names,
+        "neighbor_estimator": args.neighbor_estimator,
         "self_exclude_sample_id": bool(args.self_exclude_sample_id),
         "input_exclude_row_id_column": any(value is not None for value in input_exclude_row_ids),
     }
@@ -784,6 +802,7 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
             "prepared_root": str(Path(args.prepared_root)),
             "random_seed": args.random_seed,
             "report": str(Path(args.report)),
+            "neighbor_estimator": args.neighbor_estimator,
             "source_sensor": args.source_sensor,
             "target_sensor": args.target_sensor,
             "test_fraction": args.test_fraction,
@@ -796,6 +815,7 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
         k=args.k,
         test_fraction=args.test_fraction,
         random_seed=args.random_seed,
+        neighbor_estimator=args.neighbor_estimator,
     )
     report_path = Path(args.report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -805,6 +825,7 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
         command="benchmark-mapping",
         event="command_completed",
         context={
+            "neighbor_estimator": args.neighbor_estimator,
             "report": str(report_path),
             "test_rows": report["test_rows"],
             "train_rows": report["train_rows"],
@@ -815,6 +836,7 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
             {
                 "prepared_root": str(Path(args.prepared_root)),
                 "report": str(report_path),
+                "neighbor_estimator": args.neighbor_estimator,
                 "test_rows": report["test_rows"],
                 "train_rows": report["train_rows"],
             },
@@ -885,6 +907,7 @@ def build_parser() -> argparse.ArgumentParser:
     map_parser.add_argument("--output-mode", choices=list(SUPPORTED_OUTPUT_MODES), required=True)
     map_parser.add_argument("--k", type=int, default=10)
     map_parser.add_argument("--min-valid-bands", type=int, default=1)
+    map_parser.add_argument("--neighbor-estimator", choices=list(SUPPORTED_NEIGHBOR_ESTIMATORS), default="mean")
     map_parser.add_argument("--exclude-row-id", action="append", default=[])
     map_parser.add_argument("--exclude-sample-name", action="append", default=[])
     map_parser.add_argument("--output", required=True)
@@ -901,6 +924,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_map_parser.add_argument("--output-mode", choices=list(SUPPORTED_OUTPUT_MODES), required=True)
     batch_map_parser.add_argument("--k", type=int, default=10)
     batch_map_parser.add_argument("--min-valid-bands", type=int, default=1)
+    batch_map_parser.add_argument("--neighbor-estimator", choices=list(SUPPORTED_NEIGHBOR_ESTIMATORS), default="mean")
     batch_map_parser.add_argument("--exclude-row-id", action="append", default=[])
     batch_map_parser.add_argument("--exclude-sample-name", action="append", default=[])
     batch_map_parser.add_argument("--self-exclude-sample-id", action="store_true")
@@ -918,6 +942,7 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--k", type=int, default=10)
     benchmark_parser.add_argument("--test-fraction", type=float, default=0.2)
     benchmark_parser.add_argument("--random-seed", type=int, default=0)
+    benchmark_parser.add_argument("--neighbor-estimator", choices=list(SUPPORTED_NEIGHBOR_ESTIMATORS), default="mean")
     benchmark_parser.add_argument("--report", required=True)
     benchmark_parser.set_defaults(func=cmd_benchmark_mapping)
 
@@ -1018,9 +1043,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main_with_args(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    args._cli_started_monotonic = time.monotonic()
     try:
         return args.func(args)
     except SpectralLibraryError as error:
+        _emit_cli_log(
+            args,
+            command=args.command,
+            event="command_failed",
+            level="error",
+            context={
+                "error_code": error.code,
+                "message": error.message,
+                **({"context": error.context} if error.context else {}),
+            },
+        )
         _emit_cli_error(error, command=args.command, json_errors=bool(args.json_errors))
         return 2
 

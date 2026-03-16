@@ -24,6 +24,10 @@ SUPPORTED_OUTPUT_MODES = (
     "swir_spectrum",
     "full_spectrum",
 )
+SUPPORTED_NEIGHBOR_ESTIMATORS = (
+    "mean",
+    "distance_weighted_mean",
+)
 SEGMENTS = ("vnir", "swir")
 CANONICAL_START_NM = 400
 CANONICAL_END_NM = 2500
@@ -378,10 +382,13 @@ class _SegmentRetrieval:
     valid_band_count: int
     query_band_ids: tuple[str, ...]
     success: bool
+    query_band_values: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    query_valid_mask: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=bool))
     reconstructed: np.ndarray | None = None
     neighbor_indices: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int64))
     neighbor_ids: tuple[str, ...] = ()
     neighbor_distances: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    neighbor_band_values: np.ndarray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
     reason: str | None = None
 
 
@@ -489,12 +496,26 @@ def _ensure_supported_output_mode(output_mode: str) -> None:
         )
 
 
-def _validate_mapping_request(output_mode: str, *, k: int, min_valid_bands: int) -> None:
+def _validate_mapping_request(
+    output_mode: str,
+    *,
+    k: int,
+    min_valid_bands: int,
+    neighbor_estimator: str = "mean",
+) -> None:
     _ensure_supported_output_mode(output_mode)
     if k < 1:
         raise MappingInputError("k must be at least 1.", context={"k": k})
     if min_valid_bands < 1:
         raise MappingInputError("min_valid_bands must be at least 1.", context={"min_valid_bands": min_valid_bands})
+    if neighbor_estimator not in SUPPORTED_NEIGHBOR_ESTIMATORS:
+        raise MappingInputError(
+            "neighbor_estimator is not supported.",
+            context={
+                "neighbor_estimator": neighbor_estimator,
+                "supported_neighbor_estimators": list(SUPPORTED_NEIGHBOR_ESTIMATORS),
+            },
+        )
 
 
 def _normalized_source_sensors(source_sensors: Sequence[str]) -> list[str]:
@@ -623,6 +644,32 @@ def _ordered_neighbor_rows(
         local_top = np.argpartition(distances, neighbor_count - 1)[:neighbor_count]
     ordered_local = local_top[np.lexsort((candidate_row_indices[local_top], distances[local_top]))]
     return candidate_row_indices[ordered_local], np.asarray(distances[ordered_local], dtype=np.float64)
+
+
+def _combine_neighbor_spectra(
+    hyperspectral_rows: np.ndarray,
+    neighbor_indices: np.ndarray,
+    neighbor_distances: np.ndarray,
+    *,
+    neighbor_estimator: str,
+) -> np.ndarray:
+    neighbor_spectra = np.asarray(hyperspectral_rows[neighbor_indices], dtype=np.float64)
+    if neighbor_estimator == "mean":
+        return np.asarray(np.mean(neighbor_spectra, axis=0), dtype=np.float64)
+    if neighbor_estimator == "distance_weighted_mean":
+        exact_match_mask = np.asarray(neighbor_distances <= 1e-12, dtype=bool)
+        if np.any(exact_match_mask):
+            return np.asarray(np.mean(neighbor_spectra[exact_match_mask], axis=0), dtype=np.float64)
+        weights = 1.0 / np.asarray(neighbor_distances, dtype=np.float64)
+        normalized_weights = weights / float(np.sum(weights))
+        return np.asarray(normalized_weights @ neighbor_spectra, dtype=np.float64)
+    raise MappingInputError(
+        "neighbor_estimator is not supported.",
+        context={
+            "neighbor_estimator": neighbor_estimator,
+            "supported_neighbor_estimators": list(SUPPORTED_NEIGHBOR_ESTIMATORS),
+        },
+    )
 
 
 def _source_retrieval_bands(schema: SensorSRFSchema, segment: str) -> tuple[SensorBandDefinition, ...]:
@@ -1415,6 +1462,7 @@ class SpectralMapper:
         valid_mask: np.ndarray,
         k: int,
         min_valid_bands: int,
+        neighbor_estimator: str,
         candidate_row_indices: np.ndarray,
     ) -> _SegmentRetrieval:
         source_schema = self.get_sensor_schema(source_sensor)
@@ -1425,6 +1473,8 @@ class SpectralMapper:
                 segment=segment,
                 valid_band_count=valid_band_count,
                 query_band_ids=query_band_ids,
+                query_band_values=np.asarray(query_values, dtype=np.float64),
+                query_valid_mask=np.asarray(valid_mask, dtype=bool),
                 success=False,
                 reason="insufficient_valid_bands",
             )
@@ -1446,19 +1496,24 @@ class SpectralMapper:
             k=k,
         )
 
-        reconstructed = np.asarray(
-            np.mean(self._load_hyperspectral(segment)[neighbor_indices], axis=0),
-            dtype=np.float64,
+        reconstructed = _combine_neighbor_spectra(
+            self._load_hyperspectral(segment),
+            neighbor_indices,
+            neighbor_distances,
+            neighbor_estimator=neighbor_estimator,
         )
         return _SegmentRetrieval(
             segment=segment,
             valid_band_count=valid_band_count,
             query_band_ids=query_band_ids,
+            query_band_values=np.asarray(query_values, dtype=np.float64),
+            query_valid_mask=np.asarray(valid_mask, dtype=bool),
             success=True,
             reconstructed=reconstructed,
             neighbor_indices=neighbor_indices,
             neighbor_ids=tuple(self._row_ids[index] for index in neighbor_indices),
             neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
+            neighbor_band_values=np.asarray(source_matrix[neighbor_indices], dtype=np.float64),
         )
 
     def _retrieve_segment_batch(
@@ -1470,6 +1525,7 @@ class SpectralMapper:
         valid_mask: np.ndarray,
         k: int,
         min_valid_bands: int,
+        neighbor_estimator: str,
         candidate_row_indices: np.ndarray,
     ) -> tuple[_SegmentRetrieval, ...]:
         source_schema = self.get_sensor_schema(source_sensor)
@@ -1495,6 +1551,8 @@ class SpectralMapper:
                         segment=segment,
                         valid_band_count=valid_band_count,
                         query_band_ids=query_band_ids,
+                        query_band_values=np.asarray(query_values[batch_index], dtype=np.float64),
+                        query_valid_mask=np.asarray(valid_mask[batch_index], dtype=bool),
                         success=False,
                         reason="insufficient_valid_bands",
                     )
@@ -1515,19 +1573,24 @@ class SpectralMapper:
                     candidate_row_indices,
                     k=k,
                 )
-                reconstructed = np.asarray(
-                    np.mean(segment_hyperspectral[neighbor_indices], axis=0),
-                    dtype=np.float64,
+                reconstructed = _combine_neighbor_spectra(
+                    segment_hyperspectral,
+                    neighbor_indices,
+                    neighbor_distances,
+                    neighbor_estimator=neighbor_estimator,
                 )
                 retrievals[int(batch_index)] = _SegmentRetrieval(
                     segment=segment,
                     valid_band_count=valid_band_count,
                     query_band_ids=query_band_ids,
+                    query_band_values=np.asarray(query_values[batch_index], dtype=np.float64),
+                    query_valid_mask=np.asarray(valid_mask[batch_index], dtype=bool),
                     success=True,
                     reconstructed=reconstructed,
                     neighbor_indices=neighbor_indices,
                     neighbor_ids=tuple(self._row_ids[index] for index in neighbor_indices),
                     neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
+                    neighbor_band_values=np.asarray(source_matrix[neighbor_indices], dtype=np.float64),
                 )
 
         return tuple(
@@ -1711,6 +1774,7 @@ class SpectralMapper:
         target_sensor: str | None,
         output_mode: str,
         k: int,
+        neighbor_estimator: str,
         segment_retrievals: Mapping[str, _SegmentRetrieval],
     ) -> MappingResult:
         segment_outputs: dict[str, np.ndarray] = {}
@@ -1730,17 +1794,28 @@ class SpectralMapper:
             "target_sensor": target_sensor,
             "output_mode": output_mode,
             "k": k,
-            "segments": {
-                segment: {
-                    "status": "ok" if retrieval.success else retrieval.reason,
-                    "valid_band_count": retrieval.valid_band_count,
-                    "query_band_ids": list(retrieval.query_band_ids),
-                    "neighbor_ids": list(retrieval.neighbor_ids),
-                    "neighbor_distances": [float(value) for value in retrieval.neighbor_distances],
-                }
-                for segment, retrieval in segment_retrievals.items()
-            },
+            "neighbor_estimator": neighbor_estimator,
+            "segments": {},
         }
+        diagnostics_segments: dict[str, object] = {}
+        for segment, retrieval in segment_retrievals.items():
+            diagnostics_segments[segment] = {
+                "status": "ok" if retrieval.success else retrieval.reason,
+                "valid_band_count": retrieval.valid_band_count,
+                "query_band_ids": list(retrieval.query_band_ids),
+                "query_band_values": [
+                    float(value) if bool(is_valid) and np.isfinite(value) else None
+                    for value, is_valid in zip(retrieval.query_band_values, retrieval.query_valid_mask)
+                ],
+                "query_valid_mask": [bool(value) for value in retrieval.query_valid_mask],
+                "neighbor_ids": list(retrieval.neighbor_ids),
+                "neighbor_distances": [float(value) for value in retrieval.neighbor_distances],
+                "neighbor_band_values": [
+                    [float(value) for value in row]
+                    for row in np.asarray(retrieval.neighbor_band_values, dtype=np.float64)
+                ],
+            }
+        diagnostics["segments"] = diagnostics_segments
 
         reconstructed_vnir = segment_outputs.get("vnir")
         reconstructed_swir = segment_outputs.get("swir")
@@ -1808,9 +1883,15 @@ class SpectralMapper:
         target_sensor: str | None,
         k: int,
         min_valid_bands: int,
+        neighbor_estimator: str,
         candidate_row_indices: Sequence[int] | None,
     ) -> MappingResult:
-        _validate_mapping_request(output_mode, k=k, min_valid_bands=min_valid_bands)
+        _validate_mapping_request(
+            output_mode,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+        )
 
         source_schema = self.get_sensor_schema(source_sensor)
         query_values, query_valid_mask = self._coerce_query(source_schema, reflectance, valid_mask)
@@ -1828,6 +1909,7 @@ class SpectralMapper:
                 valid_mask=segment_valid,
                 k=k,
                 min_valid_bands=min_valid_bands,
+                neighbor_estimator=neighbor_estimator,
                 candidate_row_indices=candidate_rows,
             )
             segment_retrievals[segment] = retrieval
@@ -1836,6 +1918,7 @@ class SpectralMapper:
             target_sensor=target_sensor,
             output_mode=output_mode,
             k=k,
+            neighbor_estimator=neighbor_estimator,
             segment_retrievals=segment_retrievals,
         )
 
@@ -1849,6 +1932,7 @@ class SpectralMapper:
         target_sensor: str | None = None,
         k: int = 10,
         min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
         exclude_row_ids: Sequence[str] | None = None,
         exclude_sample_names: Sequence[str] | None = None,
     ) -> MappingResult:
@@ -1860,6 +1944,7 @@ class SpectralMapper:
             target_sensor=target_sensor,
             k=k,
             min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
             candidate_row_indices=self._candidate_rows(
                 None,
                 exclude_row_ids=exclude_row_ids,
@@ -1878,12 +1963,18 @@ class SpectralMapper:
         target_sensor: str | None = None,
         k: int = 10,
         min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
         exclude_row_ids: Sequence[str] | None = None,
         exclude_sample_names: Sequence[str] | None = None,
         exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
         self_exclude_sample_id: bool = False,
     ) -> BatchMappingResult:
-        _validate_mapping_request(output_mode, k=k, min_valid_bands=min_valid_bands)
+        _validate_mapping_request(
+            output_mode,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+        )
         if isinstance(reflectance_rows, Mapping):
             raise MappingInputError("map_reflectance_batch requires a batch of samples, not a single mapping.")
 
@@ -1970,6 +2061,7 @@ class SpectralMapper:
                             target_sensor=target_sensor,
                             k=k,
                             min_valid_bands=min_valid_bands,
+                            neighbor_estimator=neighbor_estimator,
                             candidate_row_indices=candidate_rows,
                         )
                     )
@@ -1988,6 +2080,7 @@ class SpectralMapper:
                 valid_mask=query_valid_mask_batch[:, segment_indices],
                 k=k,
                 min_valid_bands=min_valid_bands,
+                neighbor_estimator=neighbor_estimator,
                 candidate_row_indices=candidate_rows,
             )
 
@@ -2003,6 +2096,7 @@ class SpectralMapper:
                         target_sensor=target_sensor,
                         output_mode=output_mode,
                         k=k,
+                        neighbor_estimator=neighbor_estimator,
                         segment_retrievals=sample_retrievals,
                     )
                 )
@@ -2062,7 +2156,14 @@ def benchmark_mapping(
     k: int = 10,
     test_fraction: float = 0.2,
     random_seed: int = 0,
+    neighbor_estimator: str = "mean",
 ) -> dict[str, object]:
+    _validate_mapping_request(
+        "target_sensor",
+        k=k,
+        min_valid_bands=1,
+        neighbor_estimator=neighbor_estimator,
+    )
     if not 0 < test_fraction < 1:
         raise MappingInputError("test_fraction must be between 0 and 1.", context={"test_fraction": test_fraction})
 
@@ -2104,6 +2205,7 @@ def benchmark_mapping(
             target_sensor=target_sensor,
             k=k,
             min_valid_bands=1,
+            neighbor_estimator=neighbor_estimator,
             candidate_row_indices=train_indices,
         )
         if result.target_reflectance is None or result.reconstructed_vnir is None or result.reconstructed_swir is None:
@@ -2125,6 +2227,7 @@ def benchmark_mapping(
         "source_sensor_id": source_sensor,
         "target_sensor_id": target_sensor,
         "k": int(k),
+        "neighbor_estimator": neighbor_estimator,
         "random_seed": int(random_seed),
         "train_rows": int(train_indices.size),
         "test_rows": int(test_indices.size),

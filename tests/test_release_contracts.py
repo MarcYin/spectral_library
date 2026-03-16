@@ -56,7 +56,7 @@ class PublicApiContractTests(unittest.TestCase):
         )
         self.assertEqual(
             tuple(inspect.signature(benchmark_mapping).parameters),
-            ("prepared_root", "source_sensor", "target_sensor", "k", "test_fraction", "random_seed"),
+            ("prepared_root", "source_sensor", "target_sensor", "k", "test_fraction", "random_seed", "neighbor_estimator"),
         )
         self.assertEqual(
             tuple(inspect.signature(SpectralMapper).parameters),
@@ -73,6 +73,7 @@ class PublicApiContractTests(unittest.TestCase):
                 "target_sensor",
                 "k",
                 "min_valid_bands",
+                "neighbor_estimator",
                 "exclude_row_ids",
                 "exclude_sample_names",
             ),
@@ -89,6 +90,7 @@ class PublicApiContractTests(unittest.TestCase):
                 "target_sensor",
                 "k",
                 "min_valid_bands",
+                "neighbor_estimator",
                 "exclude_row_ids",
                 "exclude_sample_names",
                 "exclude_row_ids_per_sample",
@@ -169,6 +171,7 @@ class CliContractTests(unittest.TestCase):
                 "--input",
                 "--output-mode",
                 "--k",
+                "--neighbor-estimator",
                 "--output",
                 "--exclude-row-id",
                 "--exclude-sample-name",
@@ -182,6 +185,7 @@ class CliContractTests(unittest.TestCase):
                 "--input",
                 "--output-mode",
                 "--k",
+                "--neighbor-estimator",
                 "--output",
                 "--diagnostics-output",
                 "--exclude-row-id",
@@ -189,7 +193,11 @@ class CliContractTests(unittest.TestCase):
                 "--self-exclude-sample-id",
             }.issubset(batch_options)
         )
-        self.assertTrue({"--prepared-root", "--source-sensor", "--target-sensor", "--report"}.issubset(benchmark_options))
+        self.assertTrue(
+            {"--prepared-root", "--source-sensor", "--target-sensor", "--neighbor-estimator", "--report"}.issubset(
+                benchmark_options
+            )
+        )
 
     def test_cli_json_error_envelope_is_stable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -226,10 +234,50 @@ class CliContractTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             payloads = [json.loads(line) for line in stderr.getvalue().splitlines() if line.strip()]
             self.assertEqual([payload["event"] for payload in payloads], ["command_started", "command_completed"])
-            for payload in payloads:
-                self.assertEqual(set(payload), {"command", "context", "event", "level", "timestamp"})
-                self.assertEqual(payload["command"], "validate-prepared-library")
-                self.assertEqual(payload["level"], "info")
+            self.assertEqual(set(payloads[0]), {"command", "context", "event", "level", "timestamp"})
+            self.assertEqual(set(payloads[1]), {"command", "context", "elapsed_ms", "event", "level", "timestamp"})
+            self.assertEqual(payloads[0]["command"], "validate-prepared-library")
+            self.assertEqual(payloads[1]["command"], "validate-prepared-library")
+            self.assertEqual(payloads[0]["level"], "info")
+            self.assertEqual(payloads[1]["level"], "info")
+            self.assertIsInstance(payloads[1]["elapsed_ms"], int)
+            self.assertGreaterEqual(payloads[1]["elapsed_ms"], 0)
+
+    def test_cli_json_log_failure_event_is_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exit_code = cli.main_with_args(
+                    [
+                        "--json-logs",
+                        "--json-errors",
+                        "validate-prepared-library",
+                        "--prepared-root",
+                        str(Path(tmpdir) / "missing"),
+                    ]
+                )
+            self.assertEqual(exit_code, 2)
+            stderr_text = stderr.getvalue()
+            first_newline = stderr_text.find("\n")
+            second_newline = stderr_text.find("\n", first_newline + 1)
+            self.assertGreaterEqual(first_newline, 0)
+            self.assertGreaterEqual(second_newline, 0)
+            started_payload = json.loads(stderr_text[:first_newline])
+            failed_payload = json.loads(stderr_text[first_newline + 1 : second_newline])
+            error_payload = json.loads(stderr_text[second_newline + 1 :])
+            self.assertEqual(set(started_payload), {"command", "context", "event", "level", "timestamp"})
+            self.assertEqual(set(failed_payload), {"command", "context", "elapsed_ms", "event", "level", "timestamp"})
+            self.assertEqual(started_payload["event"], "command_started")
+            self.assertEqual(started_payload["level"], "info")
+            self.assertEqual(failed_payload["command"], "validate-prepared-library")
+            self.assertEqual(failed_payload["event"], "command_failed")
+            self.assertEqual(failed_payload["level"], "error")
+            self.assertEqual(failed_payload["context"]["error_code"], "invalid_prepared_library")
+            self.assertIsInstance(failed_payload["elapsed_ms"], int)
+            self.assertGreaterEqual(failed_payload["elapsed_ms"], 0)
+            self.assertEqual(error_payload["command"], "validate-prepared-library")
+            self.assertEqual(error_payload["error_code"], "invalid_prepared_library")
 
 
 class PreparedRuntimeContractTests(unittest.TestCase):
