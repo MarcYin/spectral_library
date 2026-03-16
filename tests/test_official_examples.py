@@ -67,6 +67,13 @@ class OfficialExamplesTests(unittest.TestCase):
             self.assertEqual(schema.sensor_id, sensor_id)
             self.assertEqual(schema.band_ids(), band_ids)
 
+        manifest_payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
+        sentinel_payload = next(
+            sensor for sensor in manifest_payload["sensors"] if sensor["sensor_id"] == "sentinel2a_msi"
+        )
+        sentinel_nir = next(band for band in sentinel_payload["selected_bands"] if band["band_id"] == "nir")
+        self.assertEqual(sentinel_nir["official_band"], "B8A")
+
     def test_official_example_full_library_prepares_and_maps_when_available(self) -> None:
         payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
         siac_root = REPO_ROOT / payload["example_design"]["library_reference"]["siac_root"]

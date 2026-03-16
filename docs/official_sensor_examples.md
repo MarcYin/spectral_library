@@ -97,7 +97,7 @@ each segment’s `k = 10` retrieval for readability.
 | `blue` | `Band 3` | `B2` | `Band 2` | `Band 2` |
 | `green` | `Band 4` | `B3` | `Band 3` | `Band 3` |
 | `red` | `Band 1` | `B4` | `Band 4` | `Band 4` |
-| `nir` | `Band 2` | `B8` | `Band 5` | `Band 5` |
+| `nir` | `Band 2` | `B8A` | `Band 5` | `Band 5` |
 | `swir1` | `Band 6` | `B11` | `Band 6` | `Band 6` |
 | `swir2` | `Band 7` | `B12` | `Band 7` | `Band 7` |
 
@@ -158,9 +158,9 @@ evaluated only on the common comparable subset
 Observed range in the bundled example:
 
 - lowest comparable mean absolute band error:
-  `0.0023` for Sentinel-2A -> Landsat 8
+  `0.0024` for Sentinel-2A -> Landsat 8
 - highest comparable mean absolute band error:
-  `0.0031` for Sentinel-2A -> MODIS Terra
+  `0.0030` for Landsat 8 -> MODIS Terra
 
 The full pairwise summary, including `evaluated_band_ids` and
 `evaluated_band_count`, is in
@@ -223,7 +223,7 @@ Reference output:
 | `blue` | `0.0858` | `0.0730` |
 | `green` | `0.1065` | `0.1041` |
 | `red` | `0.0621` | `0.0676` |
-| `nir` | `0.3979` | `0.3974` |
+| `nir` | `0.3979` | `0.3990` |
 | `swir1` | `0.0971` | `0.0937` |
 | `swir2` | `0.0356` | `0.0323` |
 
