@@ -113,6 +113,7 @@ result = mapper.map_reflectance(
     reflectance=reflectance,
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
+    neighbor_estimator="distance_weighted_mean",
     exclude_row_ids=[
         "usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF",
     ],
@@ -136,6 +137,7 @@ batch = mapper.map_reflectance_batch(
     ],
     output_mode="target_sensor",
     target_sensor="sentinel2a_msi",
+    neighbor_estimator="distance_weighted_mean",
     exclude_row_ids_per_sample=[
         "usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF",
         "ecostress_v1:ecostress_v1_002334:Pale brown silty loam",
@@ -147,6 +149,7 @@ batch = mapper.map_reflectance_batch(
 
 Supported exclusion controls:
 
+- `neighbor_estimator="mean"` or `"distance_weighted_mean"`
 - `map_reflectance(..., exclude_row_ids=..., exclude_sample_names=...)`
 - `map_reflectance_batch(..., exclude_row_ids=..., exclude_sample_names=...)`
 - `map_reflectance_batch(..., exclude_row_ids_per_sample=..., self_exclude_sample_id=True)`
@@ -170,7 +173,7 @@ self-exclusion workflow shown in [Official Sensor Examples](official_sensor_exam
 | `neighbor_distances_by_segment` | neighbor distances for each segment |
 | `segment_outputs` | successful segment reconstructions |
 | `segment_valid_band_counts` | number of valid source bands used per segment |
-| `diagnostics` | stable diagnostic payload |
+| `diagnostics` | stable diagnostic payload, including per-segment query values, validity masks, and selected-neighbor source-band values |
 
 Helper:
 

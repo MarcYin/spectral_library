@@ -53,11 +53,16 @@ class DocsSiteBuildTests(unittest.TestCase):
 
             index_html = (output_root / "index.html").read_text(encoding="utf-8")
             cli_html = (output_root / "cli_reference.html").read_text(encoding="utf-8")
+            python_html = (output_root / "python_api_reference.html").read_text(encoding="utf-8")
             official_html = (output_root / "official_sensor_examples.html").read_text(encoding="utf-8")
             theory_html = (output_root / "theory.html").read_text(encoding="utf-8")
 
             self.assertIn("Map between sensors", index_html)
             self.assertIn("--json-logs", cli_html)
+            self.assertIn("distance_weighted_mean", cli_html)
+            self.assertIn("command_failed", cli_html)
+            self.assertIn("elapsed_ms", cli_html)
+            self.assertIn("per-segment query values", python_html)
             self.assertIn('href="example_bundle.html"', official_html)
             self.assertIn('href="examples/official_mapping/results/metrics/pairwise_band_metrics.csv"', official_html)
             self.assertIn("held-out reconstruction", official_html)

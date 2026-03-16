@@ -159,7 +159,7 @@ reported as unavailable instead of forcing a low-information retrieval.
 ## Neighbor Estimator
 
 Let $\mathcal{N}_k^{(p)}$ be the top-$k$ nearest neighbors for segment $p$.
-The retrieved hyperspectral segment is the unweighted neighbor mean:
+The default retrieved hyperspectral segment is the unweighted neighbor mean:
 
 $$
 \bar{h}^{(p)} = \frac{1}{k} \sum_{i \in \mathcal{N}_k^{(p)}} H_i^{(p)}
@@ -173,8 +173,20 @@ This is intentionally simple in v1:
 - it is query-centric, so neighbors are not required to be mutually similar or
   from the same landcover class
 
-The returned diagnostics carry both neighbor identities and neighbor distances
-for each segment.
+An optional estimator mode is also available:
+
+`distance_weighted_mean`
+
+For non-zero distances, the implementation uses inverse-distance weights
+$w_i = 1 / d_i$. If one or more neighbors have distance `0`, only those exact
+matches are averaged.
+
+The returned diagnostics carry the chosen `neighbor_estimator`, plus:
+
+- segment query band ids
+- query band values and validity masks
+- neighbor identities and neighbor distances
+- the selected neighbors' simulated source-band values for the same segment
 
 ## Target-Sensor Mapping
 

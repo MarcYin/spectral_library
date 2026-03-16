@@ -78,6 +78,7 @@ Optional arguments:
 | --- | --- |
 | `--k` | nearest-neighbor count, default `10` |
 | `--min-valid-bands` | minimum valid source bands per segment, default `1` |
+| `--neighbor-estimator` | `mean` or `distance_weighted_mean`, default `mean` |
 | `--exclude-row-id` | exclude one or more prepared row ids from neighbor selection |
 | `--exclude-sample-name` | exclude one or more prepared `sample_name` values from neighbor selection |
 
@@ -121,6 +122,7 @@ Optional arguments:
 | --- | --- |
 | `--k` | nearest-neighbor count |
 | `--min-valid-bands` | minimum valid source bands per segment |
+| `--neighbor-estimator` | `mean` or `distance_weighted_mean` |
 | `--exclude-row-id` | exclude one or more prepared row ids for every batch sample |
 | `--exclude-sample-name` | exclude one or more prepared `sample_name` values for every batch sample |
 | `--self-exclude-sample-id` | exclude rows whose prepared `sample_name` matches each batch `sample_id` |
@@ -165,6 +167,7 @@ Optional arguments:
 | `--k` | nearest-neighbor count, default `10` |
 | `--test-fraction` | held-out fraction, default `0.2` |
 | `--random-seed` | split seed, default `0` |
+| `--neighbor-estimator` | retrieval estimator to benchmark, default `mean` |
 
 ## Error Behavior
 
@@ -189,6 +192,18 @@ The JSON log envelope includes:
 - `level`
 - `timestamp`
 - `context`
+- `elapsed_ms` on completion and failure events
+
+Event values:
+
+- `command_started`
+- `command_completed`
+- `command_failed`
+
+Level values:
+
+- `info` for start and completion
+- `error` for failures
 
 ## Related Docs
 
