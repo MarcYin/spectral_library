@@ -1,0 +1,12 @@
+name: spectral-library-codeql
+
+paths:
+  - src
+  - scripts
+
+paths-ignore:
+  - build
+  - dist
+  - docs
+  - examples
+  - tests

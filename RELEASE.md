@@ -24,6 +24,15 @@ PYTHONPATH=src python3 scripts/run_full_library_benchmarks.py \
 python3 -m pip install build
 python3 scripts/build_distribution.py
 ```
+5. Confirm the following GitHub Actions checks are green on `main` or the
+   release branch head:
+   - `Package Checks`
+   - `Security Checks`
+   - `CodeQL`
+6. Confirm the repository settings required by release automation are enabled:
+   - PyPI trusted publishing for the `pypi` environment
+   - GitHub Pages source = `GitHub Actions`
+   - dependency graph and code scanning enabled for the repository
 
 ## Tagging
 
@@ -39,12 +48,20 @@ git push origin v0.2.0
 The release workflow:
 
 1. builds wheel and sdist artifacts
-2. installs each artifact in a clean virtual environment
-3. runs `spectral-library --help`
-4. runs a minimal prepare, validate, map, and batch-map smoke workflow
-5. publishes release artifacts and GitHub release notes for the tag
+2. generates CycloneDX SBOM files for the wheel and sdist install environments
+3. installs each artifact in a clean virtual environment
+4. runs `spectral-library --help`
+5. runs a minimal prepare, validate, map, and batch-map smoke workflow
+6. writes GitHub build-provenance and SBOM attestations for the release files
+7. publishes release artifacts and GitHub release notes for the tag
 
 The release-notes body is loaded from `docs/releases/<version>.md`.
 
 The scheduled full-library benchmark workflow is separate from tagged release
 publishing and uploads its own JSON/CSV artifacts when enabled.
+
+Weekly dependency freshness and security scanning are handled separately by:
+
+- `.github/workflows/security-checks.yml`
+- `.github/workflows/codeql.yml`
+- `.github/dependabot.yml`

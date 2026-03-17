@@ -30,6 +30,8 @@ The public names are:
   [`docs/cli_reference.md`](docs/cli_reference.md)
 - public Python API reference:
   [`docs/python_api_reference.md`](docs/python_api_reference.md)
+- security and provenance:
+  [`docs/security_provenance.md`](docs/security_provenance.md)
 - prepared-runtime contract:
   [`docs/prepared_runtime_contract.md`](docs/prepared_runtime_contract.md)
 - internal maintainer docs:
@@ -133,6 +135,17 @@ plus the scheduled/manual GitHub Actions workflow
 [`full-library-benchmarks.yml`](.github/workflows/full-library-benchmarks.yml).
 Use `--max-test-rows` to keep held-out benchmark runs bounded on large
 prepared libraries.
+
+For production release hardening, the repository now also ships:
+
+- dependency review and `pip-audit` gates in
+  [`security-checks.yml`](.github/workflows/security-checks.yml)
+- Python CodeQL analysis in
+  [`codeql.yml`](.github/workflows/codeql.yml)
+- weekly dependency updates in
+  [`.github/dependabot.yml`](.github/dependabot.yml)
+- release SBOM and provenance attestations in
+  [`release-package.yml`](.github/workflows/release-package.yml)
 
 For reproducible cross-sensor examples built from official MODIS, Sentinel-2A,
 Landsat 8, and Landsat 9 response functions, see

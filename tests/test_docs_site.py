@@ -11,6 +11,10 @@ MKDOCS_CONFIG_PATH = REPO_ROOT / "mkdocs.yml"
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "docs-pages.yml"
 PACKAGE_CHECKS_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "package-checks.yml"
 FULL_LIBRARY_BENCHMARK_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "full-library-benchmarks.yml"
+RELEASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "release-package.yml"
+SECURITY_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "security-checks.yml"
+CODEQL_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "codeql.yml"
+DEPENDABOT_CONFIG_PATH = REPO_ROOT / ".github" / "dependabot.yml"
 
 
 class DocsSiteBuildTests(unittest.TestCase):
@@ -40,6 +44,7 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertTrue((output_root / "official_sensor_examples.html").exists())
             self.assertTrue((output_root / "theory.html").exists())
             self.assertTrue((output_root / "release_process.html").exists())
+            self.assertTrue((output_root / "security_provenance.html").exists())
             self.assertFalse((output_root / "scale_factor_verification.html").exists())
             self.assertFalse((output_root / "metadata_only_actual_links.html").exists())
             self.assertTrue((output_root / "assets" / "official_sensor_selected_bands.png").exists())
@@ -59,6 +64,7 @@ class DocsSiteBuildTests(unittest.TestCase):
             python_html = (output_root / "python_api_reference.html").read_text(encoding="utf-8")
             official_html = (output_root / "official_sensor_examples.html").read_text(encoding="utf-8")
             theory_html = (output_root / "theory.html").read_text(encoding="utf-8")
+            security_html = (output_root / "security_provenance.html").read_text(encoding="utf-8")
 
             self.assertIn("Map between sensors", index_html)
             self.assertIn("--json-logs", cli_html)
@@ -113,6 +119,12 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertIn("Pre-sorting the full library rows", theory_html)
             self.assertIn("two independent nearest-neighbor", theory_html)
             self.assertIn("arithmatex", theory_html)
+            self.assertIn("Security and Provenance", security_html)
+            self.assertIn("pip-audit", security_html)
+            self.assertIn("CodeQL", security_html)
+            self.assertIn("CycloneDX", security_html)
+            self.assertIn("attestations", security_html)
+            self.assertIn("dependabot.yml", security_html)
             self.assertNotIn("/Users/fengyin/Documents/spectral_library", official_html)
 
     def test_mkdocs_configuration_and_workflows_are_present(self) -> None:
@@ -120,6 +132,10 @@ class DocsSiteBuildTests(unittest.TestCase):
         docs_workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         package_checks_workflow = PACKAGE_CHECKS_WORKFLOW_PATH.read_text(encoding="utf-8")
         full_benchmark_workflow = FULL_LIBRARY_BENCHMARK_WORKFLOW_PATH.read_text(encoding="utf-8")
+        release_workflow = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
+        security_workflow = SECURITY_WORKFLOW_PATH.read_text(encoding="utf-8")
+        codeql_workflow = CODEQL_WORKFLOW_PATH.read_text(encoding="utf-8")
+        dependabot_config = DEPENDABOT_CONFIG_PATH.read_text(encoding="utf-8")
 
         self.assertIn("exclude_docs:", mkdocs_config)
         self.assertIn("scale_factor_verification.md", mkdocs_config)
@@ -129,6 +145,7 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("navigation.tabs", mkdocs_config)
         self.assertIn("Mathematical Foundations: theory.md", mkdocs_config)
         self.assertIn("Example Bundle: example_bundle.md", mkdocs_config)
+        self.assertIn("Security and Provenance: security_provenance.md", mkdocs_config)
         self.assertIn("Internal Docs Overview: internal_overview.md", mkdocs_config)
         self.assertIn("use_directory_urls: false", mkdocs_config)
         self.assertIn("python -m mkdocs build --clean --config-file mkdocs.yml --site-dir build/docs-site", docs_workflow)
@@ -142,6 +159,17 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("full-library-benchmarks", full_benchmark_workflow)
         self.assertIn("FULL_LIBRARY_PREPARED_ROOT", full_benchmark_workflow)
         self.assertIn("run_full_library_benchmarks.py", full_benchmark_workflow)
+        self.assertIn("actions/attest-build-provenance@v3", release_workflow)
+        self.assertIn("actions/attest-sbom@v3", release_workflow)
+        self.assertIn("spectral-library-wheel.sbom.cdx.json", release_workflow)
+        self.assertIn("spectral-library-sdist.sbom.cdx.json", release_workflow)
+        self.assertIn("packages-dir: upload-dist/", release_workflow)
+        self.assertIn("actions/dependency-review-action@v4", security_workflow)
+        self.assertIn("pip-audit", security_workflow)
+        self.assertIn("github/codeql-action/init@v3", codeql_workflow)
+        self.assertIn("security-extended,security-and-quality", codeql_workflow)
+        self.assertIn("package-ecosystem: \"github-actions\"", dependabot_config)
+        self.assertIn("package-ecosystem: \"pip\"", dependabot_config)
 
 
 if __name__ == "__main__":

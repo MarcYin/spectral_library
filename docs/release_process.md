@@ -28,6 +28,14 @@ PYTHONPATH=src python3 scripts/run_full_library_benchmarks.py \
 python3 -m pip install build
 python3 scripts/build_distribution.py
 ```
+5. Confirm the GitHub Actions security gates are green:
+   - `Package Checks`
+   - `Security Checks`
+   - `CodeQL`
+6. Confirm the repository-level release settings are still configured:
+   - PyPI trusted publishing on the `pypi` environment
+   - GitHub Pages publishing from GitHub Actions
+   - dependency graph and code scanning enabled
 
 ## Tagging
 
@@ -43,10 +51,12 @@ git push origin v0.2.0
 The tagged release workflow:
 
 1. builds wheel and sdist artifacts
-2. installs each artifact in a clean environment
-3. runs public CLI smoke tests
-4. publishes to PyPI through trusted publishing
-5. creates the GitHub release using the matching release-notes file
+2. generates CycloneDX SBOM files for the wheel and sdist install environments
+3. installs each artifact in a clean environment
+4. runs public CLI smoke tests
+5. writes GitHub build-provenance and SBOM attestations
+6. publishes to PyPI through trusted publishing
+7. creates the GitHub release using the matching release-notes file
 
 The scheduled full-library benchmark workflow is separate from tagged package
 release publishing. It runs from
@@ -55,3 +65,12 @@ when the repository variable `FULL_LIBRARY_PREPARED_ROOT` is configured.
 
 The docs site is published separately from pushes to `main` through the GitHub
 Pages workflow.
+
+Security policy is enforced continuously outside the release job by:
+
+- [`security-checks.yml`](https://github.com/MarcYin/spectral_library/blob/main/.github/workflows/security-checks.yml)
+  for dependency review and `pip-audit`
+- [`codeql.yml`](https://github.com/MarcYin/spectral_library/blob/main/.github/workflows/codeql.yml)
+  for Python CodeQL analysis
+- [`dependabot.yml`](https://github.com/MarcYin/spectral_library/blob/main/.github/dependabot.yml)
+  for weekly GitHub Actions and Python dependency update PRs
