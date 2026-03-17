@@ -9,9 +9,9 @@ runtimes from SIAC-style hyperspectral exports, retrieving nearest spectral
 neighbors, simulating target-sensor reflectance, and reconstructing VNIR, SWIR,
 or full `400-2500 nm` spectra.
 </p>
-[Get Started](mapping_quickstart.md){ .md-button .md-button--primary }
-[See Official Examples](official_sensor_examples.md){ .md-button }
-[Read The Theory](theory.md){ .md-button }
+[Get Started](mapping_quickstart.md){ .sl-button .sl-button--primary }
+[See Official Examples](official_sensor_examples.md){ .sl-button }
+[Read The Theory](theory.md){ .sl-button }
 </div>
 
 ## What This Site Covers

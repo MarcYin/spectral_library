@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 STATIC_GLOB_ROOTS = (
     ("examples/official_mapping", {"README.md"}),
 )
-COPIED_FILES = ("LICENSE", "CNAME")
+COPIED_FILES = ("LICENSE", "SECURITY.md", "CNAME")
 LINK_REWRITES = {
     "../examples/": "examples/",
 }

@@ -3,6 +3,9 @@
 This repository now treats release security and artifact provenance as part of
 the public production contract, not as ad hoc maintainer work.
 
+Repository security reporting policy lives in
+[`SECURITY.md`](https://github.com/MarcYin/spectral_library/blob/main/SECURITY.md).
+
 ## Security Gates
 
 ### Dependency Review
