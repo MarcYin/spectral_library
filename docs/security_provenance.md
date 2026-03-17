@@ -45,6 +45,10 @@ It intentionally excludes generated outputs, docs, examples, and tests.
 [`dependabot.yml`](https://github.com/MarcYin/spectral_library/blob/main/.github/dependabot.yml)
 keeps both GitHub Actions and Python dependencies on a weekly review cycle.
 
+All workflow dependencies are pinned to immutable SHAs. Dependabot proposes the
+next reviewed pin update instead of leaving CI dependent on floating action
+tags.
+
 ## Release Provenance
 
 Tagged releases use

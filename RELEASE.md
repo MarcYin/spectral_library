@@ -65,3 +65,6 @@ Weekly dependency freshness and security scanning are handled separately by:
 - `.github/workflows/security-checks.yml`
 - `.github/workflows/codeql.yml`
 - `.github/dependabot.yml`
+
+All workflow action dependencies are pinned to immutable SHAs. Update them
+through reviewed pull requests instead of floating major tags.

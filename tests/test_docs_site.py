@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ RELEASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "release-package.y
 SECURITY_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "security-checks.yml"
 CODEQL_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "codeql.yml"
 DEPENDABOT_CONFIG_PATH = REPO_ROOT / ".github" / "dependabot.yml"
+WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 
 
 class DocsSiteBuildTests(unittest.TestCase):
@@ -125,6 +127,7 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertIn("CycloneDX", security_html)
             self.assertIn("attestations", security_html)
             self.assertIn("dependabot.yml", security_html)
+            self.assertIn("immutable SHAs", security_html)
             self.assertNotIn("/Users/fengyin/Documents/spectral_library", official_html)
 
     def test_mkdocs_configuration_and_workflows_are_present(self) -> None:
@@ -149,7 +152,7 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("Internal Docs Overview: internal_overview.md", mkdocs_config)
         self.assertIn("use_directory_urls: false", mkdocs_config)
         self.assertIn("python -m mkdocs build --clean --config-file mkdocs.yml --site-dir build/docs-site", docs_workflow)
-        self.assertIn("actions/deploy-pages@v4", docs_workflow)
+        self.assertIn("actions/deploy-pages@", docs_workflow)
         self.assertIn('python -m pip install -e ".[docs]"', docs_workflow)
         self.assertIn("python -m mkdocs build --clean --config-file mkdocs.yml --site-dir build/docs-site", package_checks_workflow)
         self.assertIn("optional-knn-smoke:", package_checks_workflow)
@@ -159,17 +162,29 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("full-library-benchmarks", full_benchmark_workflow)
         self.assertIn("FULL_LIBRARY_PREPARED_ROOT", full_benchmark_workflow)
         self.assertIn("run_full_library_benchmarks.py", full_benchmark_workflow)
-        self.assertIn("actions/attest-build-provenance@v3", release_workflow)
-        self.assertIn("actions/attest-sbom@v3", release_workflow)
+        self.assertIn("actions/attest-build-provenance@", release_workflow)
+        self.assertIn("actions/attest-sbom@", release_workflow)
         self.assertIn("spectral-library-wheel.sbom.cdx.json", release_workflow)
         self.assertIn("spectral-library-sdist.sbom.cdx.json", release_workflow)
         self.assertIn("packages-dir: upload-dist/", release_workflow)
-        self.assertIn("actions/dependency-review-action@v4", security_workflow)
+        self.assertIn("actions/dependency-review-action@", security_workflow)
         self.assertIn("pip-audit", security_workflow)
-        self.assertIn("github/codeql-action/init@v3", codeql_workflow)
+        self.assertIn("github/codeql-action/init@", codeql_workflow)
         self.assertIn("security-extended,security-and-quality", codeql_workflow)
         self.assertIn("package-ecosystem: \"github-actions\"", dependabot_config)
         self.assertIn("package-ecosystem: \"pip\"", dependabot_config)
+
+        pinned_action_pattern = re.compile(r"uses:\s+[-A-Za-z0-9_./]+@[0-9a-f]{40}\b")
+        for workflow_path in sorted(WORKFLOW_DIR.glob("*.yml")):
+            workflow_text = workflow_path.read_text(encoding="utf-8")
+            uses_lines = [
+                line
+                for line in workflow_text.splitlines()
+                if line.lstrip().startswith("- uses:") or line.lstrip().startswith("uses:")
+            ]
+            self.assertTrue(uses_lines, msg=f"No uses lines found in {workflow_path.name}")
+            for line in uses_lines:
+                self.assertRegex(line, pinned_action_pattern, msg=f"Unpinned action in {workflow_path.name}: {line}")
 
 
 if __name__ == "__main__":

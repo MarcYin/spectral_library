@@ -74,3 +74,6 @@ Security policy is enforced continuously outside the release job by:
   for Python CodeQL analysis
 - [`dependabot.yml`](https://github.com/MarcYin/spectral_library/blob/main/.github/dependabot.yml)
   for weekly GitHub Actions and Python dependency update PRs
+
+All workflow action dependencies are pinned to immutable SHAs, with Dependabot
+configured to refresh those pins through reviewed PRs.

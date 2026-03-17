@@ -147,6 +147,10 @@ For production release hardening, the repository now also ships:
 - release SBOM and provenance attestations in
   [`release-package.yml`](.github/workflows/release-package.yml)
 
+Workflow dependencies are pinned to immutable GitHub Action SHAs, and
+Dependabot is configured to move those pins forward through reviewed pull
+requests.
+
 For reproducible cross-sensor examples built from official MODIS, Sentinel-2A,
 Landsat 8, and Landsat 9 response functions, see
 [`docs/official_sensor_examples.md`](docs/official_sensor_examples.md) and the
