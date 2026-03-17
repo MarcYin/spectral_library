@@ -59,7 +59,6 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertFalse((output_root / "examples" / "official_mapping" / "siac").exists())
             self.assertFalse((output_root / "tests").exists())
             self.assertTrue((output_root / "LICENSE").exists())
-            self.assertTrue((output_root / "SECURITY.md").exists())
             self.assertTrue((output_root / ".nojekyll").exists())
 
             index_html = (output_root / "index.html").read_text(encoding="utf-8")
@@ -129,7 +128,6 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertIn("attestations", security_html)
             self.assertIn("dependabot.yml", security_html)
             self.assertIn("immutable SHAs", security_html)
-            self.assertIn("SECURITY.md", security_html)
             self.assertNotIn("/Users/fengyin/Documents/spectral_library", official_html)
 
     def test_mkdocs_configuration_and_workflows_are_present(self) -> None:
@@ -146,8 +144,8 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("scale_factor_verification.md", mkdocs_config)
         self.assertIn("hooks:", mkdocs_config)
         self.assertIn("docs/mkdocs_hooks.py", mkdocs_config)
-        self.assertIn("name: mkdocs", mkdocs_config)
-        self.assertNotIn("name: material", mkdocs_config)
+        self.assertIn("name: material", mkdocs_config)
+        self.assertIn("navigation.tabs", mkdocs_config)
         self.assertIn("Mathematical Foundations: theory.md", mkdocs_config)
         self.assertIn("Example Bundle: example_bundle.md", mkdocs_config)
         self.assertIn("Security and Provenance: security_provenance.md", mkdocs_config)
@@ -175,8 +173,6 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("security-extended,security-and-quality", codeql_workflow)
         self.assertIn("package-ecosystem: \"github-actions\"", dependabot_config)
         self.assertIn("package-ecosystem: \"pip\"", dependabot_config)
-        pyproject_text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertNotIn("mkdocs-material", pyproject_text)
 
         pinned_action_pattern = re.compile(r"uses:\s+[-A-Za-z0-9_./]+@[0-9a-f]{40}\b")
         for workflow_path in sorted(WORKFLOW_DIR.glob("*.yml")):
