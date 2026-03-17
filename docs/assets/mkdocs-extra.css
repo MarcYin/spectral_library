@@ -1,13 +1,13 @@
 :root {
-  --sl-hero-start: #0f4c5c;
-  --sl-hero-end: #17302b;
-  --sl-accent: #93b941;
+  --sl-hero-start: #17324d;
+  --sl-hero-end: #0f2434;
+  --sl-accent: #d78f2c;
   --sl-body-bg: #f4f0e7;
   --sl-panel-bg: rgba(255, 255, 255, 0.84);
-  --sl-panel-border: rgba(15, 76, 92, 0.08);
+  --sl-panel-border: rgba(23, 50, 77, 0.08);
   --sl-card-bg: rgba(255, 255, 255, 0.78);
   --sl-text: #21353a;
-  --sl-link: #0d6b74;
+  --sl-link: #0f609b;
 }
 
 html {
@@ -16,7 +16,7 @@ html {
 
 body {
   background:
-    radial-gradient(circle at top left, rgba(147, 185, 65, 0.16), transparent 26%),
+    radial-gradient(circle at top left, rgba(215, 143, 44, 0.16), transparent 26%),
     linear-gradient(180deg, rgba(245, 241, 230, 0.82) 0%, rgba(244, 240, 231, 1) 34%);
   color: var(--sl-text);
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
@@ -37,7 +37,7 @@ a {
 .navbar {
   background: linear-gradient(135deg, var(--sl-hero-start) 0%, var(--sl-hero-end) 100%);
   border: 0;
-  box-shadow: 0 18px 34px rgba(15, 76, 92, 0.12);
+  box-shadow: 0 18px 34px rgba(16, 42, 67, 0.12);
   min-height: 66px;
 }
 
@@ -72,7 +72,7 @@ a {
   background: var(--sl-panel-bg);
   border: 1px solid var(--sl-panel-border);
   border-radius: 1.2rem;
-  box-shadow: 0 18px 34px rgba(15, 76, 92, 0.08);
+  box-shadow: 0 18px 34px rgba(16, 42, 67, 0.08);
   margin-bottom: 2rem;
   margin-top: 2rem;
   padding: 2.1rem 2.4rem 2.4rem;
@@ -82,7 +82,7 @@ a {
   background: rgba(255, 255, 255, 0.66);
   border: 1px solid var(--sl-panel-border);
   border-radius: 1rem;
-  box-shadow: 0 14px 30px rgba(15, 76, 92, 0.05);
+  box-shadow: 0 14px 30px rgba(16, 42, 67, 0.05);
   margin-top: 2rem;
   padding: 1rem 0.7rem;
 }
@@ -98,9 +98,9 @@ a {
 .bs-sidebar .nav > .active > a,
 .bs-sidebar .nav > li > a:hover,
 .bs-sidebar .nav > li > a:focus {
-  background: rgba(147, 185, 65, 0.12);
+  background: rgba(215, 143, 44, 0.12);
   border-left-color: var(--sl-accent);
-  color: #17302b;
+  color: #132a3d;
 }
 
 .bs-sidebar.affix,
@@ -124,7 +124,7 @@ h1 {
 }
 
 h2 {
-  border-top: 1px solid rgba(15, 76, 92, 0.12);
+  border-top: 1px solid rgba(23, 50, 77, 0.12);
   margin-top: 2.6rem;
   padding-top: 1.25rem;
 }
@@ -137,7 +137,7 @@ li {
 table:not([class]) {
   background: rgba(255, 255, 255, 0.88);
   border-radius: 0.9rem;
-  box-shadow: 0 16px 30px rgba(15, 76, 92, 0.08);
+  box-shadow: 0 16px 30px rgba(16, 42, 67, 0.08);
   overflow: hidden;
 }
 
@@ -147,7 +147,7 @@ pre > code {
 
 img {
   border-radius: 0.85rem;
-  box-shadow: 0 18px 34px rgba(15, 76, 92, 0.16);
+  box-shadow: 0 18px 34px rgba(16, 42, 67, 0.16);
   max-width: 100%;
 }
 
@@ -162,7 +162,7 @@ img {
 }
 
 .hero::after {
-  background: radial-gradient(circle at top right, rgba(171, 214, 86, 0.24), transparent 30%);
+  background: radial-gradient(circle at top right, rgba(244, 189, 95, 0.28), transparent 30%);
   content: "";
   inset: 0;
   pointer-events: none;
@@ -175,7 +175,7 @@ img {
 }
 
 .hero__eyebrow {
-  color: #d5efb2;
+  color: #f2d19d;
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -219,16 +219,16 @@ img {
 }
 
 .sl-button--primary {
-  background: #a8d45e;
-  border-color: #a8d45e;
-  color: #17302b !important;
+  background: #f0b04d;
+  border-color: #f0b04d;
+  color: #132a3d !important;
 }
 
 .sl-button--primary:hover,
 .sl-button--primary:focus {
-  background: #b6de72;
-  border-color: #b6de72;
-  color: #17302b !important;
+  background: #f4bd5f;
+  border-color: #f4bd5f;
+  color: #132a3d !important;
 }
 
 .grid.cards > ul {
@@ -244,9 +244,9 @@ img {
   border-radius: 999px;
   backdrop-filter: blur(10px);
   background: var(--sl-card-bg);
-  border: 1px solid rgba(15, 76, 92, 0.08);
+  border: 1px solid rgba(23, 50, 77, 0.08);
   border-radius: 1rem;
-  box-shadow: 0 14px 30px rgba(15, 76, 92, 0.08);
+  box-shadow: 0 14px 30px rgba(16, 42, 67, 0.08);
   margin: 0;
   padding: 1rem 1.1rem;
 }
@@ -270,7 +270,7 @@ img {
 
 .page-links a {
   background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(15, 76, 92, 0.08);
+  border: 1px solid rgba(23, 50, 77, 0.08);
   border-radius: 0.9rem;
   color: inherit;
   display: block;
@@ -293,7 +293,7 @@ img {
 
 .fact-grid > div {
   background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(15, 76, 92, 0.08);
+  border: 1px solid rgba(23, 50, 77, 0.08);
   border-radius: 0.95rem;
   padding: 1rem;
 }
