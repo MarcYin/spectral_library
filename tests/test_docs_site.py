@@ -17,6 +17,10 @@ SECURITY_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "security-checks.
 CODEQL_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "codeql.yml"
 DEPENDABOT_CONFIG_PATH = REPO_ROOT / ".github" / "dependabot.yml"
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
+DEPRECATED_CHECKOUT_SHA = "34e114876b0b11c390a56381ad16ebd13914f8d5"
+DEPRECATED_SETUP_PYTHON_SHA = "a26af69be951a213d495a4c3e4e4022e16d87065"
+CURRENT_CHECKOUT_SHA = "93cb6efe18208431cddfb8368fd83d5badbf9bfd"
+CURRENT_SETUP_PYTHON_SHA = "a309ff8b426b58ec0e2a45f0f869d46889d02405"
 
 
 class DocsSiteBuildTests(unittest.TestCase):
@@ -176,6 +180,8 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("package-ecosystem: \"pip\"", dependabot_config)
 
         pinned_action_pattern = re.compile(r"uses:\s+[-A-Za-z0-9_./]+@[0-9a-f]{40}\b")
+        saw_checkout_v5 = False
+        saw_setup_python_v6 = False
         for workflow_path in sorted(WORKFLOW_DIR.glob("*.yml")):
             workflow_text = workflow_path.read_text(encoding="utf-8")
             uses_lines = [
@@ -184,8 +190,24 @@ class DocsSiteBuildTests(unittest.TestCase):
                 if line.lstrip().startswith("- uses:") or line.lstrip().startswith("uses:")
             ]
             self.assertTrue(uses_lines, msg=f"No uses lines found in {workflow_path.name}")
+            self.assertNotIn(
+                DEPRECATED_CHECKOUT_SHA,
+                workflow_text,
+                msg=f"Deprecated checkout v4 pin remains in {workflow_path.name}",
+            )
+            self.assertNotIn(
+                DEPRECATED_SETUP_PYTHON_SHA,
+                workflow_text,
+                msg=f"Deprecated setup-python v5 pin remains in {workflow_path.name}",
+            )
+            if CURRENT_CHECKOUT_SHA in workflow_text:
+                saw_checkout_v5 = True
+            if CURRENT_SETUP_PYTHON_SHA in workflow_text:
+                saw_setup_python_v6 = True
             for line in uses_lines:
                 self.assertRegex(line, pinned_action_pattern, msg=f"Unpinned action in {workflow_path.name}: {line}")
+        self.assertTrue(saw_checkout_v5)
+        self.assertTrue(saw_setup_python_v6)
 
 
 if __name__ == "__main__":
