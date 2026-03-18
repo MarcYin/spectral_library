@@ -279,7 +279,7 @@ Level values:
 
 ## Internal Commands
 
-Source acquisition and SIAC build workflows are intentionally separated from
+Source acquisition and library-packaging workflows are intentionally separated from
 the public mapping CLI. Maintainers should use:
 
 - `spectral-library-internal --help`
@@ -294,7 +294,7 @@ That maintainer-only entrypoint exposes the retained internal commands:
 - `normalize-sources`
 - `plot-quality`
 - `filter-coverage`
-- `build-siac-library`
+- `build-library-package`
 
 Legacy direct invocation through `spectral-library <internal-command>` still
 works for repository automation, but those commands are hidden from the public

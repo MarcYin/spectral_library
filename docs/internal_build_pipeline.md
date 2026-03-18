@@ -69,7 +69,7 @@ The current retained pipeline is organized as:
 11. curated subset filter
 12. remaining source-artifact repair
 13. landcover analysis and QA
-14. SIAC export
+14. library package export
 15. suspicious-spectrum review
 
 Representative internal commands used by those stages:
@@ -77,7 +77,7 @@ Representative internal commands used by those stages:
 - `spectral-library-internal normalize-sources`
 - `spectral-library-internal filter-coverage --min-coverage 0.8`
 - `spectral-library-internal plot-quality`
-- `spectral-library-internal build-siac-library`
+- `spectral-library-internal build-library-package`
 
 Representative repair and review scripts:
 

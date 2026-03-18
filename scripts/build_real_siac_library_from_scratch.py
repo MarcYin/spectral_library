@@ -562,7 +562,7 @@ def main() -> int:
             "-m",
             "spectral_library.cli",
             "internal",
-            "build-siac-library",
+            "build-library-package",
             "--manifest",
             str(manifest_path),
             "--normalized-root",
