@@ -164,6 +164,7 @@ class DocsSiteBuildTests(unittest.TestCase):
         self.assertIn("knn-pynndescent", package_checks_workflow)
         self.assertIn("knn-scann", package_checks_workflow)
         self.assertIn("--source-sensor sensor_b", package_checks_workflow)
+        self.assertIn("benchmarks/smoke_thresholds.json", package_checks_workflow)
         self.assertIn("full-library-benchmarks", full_benchmark_workflow)
         self.assertIn("FULL_LIBRARY_PREPARED_ROOT", full_benchmark_workflow)
         self.assertIn("run_full_library_benchmarks.py", full_benchmark_workflow)

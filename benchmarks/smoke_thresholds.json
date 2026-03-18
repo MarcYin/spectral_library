@@ -1,0 +1,12 @@
+{
+  "defaults": {},
+  "scenarios": {},
+  "baseline_deltas": {
+    "defaults": {
+      "full_spectrum.retrieval.mean_mae": 0.003,
+      "target_sensor.retrieval.mean_mae": 0.002,
+      "target_sensor.retrieval.mean_rmse": 0.003
+    },
+    "scenarios": {}
+  }
+}

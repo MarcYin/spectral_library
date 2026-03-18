@@ -216,5 +216,5 @@ jobs:
             --k 2 \
             --max-test-rows 2 \
             --output-root "${RUNNER_TEMP}/mapping-smoke/ann_qualification" \
-            --thresholds benchmarks/default_thresholds.json \
+            --thresholds benchmarks/smoke_thresholds.json \
             --fail-on-thresholds

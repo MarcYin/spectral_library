@@ -12,6 +12,7 @@ from spectral_library import prepare_mapping_library
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "run_full_library_benchmarks.py"
 SMOKE_FIXTURE_SCRIPT_PATH = REPO_ROOT / "scripts" / "create_mapping_smoke_fixture.py"
+SMOKE_THRESHOLDS_PATH = REPO_ROOT / "benchmarks" / "smoke_thresholds.json"
 
 
 def _load_benchmark_runner_module():
@@ -244,6 +245,36 @@ class FullLibraryBenchmarkRunnerTests(unittest.TestCase):
             scenarios = {report["scenario_key"] for report in reports}
             self.assertIn("sensor_a->sensor_b|simplex_mixture|numpy|1", scenarios)
             self.assertIn("sensor_b->sensor_a|simplex_mixture|numpy|1", scenarios)
+
+    def test_smoke_thresholds_skip_absolute_quality_gates_for_toy_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = self.smoke_fixture_module.create_smoke_fixture(Path(tmpdir) / "smoke")
+            prepared_root = Path(fixture["prepared_root"])
+            prepare_mapping_library(
+                Path(fixture["siac_root"]),
+                Path(fixture["srf_root"]),
+                prepared_root,
+                source_sensors=["sensor_a", "sensor_b"],
+            )
+
+            output_root = Path(tmpdir) / "bench"
+            exit_code = self.module.run_benchmarks(
+                prepared_root,
+                source_sensors=["sensor_a", "sensor_b"],
+                neighbor_estimators=["simplex_mixture"],
+                knn_backends=["numpy"],
+                k_values=[2],
+                test_fraction=0.2,
+                max_test_rows=2,
+                random_seed=0,
+                output_root=output_root,
+                thresholds_path=SMOKE_THRESHOLDS_PATH,
+                fail_on_thresholds=True,
+            )
+
+            self.assertEqual(exit_code, 0)
+            summary_payload = json.loads((output_root / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary_payload["threshold_failures"], [])
 
 
 if __name__ == "__main__":
