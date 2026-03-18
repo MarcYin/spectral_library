@@ -7,9 +7,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from spectral_library import prepare_mapping_library
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "run_full_library_benchmarks.py"
+SMOKE_FIXTURE_SCRIPT_PATH = REPO_ROOT / "scripts" / "create_mapping_smoke_fixture.py"
 
 
 def _load_benchmark_runner_module():
@@ -21,10 +23,20 @@ def _load_benchmark_runner_module():
     return module
 
 
+def _load_smoke_fixture_module():
+    spec = importlib.util.spec_from_file_location("create_mapping_smoke_fixture", SMOKE_FIXTURE_SCRIPT_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load smoke fixture helper from {SMOKE_FIXTURE_SCRIPT_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class FullLibraryBenchmarkRunnerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.module = _load_benchmark_runner_module()
+        cls.smoke_fixture_module = _load_smoke_fixture_module()
 
     def test_main_uses_defaults_when_optional_filters_are_omitted(self) -> None:
         with patch.object(self.module, "run_benchmarks", return_value=0) as mock_run:
@@ -197,6 +209,41 @@ class FullLibraryBenchmarkRunnerTests(unittest.TestCase):
             self.assertEqual(exit_code, 2)
             summary_payload = json.loads((output_root / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary_payload["threshold_failures"][0]["threshold_group"], "numpy_baseline_deltas")
+
+    def test_smoke_fixture_supports_two_sensor_ann_qualification_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = self.smoke_fixture_module.create_smoke_fixture(Path(tmpdir) / "smoke")
+            prepared_root = Path(fixture["prepared_root"])
+            prepare_mapping_library(
+                Path(fixture["siac_root"]),
+                Path(fixture["srf_root"]),
+                prepared_root,
+                source_sensors=["sensor_a", "sensor_b"],
+            )
+
+            output_root = Path(tmpdir) / "bench"
+            exit_code = self.module.run_benchmarks(
+                prepared_root,
+                source_sensors=["sensor_a", "sensor_b"],
+                neighbor_estimators=["simplex_mixture"],
+                knn_backends=["numpy"],
+                k_values=[1],
+                test_fraction=0.5,
+                max_test_rows=1,
+                random_seed=0,
+                output_root=output_root,
+                thresholds_path=None,
+                fail_on_thresholds=True,
+            )
+
+            self.assertEqual(exit_code, 0)
+            summary_payload = json.loads((output_root / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary_payload["source_sensors"], ["sensor_a", "sensor_b"])
+            reports = json.loads((output_root / "reports.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(reports), 2)
+            scenarios = {report["scenario_key"] for report in reports}
+            self.assertIn("sensor_a->sensor_b|simplex_mixture|numpy|1", scenarios)
+            self.assertIn("sensor_b->sensor_a|simplex_mixture|numpy|1", scenarios)
 
 
 if __name__ == "__main__":
