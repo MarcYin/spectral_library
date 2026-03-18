@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import shlex
 import shutil
@@ -215,14 +216,14 @@ PLOT_COLORS = {
     "landsat8_oli": "#2a9d8f",
     "landsat9_oli": "#6d597a",
 }
-PLOT_WINDOWS = {
+DEFAULT_PLOT_WINDOWS = {
     "ultra_blue": (410, 470),
-    "blue": (430, 520),
+    "blue": (430, 545),
     "green": (515, 595),
     "red": (620, 700),
-    "nir": (810, 900),
-    "swir1": (1540, 1685),
-    "swir2": (2060, 2240),
+    "nir": (810, 910),
+    "swir1": (1500, 1715),
+    "swir2": (2010, 2385),
 }
 HELD_OUT_TARGETS = (
     HeldOutTarget(
@@ -507,6 +508,32 @@ def _band_payload(band_id: str, segment: str, wavelengths_nm: np.ndarray, rsr: n
         "support_min_nm": round(float(wavelengths_nm[support][0]), 4),
         "support_max_nm": round(float(wavelengths_nm[support][-1]), 4),
     }
+
+
+def _selected_band_plot_window(
+    sensor_payloads: dict[str, dict[str, object]],
+    band_id: str,
+) -> tuple[float, float]:
+    support_mins: list[float] = []
+    support_maxs: list[float] = []
+    for sensor in OFFICIAL_SENSORS:
+        payload = sensor_payloads[sensor.sensor_id]
+        for band in payload["bands"]:  # type: ignore[index]
+            if str(band["band_id"]) != band_id:
+                continue
+            wavelengths = np.asarray(band["wavelength_nm"], dtype=np.float64)
+            support_mins.append(float(wavelengths.min()))
+            support_maxs.append(float(wavelengths.max()))
+    if not support_mins:
+        return DEFAULT_PLOT_WINDOWS[band_id]
+    support_min = min(support_mins)
+    support_max = max(support_maxs)
+    span = max(support_max - support_min, 1.0)
+    padding = max(6.0, span * 0.08)
+    lower = math.floor((support_min - padding) / 5.0) * 5.0
+    upper = math.ceil((support_max + padding) / 5.0) * 5.0
+    default_lower, default_upper = DEFAULT_PLOT_WINDOWS[band_id]
+    return min(lower, default_lower), max(upper, default_upper)
 
 
 def _parse_modis_sensor(selection: SensorSelection, workbook_path: Path) -> dict[str, object]:
@@ -964,16 +991,17 @@ def _write_neighbor_estimator_holdout_comparison(
 
 def _plot_selected_bands(sensor_payloads: dict[str, dict[str, object]]) -> None:
     DOCS_ASSETS_ROOT.mkdir(parents=True, exist_ok=True)
-    figure, axes = plt.subplots(4, 2, figsize=(14, 11), constrained_layout=True)
+    figure, axes = plt.subplots(4, 2, figsize=(15, 11.5), constrained_layout=True)
     blank_axis = axes.flatten()[-1]
     axes_by_band = {
         band_id: axes.flatten()[index]
         for index, band_id in enumerate(SEMANTIC_BANDS)
     }
     blank_axis.axis("off")
+    figure.suptitle("Official selected band responses used by the example runtime", fontsize=17, y=1.02)
 
     for band_id, axis in axes_by_band.items():
-        x_min, x_max = PLOT_WINDOWS[band_id]
+        x_min, x_max = _selected_band_plot_window(sensor_payloads, band_id)
         axis.set_title(band_id.replace("_", " ").title())
         axis.set_xlim(x_min, x_max)
         axis.set_ylim(0, 1.05)
@@ -1005,14 +1033,23 @@ def _plot_selected_bands(sensor_payloads: dict[str, dict[str, object]]) -> None:
     handles, labels = axes_by_band["blue"].get_legend_handles_labels()
     blank_axis.text(
         0.5,
-        0.72,
-        "Official selected band responses\nused by the example runtime",
+        0.56,
+        "Each panel uses a data-driven wavelength window\nthat covers the full official support of the selected RSR curves.",
         ha="center",
         va="center",
-        fontsize=15,
+        fontsize=11,
     )
-    blank_axis.legend(handles, labels, loc="center", ncol=1, frameon=False)
-    figure.savefig(DOCS_ASSETS_ROOT / "official_sensor_selected_bands.png", dpi=180)
+    figure.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=4,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.985),
+        columnspacing=1.5,
+        handlelength=2.8,
+    )
+    figure.savefig(DOCS_ASSETS_ROOT / "official_sensor_selected_bands.png", dpi=180, bbox_inches="tight")
     plt.close(figure)
 
 

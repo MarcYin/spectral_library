@@ -19,7 +19,7 @@ the rest of the external full library available.
   <div><strong>Example estimator</strong><span>`simplex_mixture`</span></div>
   <div><strong>Scored subset</strong><span>blue, green, red, nir, swir1, swir2</span></div>
   <div><strong>Library root</strong><span>`build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37`</span></div>
-  <div><strong>Regenerated</strong><span>2026-03-16 UTC</span></div>
+  <div><strong>Regenerated</strong><span>2026-03-18 UTC</span></div>
 </div>
 
 Related pages:
@@ -37,7 +37,7 @@ Related pages:
 | Landsat 9 OLI | USGS [Spectral Characteristics Viewer band JSON](https://landsat.usgs.gov/spectral-characteristics-viewer) | [`examples/official_mapping/srfs/landsat9_oli.json`](../examples/official_mapping/srfs/landsat9_oli.json) |
 
 The reduced JSON files and derived figures were regenerated from the official
-upstream assets on `2026-03-16` UTC. Provenance, download timestamps,
+upstream assets on `2026-03-18` UTC. Provenance, download timestamps,
 and SHA-256 hashes are stored in
 [`examples/official_mapping/official_source_manifest.json`](../examples/official_mapping/official_source_manifest.json).
 

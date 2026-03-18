@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +12,7 @@ from spectral_library import SensorSRFSchema, SpectralMapper, prepare_mapping_li
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "build_official_mapping_examples.py"
 EXAMPLES_ROOT = REPO_ROOT / "examples" / "official_mapping"
 SRF_ROOT = EXAMPLES_ROOT / "srfs"
 QUERIES_ROOT = EXAMPLES_ROOT / "queries"
@@ -18,7 +21,21 @@ DOC_PATH = REPO_ROOT / "docs" / "official_sensor_examples.md"
 COMMON_METRIC_BANDS = ("blue", "green", "red", "nir", "swir1", "swir2")
 
 
+def _load_example_builder_module():
+    spec = importlib.util.spec_from_file_location("build_official_mapping_examples", SCRIPT_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load example builder from {SCRIPT_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class OfficialExamplesTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.builder_module = _load_example_builder_module()
+
     def test_official_source_manifest_records_hashes(self) -> None:
         payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
         library_reference = payload["example_design"]["library_reference"]
@@ -74,6 +91,21 @@ class OfficialExamplesTests(unittest.TestCase):
         )
         sentinel_nir = next(band for band in sentinel_payload["selected_bands"] if band["band_id"] == "nir")
         self.assertEqual(sentinel_nir["official_band"], "B8A")
+
+    def test_selected_band_plot_windows_cover_full_official_support(self) -> None:
+        sensor_payloads = {
+            path.stem: json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(SRF_ROOT.glob("*.json"))
+        }
+
+        for band_id in self.builder_module.SEMANTIC_BANDS:
+            x_min, x_max = self.builder_module._selected_band_plot_window(sensor_payloads, band_id)
+            for payload in sensor_payloads.values():
+                for band in payload["bands"]:
+                    if band["band_id"] != band_id:
+                        continue
+                    self.assertLessEqual(x_min, min(band["wavelength_nm"]), msg=f"{band_id} left edge clipped")
+                    self.assertGreaterEqual(x_max, max(band["wavelength_nm"]), msg=f"{band_id} right edge clipped")
 
     def test_official_example_full_library_prepares_and_maps_when_available(self) -> None:
         payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))

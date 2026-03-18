@@ -2,11 +2,35 @@
   "results": [
     {
       "diagnostics": {
+        "confidence_policy": {
+          "accept_threshold": 0.85,
+          "band": "high",
+          "recommended_action": "accept",
+          "review_threshold": 0.6,
+          "version": "1"
+        },
+        "confidence_score": 0.8650688596535869,
         "k": 10,
+        "knn_backend": "numpy",
+        "knn_eps": 0.0,
         "neighbor_estimator": "simplex_mixture",
         "output_mode": "target_sensor",
         "segments": {
           "swir": {
+            "confidence_components": {
+              "coverage": 1.0,
+              "distance": 0.9793252467978387,
+              "fit": 0.988517927375346,
+              "weight_concentration": 0.19755545431353172
+            },
+            "confidence_policy": {
+              "accept_threshold": 0.85,
+              "band": "high",
+              "recommended_action": "accept",
+              "review_threshold": 0.6,
+              "version": "1"
+            },
+            "confidence_score": 0.8695266363701099,
             "neighbor_band_values": [
               [
                 0.12921537458896637,
@@ -115,6 +139,20 @@
             "valid_band_count": 3
           },
           "vnir": {
+            "confidence_components": {
+              "coverage": 1.0,
+              "distance": 0.9646752566078091,
+              "fit": 0.9941689217396192,
+              "weight_concentration": 0.17477082250690282
+            },
+            "confidence_policy": {
+              "accept_threshold": 0.85,
+              "band": "high",
+              "recommended_action": "accept",
+              "review_threshold": 0.6,
+              "version": "1"
+            },
+            "confidence_score": 0.8623941936236733,
             "neighbor_band_values": [
               [
                 0.06777842342853546,
@@ -321,11 +359,35 @@
     },
     {
       "diagnostics": {
+        "confidence_policy": {
+          "accept_threshold": 0.85,
+          "band": "high",
+          "recommended_action": "accept",
+          "review_threshold": 0.6,
+          "version": "1"
+        },
+        "confidence_score": 0.8708798847258221,
         "k": 10,
+        "knn_backend": "numpy",
+        "knn_eps": 0.0,
         "neighbor_estimator": "simplex_mixture",
         "output_mode": "target_sensor",
         "segments": {
           "swir": {
+            "confidence_components": {
+              "coverage": 1.0,
+              "distance": 0.954719716862723,
+              "fit": 0.9911036828795502,
+              "weight_concentration": 0.30565835684817827
+            },
+            "confidence_policy": {
+              "accept_threshold": 0.85,
+              "band": "high",
+              "recommended_action": "accept",
+              "review_threshold": 0.6,
+              "version": "1"
+            },
+            "confidence_score": 0.8777765751490673,
             "neighbor_band_values": [
               [
                 0.40563756227493286,
@@ -434,6 +496,20 @@
             "valid_band_count": 3
           },
           "vnir": {
+            "confidence_components": {
+              "coverage": 1.0,
+              "distance": 0.9257448005370887,
+              "fit": 0.9486233925077256,
+              "weight_concentration": 0.37050228104641764
+            },
+            "confidence_policy": {
+              "accept_threshold": 0.85,
+              "band": "high",
+              "recommended_action": "accept",
+              "review_threshold": 0.6,
+              "version": "1"
+            },
+            "confidence_score": 0.866741870471875,
             "neighbor_band_values": [
               [
                 0.0761355385184288,
@@ -640,11 +716,35 @@
     },
     {
       "diagnostics": {
+        "confidence_policy": {
+          "accept_threshold": 0.85,
+          "band": "high",
+          "recommended_action": "accept",
+          "review_threshold": 0.6,
+          "version": "1"
+        },
+        "confidence_score": 0.8761471755226478,
         "k": 10,
+        "knn_backend": "numpy",
+        "knn_eps": 0.0,
         "neighbor_estimator": "simplex_mixture",
         "output_mode": "target_sensor",
         "segments": {
           "swir": {
+            "confidence_components": {
+              "coverage": 1.0,
+              "distance": 0.9945025077752112,
+              "fit": 0.998221368853152,
+              "weight_concentration": 0.10574549563825135
+            },
+            "confidence_policy": {
+              "accept_threshold": 0.85,
+              "band": "high",
+              "recommended_action": "accept",
+              "review_threshold": 0.6,
+              "version": "1"
+            },
+            "confidence_score": 0.8634930442803497,
             "neighbor_band_values": [
               [
                 0.36931097507476807,
@@ -753,6 +853,20 @@
             "valid_band_count": 3
           },
           "vnir": {
+            "confidence_components": {
+              "coverage": 1.0,
+              "distance": 0.9582901419252815,
+              "fit": 0.9783442638897578,
+              "weight_concentration": 0.35834692414492325
+            },
+            "confidence_policy": {
+              "accept_threshold": 0.85,
+              "band": "high",
+              "recommended_action": "accept",
+              "review_threshold": 0.6,
+              "version": "1"
+            },
+            "confidence_score": 0.8837396542680265,
             "neighbor_band_values": [
               [
                 0.06778035312891006,
@@ -959,11 +1073,35 @@
     },
     {
       "diagnostics": {
+        "confidence_policy": {
+          "accept_threshold": 0.85,
+          "band": "high",
+          "recommended_action": "accept",
+          "review_threshold": 0.6,
+          "version": "1"
+        },
+        "confidence_score": 0.8503639321575889,
         "k": 10,
+        "knn_backend": "numpy",
+        "knn_eps": 0.0,
         "neighbor_estimator": "simplex_mixture",
         "output_mode": "target_sensor",
         "segments": {
           "swir": {
+            "confidence_components": {
+              "coverage": 1.0,
+              "distance": 0.792349242433223,
+              "fit": 0.9822523342790261,
+              "weight_concentration": 0.5008498495723369
+            },
+            "confidence_policy": {
+              "accept_threshold": 0.85,
+              "band": "medium",
+              "recommended_action": "manual_review",
+              "review_threshold": 0.6,
+              "version": "1"
+            },
+            "confidence_score": 0.8480127958572351,
             "neighbor_band_values": [
               [
                 0.019769281148910522,
@@ -1072,6 +1210,20 @@
             "valid_band_count": 3
           },
           "vnir": {
+            "confidence_components": {
+              "coverage": 1.0,
+              "distance": 0.9167314175970982,
+              "fit": 0.9980124514434399,
+              "weight_concentration": 0.20943669945304488
+            },
+            "confidence_policy": {
+              "accept_threshold": 0.85,
+              "band": "high",
+              "recommended_action": "accept",
+              "review_threshold": 0.6,
+              "version": "1"
+            },
+            "confidence_score": 0.8517746139378011,
             "neighbor_band_values": [
               [
                 0.030758963897824287,
