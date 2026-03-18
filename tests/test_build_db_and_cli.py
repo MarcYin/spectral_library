@@ -378,8 +378,30 @@ class CliCommandTests(unittest.TestCase):
             self.assertEqual(json.loads(stdout.getvalue())["retained_spectra"], 7)
             self.assertTrue(mock_filter.called)
 
-    def test_build_siac_library_command_prints_summary(self) -> None:
-        with patch.object(cli, "build_siac_library", return_value={"classified_spectra": 9}) as mock_build_siac_library:
+    def test_build_library_package_command_prints_summary(self) -> None:
+        with patch.object(cli, "build_library_package", return_value={"classified_spectra": 9}) as mock_build_library_package:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "build-library-package",
+                        "--manifest",
+                        "manifests/sources.csv",
+                        "--normalized-root",
+                        "build/normalized_rebuild_v9_final",
+                        "--output-root",
+                        "build/siac_spectral_library_v1",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 9)
+            self.assertTrue(mock_build_library_package.called)
+            self.assertEqual(mock_build_library_package.call_args.kwargs["exclude_source_ids"], [])
+            self.assertIsNone(mock_build_library_package.call_args.kwargs["exclude_spectra_csv"])
+
+    def test_build_siac_library_command_alias_prints_summary(self) -> None:
+        with patch.object(cli, "build_library_package", return_value={"classified_spectra": 9}) as mock_build_library_package:
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
                 exit_code = cli.main_with_args(
@@ -396,17 +418,36 @@ class CliCommandTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 9)
-            self.assertTrue(mock_build_siac_library.called)
-            self.assertEqual(mock_build_siac_library.call_args.kwargs["exclude_source_ids"], [])
-            self.assertIsNone(mock_build_siac_library.call_args.kwargs["exclude_spectra_csv"])
+            self.assertTrue(mock_build_library_package.called)
 
-    def test_build_siac_library_command_passes_excluded_sources(self) -> None:
-        with patch.object(cli, "build_siac_library", return_value={"classified_spectra": 8}) as mock_build_siac_library:
+    def test_internal_build_siac_library_command_alias_prints_summary(self) -> None:
+        with patch.object(cli, "build_library_package", return_value={"classified_spectra": 9}) as mock_build_library_package:
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
                 exit_code = cli.main_with_args(
                     [
+                        "internal",
                         "build-siac-library",
+                        "--manifest",
+                        "manifests/sources.csv",
+                        "--normalized-root",
+                        "build/normalized_rebuild_v9_final",
+                        "--output-root",
+                        "build/siac_spectral_library_v1",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 9)
+            self.assertTrue(mock_build_library_package.called)
+
+    def test_build_library_package_command_passes_excluded_sources(self) -> None:
+        with patch.object(cli, "build_library_package", return_value={"classified_spectra": 8}) as mock_build_library_package:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "build-library-package",
                         "--manifest",
                         "manifests/sources.csv",
                         "--normalized-root",
@@ -420,15 +461,15 @@ class CliCommandTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 8)
-            self.assertEqual(mock_build_siac_library.call_args.kwargs["exclude_source_ids"], ["ghisacasia_v001"])
+            self.assertEqual(mock_build_library_package.call_args.kwargs["exclude_source_ids"], ["ghisacasia_v001"])
 
-    def test_build_siac_library_command_passes_excluded_spectra_csv(self) -> None:
-        with patch.object(cli, "build_siac_library", return_value={"classified_spectra": 7}) as mock_build_siac_library:
+    def test_build_library_package_command_passes_excluded_spectra_csv(self) -> None:
+        with patch.object(cli, "build_library_package", return_value={"classified_spectra": 7}) as mock_build_library_package:
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
                 exit_code = cli.main_with_args(
                     [
-                        "build-siac-library",
+                        "build-library-package",
                         "--manifest",
                         "manifests/sources.csv",
                         "--normalized-root",
@@ -443,7 +484,7 @@ class CliCommandTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(json.loads(stdout.getvalue())["classified_spectra"], 7)
             self.assertEqual(
-                mock_build_siac_library.call_args.kwargs["exclude_spectra_csv"],
+                mock_build_library_package.call_args.kwargs["exclude_spectra_csv"],
                 Path("manifests/siac_excluded_spectra.csv"),
             )
 
@@ -461,6 +502,13 @@ class CliCommandTests(unittest.TestCase):
         args = parser.parse_args(["plan-matrix"])
         self.assertEqual(args.manifest, str(cli.DEFAULT_MANIFEST))
         self.assertEqual(__version__, "0.2.0")
+
+    def test_internal_parser_hides_legacy_build_siac_library_alias_from_help(self) -> None:
+        parser = cli.build_internal_parser()
+        subparsers_action = next(
+            action for action in parser._actions if isinstance(action, cli.argparse._SubParsersAction)
+        )
+        self.assertNotIn("build-siac-library", subparsers_action.choices)
 
 
 if __name__ == "__main__":

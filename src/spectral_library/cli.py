@@ -34,7 +34,7 @@ from .mapping import (
 )
 from .normalize import normalize_sources
 from .quality_plots import generate_quality_plots
-from .siac import build_siac_library
+from .library_package import build_library_package
 
 
 DEFAULT_MANIFEST = Path("manifests/sources.csv")
@@ -55,8 +55,9 @@ INTERNAL_COMMANDS = (
     "normalize-sources",
     "plot-quality",
     "filter-coverage",
-    "build-siac-library",
+    "build-library-package",
 )
+LEGACY_INTERNAL_COMMANDS = ("build-siac-library",)
 
 
 def _utc_timestamp() -> str:
@@ -715,8 +716,8 @@ def cmd_filter_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_build_siac_library(args: argparse.Namespace) -> int:
-    summary = build_siac_library(
+def cmd_build_library_package(args: argparse.Namespace) -> int:
+    summary = build_library_package(
         Path(args.manifest),
         Path(args.normalized_root),
         Path(args.output_root),
@@ -725,6 +726,15 @@ def cmd_build_siac_library(args: argparse.Namespace) -> int:
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
+
+
+def _configure_library_package_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    parser.add_argument("--normalized-root", default="build/normalized_rebuild_v9_final")
+    parser.add_argument("--output-root", default="build/siac_spectral_library_v1")
+    parser.add_argument("--exclude-source-ids", default="")
+    parser.add_argument("--exclude-spectra-csv", default="")
+    parser.set_defaults(func=cmd_build_library_package)
 
 
 def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
@@ -1157,6 +1167,7 @@ def _add_internal_subparsers(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
     *,
     visible: bool,
+    include_legacy_aliases: bool = False,
 ) -> None:
     plan_parser = subparsers.add_parser(
         "plan-matrix",
@@ -1245,16 +1256,15 @@ def _add_internal_subparsers(
     filter_parser.add_argument("--min-coverage", type=float, default=0.8)
     filter_parser.set_defaults(func=cmd_filter_coverage)
 
-    siac_parser = subparsers.add_parser(
-        "build-siac-library",
-        help="Build the SIAC-oriented spectral library package from a normalized dataset." if visible else argparse.SUPPRESS,
+    package_parser = subparsers.add_parser(
+        "build-library-package",
+        help="Build the packaged spectral-library export from a normalized dataset." if visible else argparse.SUPPRESS,
     )
-    siac_parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
-    siac_parser.add_argument("--normalized-root", default="build/normalized_rebuild_v9_final")
-    siac_parser.add_argument("--output-root", default="build/siac_spectral_library_v1")
-    siac_parser.add_argument("--exclude-source-ids", default="")
-    siac_parser.add_argument("--exclude-spectra-csv", default="")
-    siac_parser.set_defaults(func=cmd_build_siac_library)
+    _configure_library_package_parser(package_parser)
+
+    if include_legacy_aliases:
+        legacy_package_parser = subparsers.add_parser("build-siac-library", help=argparse.SUPPRESS)
+        _configure_library_package_parser(legacy_package_parser)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1271,11 +1281,18 @@ def build_internal_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_internal_dispatch_parser() -> argparse.ArgumentParser:
+    parser = _build_base_parser(prog="spectral-library-internal")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_internal_subparsers(subparsers, visible=True, include_legacy_aliases=True)
+    return parser
+
+
 def _build_legacy_dispatch_parser() -> argparse.ArgumentParser:
     parser = _build_base_parser(prog="spectral-library")
     subparsers = parser.add_subparsers(dest="command", required=True)
     _add_public_subparsers(subparsers)
-    _add_internal_subparsers(subparsers, visible=False)
+    _add_internal_subparsers(subparsers, visible=False, include_legacy_aliases=True)
     return parser
 
 
@@ -1286,14 +1303,22 @@ def _first_command_position(argv: Sequence[str]) -> tuple[int | None, str | None
     return None, None
 
 
+def _internal_parser_for_argv(argv: Sequence[str]) -> argparse.ArgumentParser:
+    _, command_token = _first_command_position(argv)
+    if command_token in LEGACY_INTERNAL_COMMANDS:
+        return _build_internal_dispatch_parser()
+    return build_internal_parser()
+
+
 def _dispatch_parser_for_argv(argv: Sequence[str]) -> tuple[argparse.ArgumentParser, list[str]]:
     argv_list = list(argv)
     command_index, command_token = _first_command_position(argv_list)
     if command_token == "internal":
         if command_index is None:
             return build_internal_parser(), argv_list
-        return build_internal_parser(), argv_list[:command_index] + argv_list[command_index + 1 :]
-    if command_token in INTERNAL_COMMANDS:
+        internal_argv = argv_list[:command_index] + argv_list[command_index + 1 :]
+        return _internal_parser_for_argv(internal_argv), internal_argv
+    if command_token in INTERNAL_COMMANDS or command_token in LEGACY_INTERNAL_COMMANDS:
         return _build_legacy_dispatch_parser(), argv_list
     return build_parser(), argv_list
 
@@ -1328,7 +1353,7 @@ def main_with_args(argv: list[str] | None = None) -> int:
 
 def main_internal_with_args(argv: list[str] | None = None) -> int:
     argv_list = list(argv) if argv is not None else sys.argv[1:]
-    return _run_parser(build_internal_parser(), argv_list)
+    return _run_parser(_internal_parser_for_argv(argv_list), argv_list)
 
 
 def main() -> int:

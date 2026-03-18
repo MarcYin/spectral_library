@@ -8,7 +8,9 @@ from pathlib import Path
 
 import duckdb
 
+from spectral_library.library_package import build_library_package
 from spectral_library.manifest import SourceRecord
+from spectral_library.siac import build_library_package as legacy_build_library_package
 from spectral_library.siac import build_siac_library
 
 
@@ -47,8 +49,12 @@ def _manifest_row(source_id: str, name: str, **overrides: str) -> dict[str, str]
     return row
 
 
-class BuildSiacLibraryTests(unittest.TestCase):
-    def test_build_siac_library_exports_tables_and_prototypes(self) -> None:
+class BuildLibraryPackageTests(unittest.TestCase):
+    def test_legacy_siac_module_aliases_build_library_package(self) -> None:
+        self.assertIs(build_siac_library, build_library_package)
+        self.assertIs(legacy_build_library_package, build_library_package)
+
+    def test_build_library_package_exports_tables_and_prototypes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             manifest_path = root / "manifests" / "sources.csv"
@@ -188,7 +194,7 @@ class BuildSiacLibraryTests(unittest.TestCase):
                 ],
             )
 
-            summary = build_siac_library(manifest_path, normalized_root, output_root)
+            summary = build_library_package(manifest_path, normalized_root, output_root)
 
             self.assertEqual(summary["total_spectra"], 5)
             self.assertEqual(summary["classified_spectra"], 4)
@@ -245,7 +251,7 @@ class BuildSiacLibraryTests(unittest.TestCase):
 
             self.assertEqual(wavelength_rows, [("nm_400", 400), ("nm_401", 401), ("nm_402", 402)])
 
-    def test_build_siac_library_can_exclude_source_but_keep_metadata_rows(self) -> None:
+    def test_build_library_package_can_exclude_source_but_keep_metadata_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             manifest_path = root / "manifests" / "sources.csv"
@@ -330,7 +336,7 @@ class BuildSiacLibraryTests(unittest.TestCase):
                 ],
             )
 
-            summary = build_siac_library(
+            summary = build_library_package(
                 manifest_path,
                 normalized_root,
                 output_root,
@@ -385,7 +391,7 @@ class BuildSiacLibraryTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_build_siac_library_can_exclude_individual_spectra_but_keep_exclusion_metadata(self) -> None:
+    def test_build_library_package_can_exclude_individual_spectra_but_keep_exclusion_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             manifest_path = root / "manifests" / "sources.csv"
@@ -494,7 +500,7 @@ class BuildSiacLibraryTests(unittest.TestCase):
                 [{"source_id": "src1", "spectrum_id": "src1_b", "reason": "manual_review"}],
             )
 
-            summary = build_siac_library(
+            summary = build_library_package(
                 manifest_path,
                 normalized_root,
                 output_root,
@@ -519,7 +525,7 @@ class BuildSiacLibraryTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_build_siac_library_uses_tail_stable_subset_for_urban_pooled_prototypes(self) -> None:
+    def test_build_library_package_uses_tail_stable_subset_for_urban_pooled_prototypes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             manifest_path = root / "manifests" / "sources.csv"
@@ -604,7 +610,7 @@ class BuildSiacLibraryTests(unittest.TestCase):
                 ],
             )
 
-            build_siac_library(manifest_path, normalized_root, output_root)
+            build_library_package(manifest_path, normalized_root, output_root)
 
             connection = duckdb.connect(str(output_root / "db" / "siac_spectral_library.duckdb"))
             try:
