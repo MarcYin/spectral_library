@@ -1,95 +1,60 @@
-# Spectral Library
+# spectral-library
 
 `spectral-library` is a Python package and CLI for:
 
-1. preparing row-aligned runtime artifacts from a SIAC spectral-library export,
-2. mapping source-sensor reflectance to target sensors,
-3. reconstructing VNIR, SWIR, or full hyperspectral outputs with retrieval-based
-   spectral mapping.
+- preparing stable row-aligned mapping runtimes from SIAC-style hyperspectral exports
+- mapping source-sensor reflectance to target sensors
+- reconstructing VNIR, SWIR, or full `400-2500 nm` spectra with retrieval-based spectral mapping
 
-The public names are:
+Project identity:
 
 - distribution: `spectral-library`
 - import package: `spectral_library`
-- CLI: `spectral-library`
-- license: `MIT` for repository software and repository-authored docs
+- public CLI: `spectral-library`
+- internal maintainer CLI: `spectral-library-internal`
+- current version: `0.2.0`
+- license: `MIT` for repository software and repository-authored docs; referenced or redistributed third-party datasets, metadata, and derived artifacts may remain subject to upstream terms
 
-## Start Here
+Documentation:
 
-- published docs site:
-  [https://marcyin.github.io/spectral_library/](https://marcyin.github.io/spectral_library/)
-- overview:
-  [`docs/index.md`](docs/index.md)
-- getting started:
-  [`docs/mapping_quickstart.md`](docs/mapping_quickstart.md)
-- mathematical foundations:
-  [`docs/theory.md`](docs/theory.md)
-- official sensor examples:
-  [`docs/official_sensor_examples.md`](docs/official_sensor_examples.md)
-- public CLI reference:
-  [`docs/cli_reference.md`](docs/cli_reference.md)
-- public Python API reference:
-  [`docs/python_api_reference.md`](docs/python_api_reference.md)
-- security and provenance:
-  [`docs/security_provenance.md`](docs/security_provenance.md)
-- prepared-runtime contract:
-  [`docs/prepared_runtime_contract.md`](docs/prepared_runtime_contract.md)
-- internal maintainer docs:
-  [`docs/internal_overview.md`](docs/internal_overview.md)
+- published site: [https://marcyin.github.io/spectral_library/](https://marcyin.github.io/spectral_library/)
+- getting started: [docs/mapping_quickstart.md](docs/mapping_quickstart.md)
+- theory: [docs/theory.md](docs/theory.md)
+- official sensor examples: [docs/official_sensor_examples.md](docs/official_sensor_examples.md)
+- CLI reference: [docs/cli_reference.md](docs/cli_reference.md)
+- Python API reference: [docs/python_api_reference.md](docs/python_api_reference.md)
+- prepared runtime contract: [docs/prepared_runtime_contract.md](docs/prepared_runtime_contract.md)
+- security and provenance: [docs/security_provenance.md](docs/security_provenance.md)
+- release process: [docs/release_process.md](docs/release_process.md)
 
 ## Install
 
-Install from this repository in a Python `3.9+` environment:
+Install the public package in Python `3.9` to `3.12`:
 
 ```bash
 python3 -m pip install .
 ```
 
-Supported Python versions in CI are `3.9`, `3.10`, `3.11`, and `3.12`.
+Optional extras:
 
-The same documentation set is published to GitHub Pages from this repository.
+- docs site: `python3 -m pip install ".[docs]"`
+- SciPy `cKDTree` KNN backend: `python3 -m pip install ".[knn]"`
+- FAISS backend: `python3 -m pip install ".[knn-faiss]"`
+- PyNNDescent backend: `python3 -m pip install ".[knn-pynndescent]"`
+- ScaNN backend: `python3 -m pip install ".[knn-scann]"`
+- all ANN extras: `python3 -m pip install ".[knn-all]"`
+- internal build and example-regeneration tools: `python3 -m pip install ".[internal-build]"`
 
-For the retained internal normalization and QA commands, install the optional
-internal-build dependencies:
+## Quickstart
 
-```bash
-python3 -m pip install ".[internal-build]"
-```
-
-This extra is also required if you want to regenerate the bundled official
-sensor example assets with `scripts/build_official_mapping_examples.py`.
-
-For the static documentation site and GitHub Pages build path, install:
-
-```bash
-python3 -m pip install ".[docs]"
-```
-
-The published docs site is built with MkDocs from [mkdocs.yml](mkdocs.yml).
-
-For the optional SciPy `cKDTree` shortlist backend, install:
-
-```bash
-python3 -m pip install ".[knn]"
-```
-
-Additional optional ANN backends are available with:
-
-```bash
-python3 -m pip install ".[knn-faiss]"
-python3 -m pip install ".[knn-pynndescent]"
-python3 -m pip install ".[knn-scann]"
-```
-
-## Minimal Example
-
-Prepare a mapping runtime:
+Prepare a runtime:
 
 ```bash
 spectral-library prepare-mapping-library \
   --siac-root build/siac_library \
   --srf-root path/to/srfs \
   --source-sensor SENSOR_A \
+  --source-sensor SENSOR_B \
   --knn-index-backend faiss \
   --output-root build/mapping_runtime
 ```
@@ -101,7 +66,7 @@ spectral-library validate-prepared-library \
   --prepared-root build/mapping_runtime
 ```
 
-Map one reflectance sample:
+Map one sample:
 
 ```bash
 spectral-library map-reflectance \
@@ -110,10 +75,12 @@ spectral-library map-reflectance \
   --target-sensor SENSOR_B \
   --input path/to/query.csv \
   --output-mode target_sensor \
+  --neighbor-estimator simplex_mixture \
+  --knn-backend faiss \
   --output path/to/mapped.csv
 ```
 
-Map many samples from one CSV:
+Map a batch and write diagnostics:
 
 ```bash
 spectral-library map-reflectance-batch \
@@ -122,39 +89,72 @@ spectral-library map-reflectance-batch \
   --target-sensor SENSOR_B \
   --input path/to/query_batch.csv \
   --output-mode target_sensor \
+  --neighbor-estimator simplex_mixture \
+  --knn-backend faiss \
+  --diagnostics-output path/to/diagnostics.json \
+  --neighbor-review-output path/to/neighbor_review.csv \
   --output path/to/mapped_batch.csv
 ```
 
-The detailed quickstart, supported CSV layouts, Python API examples, SRF JSON
-schema, and prepared-runtime contract are documented in
-[`docs/mapping_quickstart.md`](docs/mapping_quickstart.md).
+Benchmark a prepared runtime:
 
-For larger prepared runtimes, the repository also ships
-[`scripts/run_full_library_benchmarks.py`](scripts/run_full_library_benchmarks.py)
-plus the scheduled/manual GitHub Actions workflow
-[`full-library-benchmarks.yml`](.github/workflows/full-library-benchmarks.yml).
-Use `--max-test-rows` to keep held-out benchmark runs bounded on large
-prepared libraries.
+```bash
+python3 scripts/run_full_library_benchmarks.py \
+  --prepared-root build/mapping_runtime \
+  --source-sensor SENSOR_A \
+  --source-sensor SENSOR_B \
+  --neighbor-estimator simplex_mixture \
+  --knn-backend numpy \
+  --knn-backend faiss \
+  --max-test-rows 200 \
+  --output-root build/benchmark_outputs
+```
 
-For production release hardening, the repository now also ships:
+For CSV layouts, SRF JSON shape, batch self-exclusion, diagnostics, confidence policy, and Python examples, start with [docs/mapping_quickstart.md](docs/mapping_quickstart.md).
 
-- dependency review and `pip-audit` gates in
-  [`security-checks.yml`](.github/workflows/security-checks.yml)
-- Python CodeQL analysis in
-  [`codeql.yml`](.github/workflows/codeql.yml)
-- weekly dependency updates in
-  [`.github/dependabot.yml`](.github/dependabot.yml)
-- release SBOM and provenance attestations in
-  [`release-package.yml`](.github/workflows/release-package.yml)
+## What The Package Ships
 
-Workflow dependencies are pinned to immutable GitHub Action SHAs, and
-Dependabot is configured to move those pins forward through reviewed pull
-requests.
+- Stable public Python API for `prepare_mapping_library(...)`, `validate_prepared_library(...)`, and `SpectralMapper`
+- Public CLI for prepare, validate, single-sample mapping, batch mapping, and benchmarking
+- Prepared runtime format with manifest, checksums, sensor schema, and optional persisted ANN indexes
+- Exact `numpy` KNN plus optional `scipy_ckdtree`, `faiss`, `pynndescent`, and `scann` backends
+- Multiple retrieval estimators including `mean`, `distance_weighted_mean`, and `simplex_mixture`
+- Rich diagnostics with neighbor identities, distances, weights, source-band fits, and confidence routing
 
-For reproducible cross-sensor examples built from official MODIS, Sentinel-2A,
-Landsat 8, and Landsat 9 response functions, see
-[`docs/official_sensor_examples.md`](docs/official_sensor_examples.md) and the
-bundled example assets in
-[`examples/official_mapping`](examples/official_mapping/README.md). Those
-official examples expect the previously composed full SIAC library recorded in
-the example manifest, rather than a vendored mini runtime.
+## Official Sensor Examples
+
+The repository includes reproducible cross-sensor examples built from official:
+
+- NASA MODIS response functions
+- ESA Sentinel-2A response functions
+- USGS Landsat 8 and Landsat 9 response functions
+
+Those examples live in [examples/official_mapping/README.md](examples/official_mapping/README.md) and are documented in [docs/official_sensor_examples.md](docs/official_sensor_examples.md).
+
+Important:
+
+- the official example bundle expects the previously composed full SIAC library recorded in its manifest
+- the docs example is a held-out evaluation against that full library, not a vendored miniature retrieval database
+- Sentinel-2 uses `B8A` for the semantic `nir` band in the published example set
+
+## Production Readiness
+
+The repository includes the production-release work needed to ship the package:
+
+- package build and smoke-test workflows
+- GitHub Pages docs deployment
+- dependency review, `pip-audit`, and Python CodeQL
+- weekly Dependabot update PRs
+- pinned GitHub Action SHAs across workflows
+- SBOM generation and provenance attestations in the release workflow
+- scheduled and manual full-library benchmark workflows
+
+See [docs/security_provenance.md](docs/security_provenance.md), [SECURITY.md](SECURITY.md), and [RELEASE.md](RELEASE.md).
+
+## Maintainers
+
+Internal build and source-ingest material is intentionally separated from the public mapping package. If you are maintaining the full library build pipeline, start here:
+
+- internal overview: [docs/internal_overview.md](docs/internal_overview.md)
+- internal build pipeline: [docs/internal_build_pipeline.md](docs/internal_build_pipeline.md)
+- release notes: [docs/releases/0.2.0.md](docs/releases/0.2.0.md)
