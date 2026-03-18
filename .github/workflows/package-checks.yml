@@ -182,6 +182,7 @@ jobs:
             --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
             --srf-root "${RUNNER_TEMP}/mapping-smoke/srfs" \
             --source-sensor sensor_a \
+            --source-sensor sensor_b \
             --output-root "${RUNNER_TEMP}/mapping-smoke/prepared" \
             ${extra_args}
 
