@@ -922,9 +922,12 @@ def _build_scann_searcher(
         training_sample_size=training_sample_size,
     )
     # Tiny candidate sets cannot train ScaNN's asymmetric hashing path.
-    # Keep the tree-only index in that case so persisted ScaNN builds still work.
+    # Fall back to brute-force scoring so the builder still satisfies ScaNN's
+    # requirement that exactly one scoring mode is configured.
     if hasattr(builder, "score_ah") and training_sample_size >= SCANN_MIN_AH_TRAINING_SAMPLE_SIZE:
         builder = builder.score_ah(2, anisotropic_quantization_threshold=0.2)
+    elif hasattr(builder, "score_brute_force"):
+        builder = builder.score_brute_force()
     if hasattr(builder, "reorder"):
         builder = builder.reorder(neighbor_count)
     return builder.build()

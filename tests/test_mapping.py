@@ -323,6 +323,10 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertEqual(result.diagnostics["knn_backend"], "faiss")
 
     def test_prepare_mapping_library_can_persist_scann_indexes_with_tiny_candidate_sets(self) -> None:
+        trace: dict[str, bool] = {
+            "score_brute_force": False,
+        }
+
         class FakeScannSearcher:
             def __init__(self, data: np.ndarray) -> None:
                 self.data = np.asarray(data, dtype=np.float32)
@@ -352,6 +356,10 @@ class MappingWorkflowTests(unittest.TestCase):
             def score_ah(self, *args: object, **kwargs: object) -> "FakeScannBuilder":
                 del args, kwargs
                 raise AssertionError("Tiny persisted ScaNN test should skip score_ah.")
+
+            def score_brute_force(self) -> "FakeScannBuilder":
+                trace["score_brute_force"] = True
+                return self
 
             def reorder(self, *_: object) -> "FakeScannBuilder":
                 return self
@@ -402,6 +410,7 @@ class MappingWorkflowTests(unittest.TestCase):
             assert result.target_reflectance is not None
             self.assertTrue(np.allclose(result.target_reflectance, np.array([0.79, 0.21]), atol=1e-4))
             self.assertEqual(result.diagnostics["knn_backend"], "scann")
+            self.assertTrue(trace["score_brute_force"])
 
     def test_spectral_mapper_identity_retrieval_matches_when_source_equals_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
