@@ -47,7 +47,14 @@ Optional extras:
 
 ## Quickstart
 
-Prepare a runtime:
+Download a pre-built runtime (77,125 spectra, MODIS/Sentinel-2/Landsat 8/9):
+
+```bash
+spectral-library download-prepared-library \
+  --output-root build/mapping_runtime
+```
+
+Or build your own from a SIAC-style export:
 
 ```bash
 spectral-library prepare-mapping-library \

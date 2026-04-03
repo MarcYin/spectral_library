@@ -36,6 +36,25 @@ Optional arguments:
 | `--dtype` | floating-point output dtype, default `float32` |
 | `--knn-index-backend` | optionally persist ANN indexes for `faiss`, `pynndescent`, or `scann` during prepare |
 
+### `download-prepared-library`
+
+Download a pre-built prepared runtime from a GitHub Release or a direct URL.
+
+Required arguments:
+
+| Flag | Meaning |
+| --- | --- |
+| `--output-root` | local directory to extract the runtime into |
+
+Optional arguments:
+
+| Flag | Meaning |
+| --- | --- |
+| `--url` | direct URL to a `.tar.gz` runtime archive (skips GitHub Release lookup) |
+| `--tag` | GitHub Release tag to download from (e.g. `v0.2.0`); defaults to latest |
+| `--sha256` | expected SHA-256 hex digest for the archive |
+| `--no-verify` | skip runtime validation after extraction |
+
 ### `validate-prepared-library`
 
 Validate a prepared runtime root.

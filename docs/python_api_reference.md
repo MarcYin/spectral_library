@@ -23,6 +23,31 @@ from spectral_library import (
 
 ## Public Workflow
 
+### 0. `download_prepared_library(...)`
+
+Download a pre-built prepared runtime from GitHub Releases or a direct URL.
+
+```python
+from pathlib import Path
+
+from spectral_library.runtime_download import download_prepared_library
+
+output = download_prepared_library(
+    Path("build/mapping_runtime"),
+    # tag="v0.2.0",       # optional: pin to a specific release
+    # url="https://...",   # optional: direct tarball URL
+    # sha256="abc123...",  # optional: expected digest
+)
+```
+
+Returns:
+
+- `Path` to the extracted runtime directory
+
+Raises:
+
+- `RuntimeDownloadError` when the download, verification, or extraction fails
+
 ### 1. `prepare_mapping_library(...)`
 
 Build the prepared runtime used by mapping.

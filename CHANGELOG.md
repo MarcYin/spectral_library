@@ -5,6 +5,25 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.2.1] - 2026-04-03
+
+### Added
+
+- New public CLI command `download-prepared-library` to fetch pre-built
+  prepared runtimes from GitHub Releases or direct URLs
+- New `spectral_library.runtime_download` module with `download_prepared_library()`
+  Python API
+- New `scripts/package_prepared_runtime.py` to package prepared runtimes into
+  distributable tarballs with SHA-256 sidecar digests
+- Pre-built runtime tarball (77,125 spectra, MODIS/Sentinel-2/Landsat 8/9)
+  published as a GitHub Release asset
+
+### Changed
+
+- README quickstart now leads with `download-prepared-library`
+- Mapping quickstart docs split into download and build-your-own paths
+- CLI reference and Python API reference updated with new command
+
 ## [0.2.0] - 2026-03-16
 
 ### Added
