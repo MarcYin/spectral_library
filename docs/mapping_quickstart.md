@@ -45,9 +45,29 @@ Optional extras:
 | `.[accel]` | using optional Rust-backed smoothing utilities |
 | `.[dev]` | running tests and release tooling |
 
-## Step 2: Prepare A Runtime
+## Step 2: Get A Prepared Runtime
 
-Build the prepared runtime once for the source sensors you care about.
+There are two ways to obtain a prepared runtime.
+
+### Option A: Download a pre-built runtime (recommended)
+
+Pre-built runtimes with 77,125 spectra and precomputed matrices for MODIS
+Terra, Sentinel-2A, Landsat 8, and Landsat 9 are published as GitHub Release
+assets.
+
+```bash
+spectral-library download-prepared-library \
+  --output-root build/mapping_runtime
+```
+
+This fetches the latest release, verifies the SHA-256 digest, extracts the
+runtime, and validates it.  You can pin a specific release with `--tag v0.2.0`
+or point at any hosted tarball with `--url <URL>`.
+
+### Option B: Build your own runtime
+
+If you need different source sensors or a custom spectral library, build the
+prepared runtime from a SIAC-style export:
 
 ```bash
 spectral-library prepare-mapping-library \

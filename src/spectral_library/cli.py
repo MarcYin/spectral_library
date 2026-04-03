@@ -41,6 +41,7 @@ DEFAULT_MANIFEST = Path("manifests/sources.csv")
 DEFAULT_USER_AGENT = f"spectral-library/{__version__}"
 PUBLIC_COMMANDS = (
     "prepare-mapping-library",
+    "download-prepared-library",
     "map-reflectance",
     "map-reflectance-batch",
     "benchmark-mapping",
@@ -1068,6 +1069,38 @@ def cmd_validate_prepared_library(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_download_prepared_library(args: argparse.Namespace) -> int:
+    from .runtime_download import RuntimeDownloadError, download_prepared_library
+
+    _emit_cli_log(
+        args,
+        command="download-prepared-library",
+        event="command_started",
+        context={"output_root": str(Path(args.output_root))},
+    )
+    try:
+        output_root = download_prepared_library(
+            Path(args.output_root),
+            url=args.url or None,
+            tag=args.tag or None,
+            sha256=args.sha256 or None,
+            verify_after_extract=not args.no_verify,
+        )
+    except RuntimeDownloadError as exc:
+        raise SpectralLibraryError(
+            "download_failed",
+            str(exc),
+            context={"output_root": str(Path(args.output_root))},
+        ) from exc
+    _emit_cli_log(
+        args,
+        command="download-prepared-library",
+        event="command_completed",
+        context={"output_root": str(output_root)},
+    )
+    return 0
+
+
 def _build_base_parser(*, prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument("--json-errors", action="store_true", help="Emit machine-readable JSON errors.")
@@ -1093,6 +1126,32 @@ def _add_public_subparsers(subparsers: argparse._SubParsersAction[argparse.Argum
         choices=list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS),
     )
     prepare_mapping_parser.set_defaults(func=cmd_prepare_mapping_library)
+
+    download_parser = subparsers.add_parser(
+        "download-prepared-library",
+        help="Download a pre-built prepared runtime from a GitHub Release or URL.",
+    )
+    download_parser.add_argument(
+        "--output-root", required=True,
+        help="Local directory to extract the runtime into.",
+    )
+    download_parser.add_argument(
+        "--url", default="",
+        help="Direct URL to a runtime .tar.gz archive (skips GitHub Release lookup).",
+    )
+    download_parser.add_argument(
+        "--tag", default="",
+        help="GitHub Release tag to download from (e.g. v0.2.0). Defaults to latest.",
+    )
+    download_parser.add_argument(
+        "--sha256", default="",
+        help="Expected SHA-256 hex digest for the archive.",
+    )
+    download_parser.add_argument(
+        "--no-verify", action="store_true",
+        help="Skip runtime validation after extraction.",
+    )
+    download_parser.set_defaults(func=cmd_download_prepared_library)
 
     map_parser = subparsers.add_parser(
         "map-reflectance",
