@@ -104,7 +104,7 @@ model well enough to trust the outputs.
   <div><strong>Distribution</strong><span>`spectral-library`</span></div>
   <div><strong>Import</strong><span>`spectral_library`</span></div>
   <div><strong>CLI</strong><span>`spectral-library`</span></div>
-  <div><strong>Python</strong><span>`3.9` to `3.12`</span></div>
+  <div><strong>Python</strong><span>`3.9` to `3.14`</span></div>
 </div>
 
 !!! info "Public vs internal material"
