@@ -501,7 +501,7 @@ class CliCommandTests(unittest.TestCase):
         parser = cli.build_internal_parser()
         args = parser.parse_args(["plan-matrix"])
         self.assertEqual(args.manifest, str(cli.DEFAULT_MANIFEST))
-        self.assertEqual(__version__, "0.2.0")
+        self.assertEqual(__version__, "0.2.1")
 
     def test_internal_parser_hides_legacy_build_siac_library_alias_from_help(self) -> None:
         parser = cli.build_internal_parser()

@@ -29,7 +29,7 @@ model well enough to trust the outputs.
   Build a compact prepared runtime from a SIAC-style spectral library and one
   or more sensor SRF definitions.
 
-  [Prepared runtime workflow](mapping_quickstart.md#step-2-prepare-a-runtime)
+  [Prepared runtime workflow](mapping_quickstart.md#step-2-get-a-prepared-runtime)
 
 - __2. Map__
 
