@@ -51,6 +51,8 @@ nav:
   - Start Here:
       - Getting Started: mapping_quickstart.md
       - Official Sensor Examples: official_sensor_examples.md
+      - Troubleshooting: troubleshooting.md
+      - FAQ: faq.md
   - Concepts:
       - Mathematical Foundations: theory.md
       - Prepared Runtime Contract: prepared_runtime_contract.md
@@ -61,6 +63,7 @@ nav:
   - Project:
       - Security and Provenance: security_provenance.md
       - Release Process: release_process.md
+      - Migration Guide: migration.md
       - Release Notes:
           - "0.2.0": releases/0.2.0.md
           - "0.1.0": releases/0.1.0.md

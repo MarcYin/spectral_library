@@ -163,6 +163,25 @@ Single-sample input layouts:
 | long | `band_id,reflectance[,valid]` |
 | wide | one row with one column per source band, optional `valid_<band_id>` columns |
 
+??? example "Sample single-sample CSV (long format)"
+
+    ```csv
+    band_id,reflectance
+    blue,0.0836
+    green,0.1036
+    red,0.0656
+    nir,0.3978
+    swir1,0.0956
+    swir2,0.0350
+    ```
+
+??? example "Sample single-sample CSV (wide format)"
+
+    ```csv
+    blue,green,red,nir,swir1,swir2
+    0.0836,0.1036,0.0656,0.3978,0.0956,0.0350
+    ```
+
 ## Step 5: Map A Batch
 
 Map many samples from one CSV:
@@ -187,6 +206,16 @@ Batch input layouts:
 | --- | --- |
 | long | `sample_id,band_id,reflectance[,valid][,exclude_row_id]` |
 | wide | one row per sample, optional `sample_id`, optional `exclude_row_id`, one column per source band, optional `valid_<band_id>` columns |
+
+??? example "Sample batch CSV (wide format)"
+
+    ```csv
+    sample_id,blue,green,red,nir,swir1,swir2
+    blue_spruce_needles,0.0836,0.1036,0.0656,0.3978,0.0956,0.0350
+    pale_brown_silty_loam,0.0937,0.1935,0.2837,0.3678,0.4842,0.4543
+    tap_water,0.0279,0.0270,0.0265,0.0262,0.0210,0.0189
+    asphalt_road,0.0731,0.0883,0.1032,0.1266,0.1951,0.2139
+    ```
 
 Batch outputs:
 
@@ -273,9 +302,11 @@ Band support must stay inside its declared segment:
 - [Mathematical Foundations](theory.md)
   for the retrieval equations behind the outputs
 - [CLI Reference](cli_reference.md)
-  for `--knn-index-backend`, ANN backend selection, and the full-library
+  for every public command, flag, ANN backend selection, and the full-library
   benchmark runner
-- [CLI Reference](cli_reference.md)
-  for every public command and flag
+- [Python API Reference](python_api_reference.md)
+  for stable imports, result objects, and error types
 - [Prepared Runtime Contract](prepared_runtime_contract.md)
   for the stable on-disk runtime rules
+- [Troubleshooting](troubleshooting.md)
+  for common issues, confidence score interpretation, and backend selection

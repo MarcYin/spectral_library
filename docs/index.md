@@ -66,6 +66,9 @@ model well enough to trust the outputs.
 - [Official Sensor Examples](official_sensor_examples.md)
   for reproducible examples and figures built from official MODIS,
   Sentinel-2A, Landsat 8, and Landsat 9 spectral response functions
+- [Troubleshooting](troubleshooting.md)
+  for common issues, confidence score interpretation, and KNN backend
+  selection
 
 ### Concepts
 
@@ -84,11 +87,14 @@ model well enough to trust the outputs.
   for the public commands, required flags, CSV layouts, and outputs
 - [Python API Reference](python_api_reference.md)
   for the stable imports, result objects, and public errors
+- [FAQ](faq.md)
+  for answers to common questions
 
 ### Project
 
 - [Security and Provenance](security_provenance.md)
 - [Release Process](release_process.md)
+- [Migration Guide](migration.md)
 - [Release Notes 0.2.0](releases/0.2.0.md)
 - [Release Notes 0.1.0](releases/0.1.0.md)
 

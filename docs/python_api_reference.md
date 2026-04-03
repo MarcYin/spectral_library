@@ -205,22 +205,67 @@ Helper:
 
 - `to_summary_dict()`
 
-## Public Error Types
+## Error Handling
 
-All public errors inherit from `SpectralLibraryError`.
+All public errors inherit from `SpectralLibraryError` and carry structured
+fields for programmatic handling.
 
-Common subclasses:
+```python
+from pathlib import Path
 
-- `PreparedLibraryValidationError`
-- `PreparedLibraryCompatibilityError`
-- `MappingInputError`
+from spectral_library import (
+    MappingInputError,
+    PreparedLibraryCompatibilityError,
+    PreparedLibraryValidationError,
+    SpectralLibraryError,
+    SpectralMapper,
+    validate_prepared_library,
+)
+
+# Catch all spectral-library errors
+try:
+    manifest = validate_prepared_library(Path("build/mapping_runtime"))
+except PreparedLibraryCompatibilityError as exc:
+    print(f"Runtime was built with an incompatible schema: {exc.message}")
+    print(f"Context: {exc.context}")
+except PreparedLibraryValidationError as exc:
+    print(f"Runtime validation failed: {exc.message}")
+except SpectralLibraryError as exc:
+    print(f"[{exc.code}] {exc.message}")
+
+# Handle mapping-specific errors
+mapper = SpectralMapper(Path("build/mapping_runtime"))
+try:
+    result = mapper.map_reflectance(
+        source_sensor="modis_terra",
+        reflectance={"blue": 0.08, "nir": 0.34},
+        output_mode="target_sensor",
+        target_sensor="sentinel2a_msi",
+    )
+except MappingInputError as exc:
+    # Structured error for logging or API responses
+    error_dict = exc.to_dict(command="map_reflectance")
+    print(error_dict)
+    # {"error_code": "invalid_mapping_input", "message": "...", "command": "map_reflectance", "context": {...}}
+```
+
+### Public error types
+
+| Class | `error_code` | Raised when |
+| --- | --- | --- |
+| `SpectralLibraryError` | *(varies)* | Base class for all package errors |
+| `SensorSchemaError` | `invalid_sensor_schema` | SRF JSON is malformed |
+| `PreparedLibraryBuildError` | `prepare_failed` | Runtime build fails |
+| `PreparedLibraryValidationError` | `invalid_prepared_library` | Runtime layout or checksums are invalid |
+| `PreparedLibraryCompatibilityError` | `prepared_library_incompatible` | Schema version mismatch |
+| `MappingInputError` | `invalid_mapping_input` | Invalid query input |
 
 Every public error carries:
 
-- `code`
-- `message`
-- `context`
-- `to_dict(...)`
+- `code` - machine-readable error code string
+- `message` - human-readable description
+- `context` - dict with additional diagnostic fields
+- `to_dict(command=...)` - serialize to a structured dict
 
 ## Public Data Models
 
@@ -260,5 +305,6 @@ The runtime format itself is documented in
 ## Related Docs
 
 - [Getting Started](mapping_quickstart.md)
+- [Troubleshooting](troubleshooting.md)
 - [Mathematical Foundations](theory.md)
 - [Prepared Runtime Contract](prepared_runtime_contract.md)
