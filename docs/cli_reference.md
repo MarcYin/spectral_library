@@ -234,6 +234,29 @@ For non-`numpy` backends, the runner also records a same-scenario comparison to
 the exact `numpy` baseline and can fail when backend drift exceeds the
 `baseline_deltas` thresholds in `benchmarks/default_thresholds.json`.
 
+## Exit Codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | General failure (invalid input, runtime error, or validation failure) |
+| `2` | Argument parsing error (missing required flags, unknown options) |
+
+All non-zero exits produce a human-readable message on `stderr`. Use
+`--json-errors` for machine-readable error envelopes.
+
+## Error Codes
+
+Each structured error carries an `error_code` field for programmatic handling:
+
+| `error_code` | Raised by | Meaning |
+| --- | --- | --- |
+| `invalid_sensor_schema` | `prepare-mapping-library` | SRF JSON is malformed or violates band rules |
+| `prepare_failed` | `prepare-mapping-library` | Runtime build failed (missing SIAC files, array errors) |
+| `invalid_prepared_library` | `validate-prepared-library`, `map-reflectance` | Runtime layout or checksums are invalid |
+| `prepared_library_incompatible` | `validate-prepared-library`, `map-reflectance` | Runtime schema version is not supported by this package version |
+| `invalid_mapping_input` | `map-reflectance`, `map-reflectance-batch` | Input reflectance is invalid, sensor not found, or no valid segments |
+
 ## Error Behavior
 
 Public commands provide:
@@ -273,6 +296,7 @@ Level values:
 ## Related Docs
 
 - [Getting Started](mapping_quickstart.md)
+- [Troubleshooting](troubleshooting.md)
 - [Mathematical Foundations](theory.md)
 - [Prepared Runtime Contract](prepared_runtime_contract.md)
 - [Official Sensor Examples](official_sensor_examples.md)
