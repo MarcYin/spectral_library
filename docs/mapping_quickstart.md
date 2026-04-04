@@ -41,6 +41,7 @@ Optional extras:
 | `.[knn-faiss]` | enabling the optional FAISS backend |
 | `.[knn-pynndescent]` | enabling the optional PyNNDescent backend |
 | `.[knn-scann]` | enabling the optional ScaNN backend on supported platforms |
+| `.[zarr]` | writing chunked batch outputs to a Zarr store |
 | `.[internal-build]` | regenerating official examples or running retained SIAC-build tooling |
 | `.[accel]` | using optional Rust-backed smoothing utilities |
 | `.[dev]` | running tests and release tooling |
@@ -151,9 +152,12 @@ Additional ANN backends use the same `--knn-backend` flag:
 Those backends still re-rank the returned shortlist by exact RMS distance
 before the estimator runs.
 
-The result diagnostics also expose a heuristic `confidence_score` for the full
-mapping and for each segment. It is based on valid-band coverage, neighbor
-distances, source-space fit RMSE, and estimator weight concentration.
+By default, the mapping commands stay on the fast output path and do not build
+the rich diagnostic payloads. If you request `--diagnostics-output` or
+`--neighbor-review-output`, the CLI switches to debug mode and includes a
+heuristic `confidence_score` for the full mapping and for each segment. It is
+based on valid-band coverage, neighbor distances, source-space fit RMSE, and
+estimator weight concentration.
 
 Current production interpretation policy:
 
@@ -215,9 +219,7 @@ spectral-library map-reflectance-batch \
   --output-mode target_sensor \
   --k 10 \
   --neighbor-estimator simplex_mixture \
-  --output path/to/mapped_batch.csv \
-  --diagnostics-output path/to/mapped_batch_diagnostics.json \
-  --neighbor-review-output path/to/mapped_batch_neighbor_review.csv
+  --output path/to/mapped_batch.csv
 ```
 
 Batch input layouts:
@@ -246,6 +248,32 @@ Batch outputs:
 
 If only one target segment maps successfully, the missing target-band cells are
 left blank in the batch CSV.
+
+If you need neighbor review or per-segment diagnostics for a batch run, add
+`--diagnostics-output` and/or `--neighbor-review-output`. That forces the rich
+debug path for the batch command.
+
+For large spectral outputs, write directly to a Zarr store instead of emitting a
+very wide CSV:
+
+```bash
+spectral-library map-reflectance-batch \
+  --prepared-root build/mapping_runtime \
+  --source-sensor SENSOR_A \
+  --input path/to/source_reflectance_batch.csv \
+  --output-mode full_spectrum \
+  --output-format zarr \
+  --output-chunk-size 4096 \
+  --output path/to/reconstructed_batch.zarr
+```
+
+The Zarr store contains `reflectance`, `sample_id`, `source_fit_rmse`, and
+either `wavelength_nm` or `band_id`, depending on the selected output mode.
+Chunked Zarr output currently does not emit the JSON diagnostics file or the
+neighbor-review CSV.
+The CLI streams wide input directly and also streams long-format input when rows
+for each `sample_id` stay grouped together. Interleaved long-format rows fall
+back to the materialized loader so the public semantics remain unchanged.
 
 If `--neighbor-review-output` is set, the command also writes a long-form CSV
 that records the retained neighbors, their distances, estimator weights, the
@@ -286,6 +314,42 @@ result = mapper.map_reflectance(
     output_mode="full_spectrum",
     k=10,
     exclude_row_ids=["source_id:spectrum_id:sample_name"],
+)
+```
+
+For raster-scale production runs, compile a fixed dense mapper once and reuse it
+across many chunks:
+
+```python
+import numpy as np
+
+linear_mapper = mapper.compile_linear_mapper(
+    source_sensor="SENSOR_A",
+    target_sensor="SENSOR_B",
+    output_mode="target_sensor",
+    dtype="float32",
+)
+
+input_block = np.asarray(
+    [
+        [0.12, 0.34, 0.27],
+        [0.10, 0.31, 0.25],
+    ],
+    dtype=np.float32,
+)
+mapped_block = linear_mapper.map_array(input_block, chunk_size=65536)
+```
+
+For large batch outputs that should stay on disk, use the Zarr export path:
+
+```python
+mapper.map_reflectance_batch_to_zarr(
+    zarr_path=Path("build/reconstructed_batch.zarr"),
+    source_sensor="SENSOR_A",
+    reflectance_rows=input_block,
+    output_mode="target_sensor",
+    target_sensor="SENSOR_B",
+    chunk_size=65536,
 )
 ```
 

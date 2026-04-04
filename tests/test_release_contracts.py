@@ -11,6 +11,7 @@ from pathlib import Path
 
 import spectral_library
 from spectral_library import (
+    BatchMappingArrayResult,
     BatchMappingResult,
     MappingResult,
     PreparedLibraryCompatibilityError,
@@ -29,6 +30,7 @@ class PublicApiContractTests(unittest.TestCase):
     def test_public_exports_and_type_marker_are_stable(self) -> None:
         expected_exports = {
             "__version__",
+            "BatchMappingArrayResult",
             "BatchMappingResult",
             "MappingInputError",
             "MappingResult",
@@ -92,6 +94,24 @@ class PublicApiContractTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
+            tuple(inspect.signature(SpectralMapper.map_reflectance_debug).parameters),
+            (
+                "self",
+                "source_sensor",
+                "reflectance",
+                "valid_mask",
+                "output_mode",
+                "target_sensor",
+                "k",
+                "min_valid_bands",
+                "neighbor_estimator",
+                "knn_backend",
+                "knn_eps",
+                "exclude_row_ids",
+                "exclude_sample_names",
+            ),
+        )
+        self.assertEqual(
             tuple(inspect.signature(SpectralMapper.map_reflectance_batch).parameters),
             (
                 "self",
@@ -112,6 +132,96 @@ class PublicApiContractTests(unittest.TestCase):
                 "self_exclude_sample_id",
             ),
         )
+        self.assertEqual(
+            tuple(inspect.signature(SpectralMapper.map_reflectance_batch_debug).parameters),
+            (
+                "self",
+                "source_sensor",
+                "reflectance_rows",
+                "valid_mask_rows",
+                "sample_ids",
+                "output_mode",
+                "target_sensor",
+                "k",
+                "min_valid_bands",
+                "neighbor_estimator",
+                "knn_backend",
+                "knn_eps",
+                "exclude_row_ids",
+                "exclude_sample_names",
+                "exclude_row_ids_per_sample",
+                "self_exclude_sample_id",
+            ),
+        )
+        self.assertEqual(
+            tuple(inspect.signature(SpectralMapper.map_reflectance_batch_arrays).parameters),
+            (
+                "self",
+                "source_sensor",
+                "reflectance_rows",
+                "valid_mask_rows",
+                "sample_ids",
+                "output_mode",
+                "target_sensor",
+                "k",
+                "min_valid_bands",
+                "neighbor_estimator",
+                "knn_backend",
+                "knn_eps",
+                "exclude_row_ids",
+                "exclude_sample_names",
+                "exclude_row_ids_per_sample",
+                "self_exclude_sample_id",
+                "out",
+                "source_fit_rmse_out",
+            ),
+        )
+        self.assertEqual(
+            tuple(inspect.signature(SpectralMapper.map_reflectance_batch_arrays_ndarray).parameters),
+            (
+                "self",
+                "source_sensor",
+                "reflectance_rows",
+                "valid_mask_rows",
+                "sample_ids",
+                "output_mode",
+                "target_sensor",
+                "k",
+                "min_valid_bands",
+                "neighbor_estimator",
+                "knn_backend",
+                "knn_eps",
+                "exclude_row_ids",
+                "exclude_sample_names",
+                "exclude_row_ids_per_sample",
+                "self_exclude_sample_id",
+                "out",
+                "source_fit_rmse_out",
+            ),
+        )
+        self.assertEqual(
+            tuple(inspect.signature(SpectralMapper.map_reflectance_batch_ndarray).parameters),
+            (
+                "self",
+                "source_sensor",
+                "reflectance_rows",
+                "valid_mask_rows",
+                "sample_ids",
+                "output_mode",
+                "target_sensor",
+                "k",
+                "min_valid_bands",
+                "neighbor_estimator",
+                "knn_backend",
+                "knn_eps",
+                "exclude_row_ids",
+                "exclude_sample_names",
+                "exclude_row_ids_per_sample",
+                "self_exclude_sample_id",
+                "out",
+                "source_fit_rmse_out",
+            ),
+        )
 
     def test_public_dataclass_fields_are_stable(self) -> None:
         self.assertEqual(
@@ -129,6 +239,10 @@ class PublicApiContractTests(unittest.TestCase):
                 "segment_valid_band_counts",
                 "diagnostics",
             ),
+        )
+        self.assertEqual(
+            tuple(BatchMappingArrayResult.__dataclass_fields__),
+            ("sample_ids", "reflectance", "source_fit_rmse", "output_columns", "wavelength_nm"),
         )
         self.assertEqual(tuple(BatchMappingResult.__dataclass_fields__), ("sample_ids", "results"))
         self.assertEqual(
@@ -220,6 +334,8 @@ class CliContractTests(unittest.TestCase):
                 "--exclude-row-id",
                 "--exclude-sample-name",
                 "--self-exclude-sample-id",
+                "--output-format",
+                "--output-chunk-size",
             }.issubset(batch_options)
         )
         self.assertTrue(

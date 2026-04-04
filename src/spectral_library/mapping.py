@@ -17,17 +17,21 @@ import csv
 import hashlib
 import json
 import math
+import os
 import pickle
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
+from uuid import uuid4
 
 import duckdb
 import numpy as np
 
+from . import _rustaccel
 from ._version import __version__
 
 
@@ -62,6 +66,7 @@ KNN_BACKEND_INSTALL_HINTS = {
     "pynndescent": 'pip install "spectral-library[knn-pynndescent]"',
     "scann": 'pip install "spectral-library[knn-scann]"',
 }
+ZARR_INSTALL_HINT = 'pip install "spectral-library[zarr]"'
 CONFIDENCE_POLICY_VERSION = "1"
 CONFIDENCE_REVIEW_THRESHOLD = 0.60
 CONFIDENCE_ACCEPT_THRESHOLD = 0.85
@@ -454,6 +459,161 @@ class BatchMappingResult:
 
 
 @dataclass
+class BatchMappingArrayResult:
+    """Dense array outputs for a batch of mapped samples."""
+
+    sample_ids: tuple[str, ...]
+    reflectance: np.ndarray
+    source_fit_rmse: np.ndarray
+    output_columns: tuple[str, ...]
+    wavelength_nm: np.ndarray | None = None
+
+
+@dataclass
+class _ZarrBatchExport:
+    root: Any
+    reflectance_dataset: Any
+    source_fit_rmse_dataset: Any
+    sample_id_dataset: Any
+    output_columns: tuple[str, ...]
+    output_width: int
+    chunk_size: int
+
+
+@dataclass
+class _ScipyCkdtreeCacheEntry:
+    data: np.ndarray
+    index: Any
+
+
+@dataclass
+class LinearSpectralMapper:
+    """Fixed linear mapper compiled from a prepared runtime."""
+
+    source_sensor: str
+    output_mode: str
+    weights: np.ndarray
+    bias: np.ndarray
+    dtype: np.dtype[Any]
+    target_sensor: str | None = None
+    source_band_ids: tuple[str, ...] = ()
+    output_band_ids: tuple[str, ...] = ()
+    output_wavelength_nm: np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        self.dtype = np.dtype(self.dtype)
+        if self.dtype.kind != "f":
+            raise MappingInputError("LinearSpectralMapper requires a floating-point dtype.", context={"dtype": self.dtype.name})
+
+        self.weights = np.ascontiguousarray(self.weights, dtype=self.dtype)
+        self.bias = np.ascontiguousarray(self.bias, dtype=self.dtype)
+        if self.weights.ndim != 2:
+            raise MappingInputError("LinearSpectralMapper weights must be two-dimensional.")
+        if self.bias.ndim != 1:
+            raise MappingInputError("LinearSpectralMapper bias must be one-dimensional.")
+        if self.weights.shape[1] != self.bias.shape[0]:
+            raise MappingInputError(
+                "LinearSpectralMapper weights and bias shapes must agree.",
+                context={
+                    "weights_shape": list(self.weights.shape),
+                    "bias_shape": list(self.bias.shape),
+                },
+            )
+        if self.source_band_ids and self.weights.shape[0] != len(self.source_band_ids):
+            raise MappingInputError(
+                "LinearSpectralMapper weights do not match the declared source band ids.",
+                context={
+                    "weights_shape": list(self.weights.shape),
+                    "source_band_count": len(self.source_band_ids),
+                },
+            )
+        if self.output_band_ids and self.bias.shape[0] != len(self.output_band_ids):
+            raise MappingInputError(
+                "LinearSpectralMapper bias does not match the declared target band ids.",
+                context={
+                    "bias_shape": list(self.bias.shape),
+                    "target_band_count": len(self.output_band_ids),
+                },
+            )
+        if self.output_wavelength_nm is not None:
+            self.output_wavelength_nm = np.asarray(self.output_wavelength_nm, dtype=np.float64)
+            if self.output_wavelength_nm.ndim != 1 or self.output_wavelength_nm.shape[0] != self.bias.shape[0]:
+                raise MappingInputError(
+                    "LinearSpectralMapper output_wavelength_nm must match the output width.",
+                    context={
+                        "bias_shape": list(self.bias.shape),
+                        "wavelength_shape": list(self.output_wavelength_nm.shape),
+                    },
+                )
+
+    @property
+    def output_count(self) -> int:
+        """Return the number of emitted output columns."""
+
+        return int(self.bias.shape[0])
+
+    def map_array(
+        self,
+        reflectance_rows: np.ndarray,
+        *,
+        out: np.ndarray | None = None,
+        chunk_size: int | None = None,
+    ) -> np.ndarray:
+        """Map dense source-sensor rows with one matrix multiply per chunk."""
+
+        inputs = np.asarray(reflectance_rows)
+        if inputs.ndim != 2:
+            raise MappingInputError(
+                "LinearSpectralMapper.map_array requires a two-dimensional array.",
+                context={"shape": list(inputs.shape)},
+            )
+        if inputs.shape[1] != self.weights.shape[0]:
+            raise MappingInputError(
+                "reflectance_rows must match the compiled source band count.",
+                context={
+                    "shape": list(inputs.shape),
+                    "expected_source_band_count": int(self.weights.shape[0]),
+                },
+            )
+
+        output_shape = (int(inputs.shape[0]), int(self.output_count))
+        if out is None:
+            output = np.empty(output_shape, dtype=self.dtype)
+        else:
+            output = np.asarray(out)
+            if output.shape != output_shape:
+                raise MappingInputError(
+                    "out must have the same row count as reflectance_rows and the compiled output width.",
+                    context={"expected_shape": list(output_shape), "actual_shape": list(output.shape)},
+                )
+            if output.dtype.kind != "f":
+                raise MappingInputError("out must use a floating-point dtype.", context={"dtype": output.dtype.name})
+            if not output.flags.writeable:
+                raise MappingInputError("out must be writeable.")
+
+        rows_per_chunk = _normalized_linear_mapper_chunk_size(
+            chunk_size,
+            input_width=int(self.weights.shape[0]),
+            output_width=int(self.output_count),
+            dtype=self.dtype,
+        )
+        use_direct_out = output.dtype == self.dtype
+
+        for start in range(0, inputs.shape[0], rows_per_chunk):
+            stop = min(inputs.shape[0], start + rows_per_chunk)
+            input_chunk = np.ascontiguousarray(inputs[start:stop], dtype=self.dtype)
+            if use_direct_out:
+                out_chunk = output[start:stop]
+                np.matmul(input_chunk, self.weights, out=out_chunk)
+                out_chunk += self.bias
+            else:
+                mapped_chunk = input_chunk @ self.weights
+                mapped_chunk += self.bias
+                output[start:stop] = mapped_chunk
+        return output
+
+
+@dataclass
 class _SegmentRetrieval:
     """Internal container for one segment-level neighbor retrieval."""
 
@@ -473,6 +633,103 @@ class _SegmentRetrieval:
     confidence_score: float | None = None
     confidence_components: dict[str, float] = field(default_factory=dict)
     reason: str | None = None
+
+
+@dataclass
+class _RichSegmentMetadata:
+    valid_band_count: int
+    success: bool
+    neighbor_ids: tuple[str, ...] = ()
+    neighbor_distances: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    confidence_score: float | None = None
+    diagnostics: dict[str, object] = field(default_factory=dict)
+    reason: str | None = None
+
+
+@dataclass
+class _DenseSegmentOutputBatch:
+    success: np.ndarray
+    reconstructed: np.ndarray
+    confidence_score: np.ndarray
+    source_fit_rmse: np.ndarray
+    valid_band_count: np.ndarray
+    target_output_indices: np.ndarray | None = None
+
+
+@dataclass
+class _RichSegmentBatch:
+    dense_output: _DenseSegmentOutputBatch
+    metadata: tuple[_RichSegmentMetadata, ...]
+
+
+def _empty_dense_segment_output_batch(
+    *,
+    segment: str,
+    batch_size: int,
+    output_width: int | None = None,
+    target_output_indices: np.ndarray | None = None,
+) -> _DenseSegmentOutputBatch:
+    resolved_output_width = int(SEGMENT_WAVELENGTHS[segment].size) if output_width is None else int(output_width)
+    return _DenseSegmentOutputBatch(
+        success=np.zeros(batch_size, dtype=bool),
+        reconstructed=np.zeros((batch_size, resolved_output_width), dtype=np.float64),
+        confidence_score=np.zeros(batch_size, dtype=np.float64),
+        source_fit_rmse=np.zeros(batch_size, dtype=np.float64),
+        valid_band_count=np.zeros(batch_size, dtype=np.int32),
+        target_output_indices=(
+            None if target_output_indices is None else np.asarray(target_output_indices, dtype=np.int64)
+        ),
+    )
+
+
+def _assign_dense_segment_output_batch_rows(
+    *,
+    target: _DenseSegmentOutputBatch,
+    sample_indices: np.ndarray,
+    source: _DenseSegmentOutputBatch,
+) -> None:
+    target.success[sample_indices] = source.success
+    target.reconstructed[sample_indices] = source.reconstructed
+    target.confidence_score[sample_indices] = source.confidence_score
+    target.source_fit_rmse[sample_indices] = source.source_fit_rmse
+    target.valid_band_count[sample_indices] = source.valid_band_count
+    if source.target_output_indices is not None:
+        if target.target_output_indices is None:
+            target.target_output_indices = np.asarray(source.target_output_indices, dtype=np.int64)
+        elif not np.array_equal(target.target_output_indices, source.target_output_indices):
+            raise PreparedLibraryValidationError("Dense segment batches disagree on target output indices.")
+
+
+@dataclass
+class _TargetSensorProjection:
+    output_width: int
+    vnir_response_matrix: np.ndarray
+    swir_response_matrix: np.ndarray
+    vnir_output_indices: np.ndarray
+    swir_output_indices: np.ndarray
+    vnir_support_indices: np.ndarray
+    swir_support_indices: np.ndarray
+    vnir_hyperspectral_rows: np.ndarray
+    swir_hyperspectral_rows: np.ndarray
+    vnir_target_rows: np.ndarray
+    swir_target_rows: np.ndarray
+
+
+@dataclass
+class _CandidateBatchGroup:
+    sample_indices: np.ndarray
+    candidate_rows: np.ndarray
+
+
+@dataclass
+class _BatchedResultMaterialization:
+    vnir_batch: _DenseSegmentOutputBatch
+    swir_batch: _DenseSegmentOutputBatch
+    confidence_scores: np.ndarray
+    reconstructed_full_batch: np.ndarray | None
+    target_rows: np.ndarray | None
+    target_status_codes: np.ndarray | None
+    target_band_ids: tuple[str, ...]
 
 
 def _optional_float(value: object) -> float | None:
@@ -555,24 +812,81 @@ def _assemble_full_spectrum(vnir: np.ndarray, swir: np.ndarray) -> np.ndarray:
 
 
 def _assemble_full_spectrum_batch(vnir: np.ndarray, swir: np.ndarray) -> np.ndarray:
-    """Vectorized variant of :func:`_assemble_full_spectrum` for benchmarking."""
+    """Rust-backed batch variant of :func:`_assemble_full_spectrum`."""
 
-    full = np.empty((vnir.shape[0], FULL_WAVELENGTH_COUNT), dtype=np.float64)
-    blend_start = FULL_BLEND_START_NM - CANONICAL_START_NM
-    blend_stop = FULL_BLEND_END_NM - CANONICAL_START_NM + 1
-    vnir_overlap_start = FULL_BLEND_START_NM - VNIR_START_NM
-    swir_overlap_start = FULL_BLEND_START_NM - SWIR_START_NM
-    swir_overlap_stop = FULL_BLEND_END_NM - SWIR_START_NM + 1
-    full[:, :blend_start] = vnir[:, :blend_start]
-    overlap_wavelengths = np.arange(FULL_BLEND_START_NM, FULL_BLEND_END_NM + 1, dtype=np.float64)
-    weights = (FULL_BLEND_END_NM - overlap_wavelengths) / (FULL_BLEND_END_NM - FULL_BLEND_START_NM)
-    overlap_length = overlap_wavelengths.size
-    full[:, blend_start:blend_stop] = (
-        weights * vnir[:, vnir_overlap_start : vnir_overlap_start + overlap_length]
-        + (1.0 - weights) * swir[:, swir_overlap_start : swir_overlap_start + overlap_length]
+    return np.asarray(
+        _rustaccel.assemble_full_spectrum_batch(
+            vnir=np.asarray(vnir, dtype=np.float64),
+            swir=np.asarray(swir, dtype=np.float64),
+        ),
+        dtype=np.float64,
     )
-    full[:, blend_stop:] = swir[:, swir_overlap_stop:]
-    return full
+
+
+def _normalized_linear_mapper_dtype(dtype: str | np.dtype[Any]) -> np.dtype[Any]:
+    resolved = np.dtype(dtype)
+    if resolved.kind != "f":
+        raise MappingInputError("Linear mapper dtype must be floating-point.", context={"dtype": resolved.name})
+    return resolved
+
+
+def _normalized_linear_mapper_chunk_size(
+    chunk_size: int | None,
+    *,
+    input_width: int,
+    output_width: int,
+    dtype: np.dtype[Any],
+) -> int:
+    if chunk_size is not None:
+        if int(chunk_size) < 1:
+            raise MappingInputError("chunk_size must be at least 1.", context={"chunk_size": int(chunk_size)})
+        return int(chunk_size)
+
+    bytes_per_row = max(1, (int(input_width) + int(output_width)) * int(np.dtype(dtype).itemsize))
+    return max(1, int((64 * 1024 * 1024) // bytes_per_row))
+
+
+def _estimated_dense_array_bytes(*, row_count: int, column_count: int, dtype: np.dtype[Any]) -> int:
+    return int(int(row_count) * int(column_count) * int(np.dtype(dtype).itemsize))
+
+
+def _fit_linear_map(
+    source_matrix: np.ndarray,
+    *,
+    output_width: int,
+    output_loader: Callable[[int, int], np.ndarray],
+    compile_chunk_size: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit one linear projection with chunked normal-equation accumulation."""
+
+    row_count = int(source_matrix.shape[0])
+    input_width = int(source_matrix.shape[1])
+    design_width = input_width + 1
+    xtx = np.zeros((design_width, design_width), dtype=np.float64)
+    xty = np.zeros((design_width, int(output_width)), dtype=np.float64)
+
+    for start in range(0, row_count, int(compile_chunk_size)):
+        stop = min(row_count, start + int(compile_chunk_size))
+        x_chunk = np.asarray(source_matrix[start:stop], dtype=np.float64)
+        y_chunk = np.asarray(output_loader(start, stop), dtype=np.float64)
+        expected_shape = (stop - start, int(output_width))
+        if y_chunk.shape != expected_shape:
+            raise PreparedLibraryValidationError(
+                "Linear mapper compile output block shape did not match the prepared runtime.",
+                context={"expected_shape": list(expected_shape), "actual_shape": list(y_chunk.shape)},
+            )
+
+        design = np.empty((stop - start, design_width), dtype=np.float64)
+        design[:, 0] = 1.0
+        design[:, 1:] = x_chunk
+        xtx += design.T @ design
+        xty += design.T @ y_chunk
+
+    try:
+        coefficients = np.linalg.solve(xtx, xty)
+    except np.linalg.LinAlgError:
+        coefficients = np.linalg.pinv(xtx) @ xty
+    return coefficients[0], coefficients[1:]
 
 
 def _ensure_supported_output_mode(output_mode: str) -> None:
@@ -783,6 +1097,73 @@ def _ordered_neighbor_rows(
     return candidate_row_indices[ordered_local], np.asarray(distances[ordered_local], dtype=np.float64)
 
 
+def _ordered_neighbor_rows_from_local_distances(
+    local_candidate_indices: np.ndarray,
+    local_distances: np.ndarray,
+    candidate_row_indices: np.ndarray,
+    *,
+    query_width: int,
+    k: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Resolve exact backend distances without rescoring the candidate matrix."""
+
+    if query_width <= 0:
+        raise MappingInputError("At least one valid source band is required for mapping.")
+    local_indices = np.asarray(local_candidate_indices, dtype=np.int64)
+    resolved_distances = np.asarray(local_distances, dtype=np.float64)
+    valid = (local_indices >= 0) & (local_indices < int(candidate_row_indices.size)) & np.isfinite(resolved_distances)
+    local_indices = local_indices[valid]
+    resolved_distances = resolved_distances[valid]
+    if local_indices.size == 0:
+        raise PreparedLibraryValidationError("Neighbor search backend returned no candidate rows.")
+    unique_local_indices, unique_positions = np.unique(local_indices, return_index=True)
+    exact_rmse = resolved_distances[unique_positions] / math.sqrt(float(query_width))
+    return _ordered_neighbor_rows(exact_rmse, candidate_row_indices[unique_local_indices], k=k)
+
+
+def _ordered_neighbor_rows_batch_from_local_distances(
+    local_candidate_indices: np.ndarray,
+    local_distance_matrix: np.ndarray,
+    candidate_row_indices: np.ndarray,
+    *,
+    query_width: int,
+    k: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Batch variant of ``_ordered_neighbor_rows_from_local_distances``."""
+
+    local_indices = np.asarray(local_candidate_indices, dtype=np.int64)
+    local_distances = np.asarray(local_distance_matrix, dtype=np.float64)
+    if local_indices.shape != local_distances.shape:
+        raise MappingInputError(
+            "Exact local neighbor indices and distances must share the same shape.",
+            context={
+                "local_index_shape": list(local_indices.shape),
+                "local_distance_shape": list(local_distances.shape),
+            },
+        )
+    if local_indices.ndim != 2:
+        raise MappingInputError(
+            "Exact local neighbor indices must be two-dimensional for batched mapping.",
+            context={"local_index_shape": list(local_indices.shape)},
+        )
+    neighbor_indices_rows: list[np.ndarray] = []
+    neighbor_distance_rows: list[np.ndarray] = []
+    for row_indices, row_distances in zip(local_indices, local_distances):
+        resolved_indices, resolved_distances = _ordered_neighbor_rows_from_local_distances(
+            row_indices,
+            row_distances,
+            candidate_row_indices,
+            query_width=query_width,
+            k=k,
+        )
+        neighbor_indices_rows.append(np.asarray(resolved_indices, dtype=np.int64))
+        neighbor_distance_rows.append(np.asarray(resolved_distances, dtype=np.float64))
+    return (
+        np.asarray(neighbor_indices_rows, dtype=np.int64),
+        np.asarray(neighbor_distance_rows, dtype=np.float64),
+    )
+
+
 def _load_ckdtree_class() -> type[Any]:
     try:
         from scipy.spatial import cKDTree  # type: ignore[import-not-found]
@@ -792,6 +1173,25 @@ def _load_ckdtree_class() -> type[Any]:
             context={"knn_backend": "scipy_ckdtree"},
         ) from exc
     return cKDTree
+
+
+def _scipy_ckdtree_workers() -> int:
+    raw_value = (os.environ.get("SPECTRAL_LIBRARY_SCIPY_WORKERS") or "").strip()
+    if not raw_value:
+        return 1
+    try:
+        workers = int(raw_value)
+    except ValueError as exc:
+        raise MappingInputError(
+            "SPECTRAL_LIBRARY_SCIPY_WORKERS must be an integer when set.",
+            context={"env_var": "SPECTRAL_LIBRARY_SCIPY_WORKERS", "value": raw_value},
+        ) from exc
+    if workers == 0 or workers < -1:
+        raise MappingInputError(
+            "SPECTRAL_LIBRARY_SCIPY_WORKERS must be -1 or a positive integer.",
+            context={"env_var": "SPECTRAL_LIBRARY_SCIPY_WORKERS", "value": raw_value},
+        )
+    return workers
 
 
 def _load_faiss_module() -> Any:
@@ -825,6 +1225,77 @@ def _load_scann_ops() -> Any:
             context={"knn_backend": "scann"},
         ) from exc
     return scann.scann_ops_pybind
+
+
+def _load_zarr_module() -> Any:
+    try:
+        import zarr  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise MappingInputError(
+            f'Zarr batch export requires zarr. Install it with `{ZARR_INSTALL_HINT}`.',
+            context={"output_format": "zarr"},
+        ) from exc
+    return zarr
+
+
+def _default_zarr_compressor() -> Any | None:
+    try:
+        from numcodecs import Blosc  # type: ignore[import-not-found]
+    except ModuleNotFoundError:
+        return None
+    return Blosc(cname="zstd", clevel=3, shuffle=Blosc.BITSHUFFLE)
+
+
+def _load_zarr_vlen_utf8_codec() -> Any:
+    try:
+        from numcodecs import VLenUTF8  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise MappingInputError(
+            f'Zarr batch export requires numcodecs via `{ZARR_INSTALL_HINT}`.',
+            context={"output_format": "zarr"},
+        ) from exc
+    return VLenUTF8()
+
+
+def _zarr_utf8_codec() -> Any:
+    try:
+        from numcodecs import VLenUTF8  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise MappingInputError(
+            f'Zarr batch export requires numcodecs. Install it with `{ZARR_INSTALL_HINT}`.',
+            context={"output_format": "zarr"},
+        ) from exc
+    return VLenUTF8()
+
+
+def _remove_output_path(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+        return
+    path.unlink()
+
+
+def _temporary_output_path(path: Path) -> Path:
+    return path.parent / f".{path.name}.tmp-{uuid4().hex}"
+
+
+def _finalize_output_path(temp_path: Path, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path: Path | None = None
+    if output_path.exists():
+        backup_path = output_path.parent / f".{output_path.name}.bak-{uuid4().hex}"
+        output_path.replace(backup_path)
+    try:
+        temp_path.replace(output_path)
+    except Exception:
+        if backup_path is not None and backup_path.exists() and not output_path.exists():
+            backup_path.replace(output_path)
+        raise
+    else:
+        if backup_path is not None:
+            _remove_output_path(backup_path)
 
 
 def _persist_faiss_index(candidate_matrix: np.ndarray, output_path: Path) -> None:
@@ -944,6 +1415,22 @@ def _normalize_local_indices(local_indices: np.ndarray, *, query_count: int) -> 
     return normalized
 
 
+def _normalize_local_distances(local_distances: np.ndarray, *, query_count: int) -> np.ndarray:
+    """Normalize backend neighbor distances to ``(query_count, k)``."""
+
+    normalized = np.asarray(local_distances, dtype=np.float64)
+    if normalized.ndim == 0:
+        return normalized.reshape(1, 1)
+    if normalized.ndim == 1:
+        return normalized.reshape(query_count, -1)
+    if normalized.ndim != 2:
+        raise MappingInputError(
+            "Neighbor search backend returned distances with an unsupported shape.",
+            context={"local_distance_shape": list(normalized.shape)},
+        )
+    return normalized
+
+
 def _build_scann_searcher(
     candidate_matrix: np.ndarray,
     *,
@@ -1022,7 +1509,7 @@ def _query_knn_index(
             _normalize_query_matrix(query_values, dtype=np.float64),
             k=int(k),
             eps=float(knn_eps),
-            workers=1,
+            workers=_scipy_ckdtree_workers(),
         )
     elif knn_backend == "faiss":
         local_indices = _query_faiss_index(index, query_values, k=k)
@@ -1039,6 +1526,57 @@ def _query_knn_index(
             },
         )
     return _normalize_local_indices(np.asarray(local_indices, dtype=np.int64), query_count=query_count)
+
+
+def _query_knn_index_with_distances(
+    index: Any,
+    query_values: np.ndarray,
+    *,
+    k: int,
+    knn_backend: str,
+    knn_eps: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Query a backend index and normalize both indices and distances."""
+
+    query_count = int(_normalize_query_matrix(query_values, dtype=np.float64).shape[0])
+    if knn_backend != "scipy_ckdtree":
+        raise MappingInputError(
+            "Distance-returning KNN queries are only supported for scipy_ckdtree.",
+            context={"knn_backend": knn_backend},
+        )
+    local_distances, local_indices = index.query(
+        _normalize_query_matrix(query_values, dtype=np.float64),
+        k=int(k),
+        eps=float(knn_eps),
+        workers=_scipy_ckdtree_workers(),
+    )
+    return (
+        _normalize_local_indices(np.asarray(local_indices, dtype=np.int64), query_count=query_count),
+        _normalize_local_distances(np.asarray(local_distances, dtype=np.float64), query_count=query_count),
+    )
+
+
+def _query_local_scipy_ckdtree_results(
+    candidate_matrix: np.ndarray,
+    query_values: np.ndarray,
+    *,
+    k: int,
+    knn_eps: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build a temporary SciPy cKDTree and return local indices with distances."""
+
+    neighbor_count = min(int(k), int(candidate_matrix.shape[0]))
+    if neighbor_count <= 0:
+        raise MappingInputError("k must be at least 1.", context={"k": k})
+    cKDTree = _load_ckdtree_class()
+    index = cKDTree(np.asarray(candidate_matrix, dtype=np.float64))
+    return _query_knn_index_with_distances(
+        index,
+        query_values,
+        k=neighbor_count,
+        knn_backend="scipy_ckdtree",
+        knn_eps=knn_eps,
+    )
 
 
 def _search_local_neighbor_indices(
@@ -1132,6 +1670,29 @@ def _refine_neighbor_rows(
     return _ordered_neighbor_rows(exact_distances, found_row_indices, k=k)
 
 
+def _refine_neighbor_rows_batch_accel(
+    *,
+    candidate_matrix: np.ndarray,
+    query_values: np.ndarray,
+    candidate_row_indices: np.ndarray,
+    local_candidate_indices: np.ndarray | None,
+    local_candidate_distances: np.ndarray | None,
+    k: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    neighbor_indices, neighbor_distances = _rustaccel.refine_neighbor_rows_batch(
+        candidate_matrix=candidate_matrix,
+        query_values=query_values,
+        candidate_row_indices=candidate_row_indices,
+        local_candidate_indices=local_candidate_indices,
+        local_candidate_distances=local_candidate_distances,
+        k=k,
+    )
+    return (
+        np.asarray(neighbor_indices, dtype=np.int64),
+        np.asarray(neighbor_distances, dtype=np.float64),
+    )
+
+
 def _search_neighbor_rows(
     candidate_matrix: np.ndarray,
     query_vector: np.ndarray,
@@ -1157,46 +1718,166 @@ def _search_neighbor_rows(
     return _refine_neighbor_rows(candidate_matrix, query_vector, candidate_row_indices, local_indices[0], k=k)
 
 
-def _combine_neighbor_spectra(
+def _combine_neighbor_spectra_batch_accel(
+    *,
+    source_matrix: np.ndarray,
     hyperspectral_rows: np.ndarray,
     neighbor_indices: np.ndarray,
     neighbor_distances: np.ndarray,
-    neighbor_band_values: np.ndarray,
-    query_vector: np.ndarray,
-    *,
+    query_values: np.ndarray,
+    valid_indices: np.ndarray | None,
     neighbor_estimator: str,
-) -> tuple[np.ndarray, np.ndarray, float]:
-    """Aggregate neighbor spectra into one reconstruction for a segment."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    reconstructed, neighbor_weights, source_fit_rmse = _rustaccel.combine_neighbor_spectra_batch(
+        source_matrix=source_matrix,
+        hyperspectral_rows=hyperspectral_rows,
+        neighbor_indices=neighbor_indices,
+        neighbor_distances=neighbor_distances,
+        query_values=query_values,
+        valid_indices=valid_indices,
+        neighbor_estimator=neighbor_estimator,
+    )
+    return (
+        np.asarray(reconstructed, dtype=np.float64),
+        np.asarray(neighbor_weights, dtype=np.float64),
+        np.asarray(source_fit_rmse, dtype=np.float64),
+    )
 
-    neighbor_spectra = np.asarray(hyperspectral_rows[neighbor_indices], dtype=np.float64)
-    if neighbor_estimator == "mean":
-        weights = np.full(neighbor_indices.shape[0], 1.0 / float(neighbor_indices.shape[0]), dtype=np.float64)
-    elif neighbor_estimator == "distance_weighted_mean":
-        exact_match_mask = np.asarray(neighbor_distances <= 1e-12, dtype=bool)
-        if np.any(exact_match_mask):
-            weights = np.asarray(exact_match_mask, dtype=np.float64)
-            weights /= float(np.sum(weights))
-        else:
-            weights = 1.0 / np.asarray(neighbor_distances, dtype=np.float64)
-            weights /= float(np.sum(weights))
-    elif neighbor_estimator == "simplex_mixture":
-        weights = _fit_simplex_neighbor_weights(
-            np.asarray(neighbor_band_values, dtype=np.float64),
-            np.asarray(query_vector, dtype=np.float64),
-            np.asarray(neighbor_distances, dtype=np.float64),
-        )
-    else:
-        raise MappingInputError(
-            "neighbor_estimator is not supported.",
-            context={
-                "neighbor_estimator": neighbor_estimator,
-                "supported_neighbor_estimators": list(SUPPORTED_NEIGHBOR_ESTIMATORS),
-            },
-        )
-    reconstructed = np.asarray(weights @ neighbor_spectra, dtype=np.float64)
-    source_prediction = np.asarray(weights @ np.asarray(neighbor_band_values, dtype=np.float64), dtype=np.float64)
-    source_fit_rmse = float(np.sqrt(np.mean((source_prediction - np.asarray(query_vector, dtype=np.float64)) ** 2)))
-    return reconstructed, np.asarray(weights, dtype=np.float64), source_fit_rmse
+
+def _refine_and_combine_neighbor_spectra_batch_accel(
+    *,
+    candidate_matrix: np.ndarray,
+    candidate_row_indices: np.ndarray,
+    source_matrix: np.ndarray,
+    hyperspectral_rows: np.ndarray,
+    query_values: np.ndarray,
+    local_candidate_indices: np.ndarray | None,
+    local_candidate_distances: np.ndarray | None,
+    valid_indices: np.ndarray | None,
+    k: int,
+    neighbor_estimator: str,
+    out_reconstructed: np.ndarray | None = None,
+    out_source_fit_rmse: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    reconstructed, source_fit_rmse = _rustaccel.refine_and_combine_neighbor_spectra_batch(
+        candidate_matrix=candidate_matrix,
+        candidate_row_indices=candidate_row_indices,
+        source_matrix=source_matrix,
+        hyperspectral_rows=hyperspectral_rows,
+        query_values=query_values,
+        local_candidate_indices=local_candidate_indices,
+        local_candidate_distances=local_candidate_distances,
+        valid_indices=valid_indices,
+        k=k,
+        neighbor_estimator=neighbor_estimator,
+        out_reconstructed=out_reconstructed,
+        out_source_fit_rmse=out_source_fit_rmse,
+    )
+    return np.asarray(reconstructed, dtype=np.float64), np.asarray(source_fit_rmse, dtype=np.float64)
+
+
+def _combine_neighbor_spectra_batch(
+    *,
+    hyperspectral_rows: np.ndarray,
+    source_matrix: np.ndarray,
+    neighbor_indices: np.ndarray,
+    neighbor_distances: np.ndarray,
+    query_vectors: np.ndarray,
+    valid_indices: slice | np.ndarray,
+    neighbor_estimator: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    resolved_valid_indices = None if isinstance(valid_indices, slice) else np.asarray(valid_indices, dtype=np.int64)
+    return _combine_neighbor_spectra_batch_accel(
+        source_matrix=source_matrix,
+        hyperspectral_rows=hyperspectral_rows,
+        neighbor_indices=neighbor_indices,
+        neighbor_distances=neighbor_distances,
+        query_values=query_vectors,
+        valid_indices=resolved_valid_indices,
+        neighbor_estimator=neighbor_estimator,
+    )
+
+
+def _finalize_target_sensor_batch_accel(
+    *,
+    vnir_reconstructed: np.ndarray,
+    swir_reconstructed: np.ndarray,
+    vnir_success: np.ndarray,
+    swir_success: np.ndarray,
+    vnir_response_matrix: np.ndarray,
+    swir_response_matrix: np.ndarray,
+    vnir_output_indices: np.ndarray,
+    swir_output_indices: np.ndarray,
+    output_width: int,
+    out_rows: np.ndarray | None = None,
+    out_status_codes: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    output_rows, status_codes = _rustaccel.finalize_target_sensor_batch(
+        vnir_reconstructed=vnir_reconstructed,
+        swir_reconstructed=swir_reconstructed,
+        vnir_success=vnir_success,
+        swir_success=swir_success,
+        vnir_response_matrix=vnir_response_matrix,
+        swir_response_matrix=swir_response_matrix,
+        vnir_output_indices=vnir_output_indices,
+        swir_output_indices=swir_output_indices,
+        output_width=output_width,
+        out_output_rows=out_rows,
+        out_status_codes=out_status_codes,
+    )
+    return np.asarray(output_rows, dtype=np.float64), np.asarray(status_codes, dtype=np.int32)
+
+
+def _merge_target_sensor_segments_batch_accel(
+    *,
+    vnir_rows: np.ndarray,
+    swir_rows: np.ndarray,
+    vnir_success: np.ndarray,
+    swir_success: np.ndarray,
+    vnir_output_indices: np.ndarray,
+    swir_output_indices: np.ndarray,
+    output_width: int,
+    out_rows: np.ndarray | None = None,
+    out_status_codes: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    output_rows, status_codes = _rustaccel.merge_target_sensor_segments_batch(
+        vnir_rows=vnir_rows,
+        swir_rows=swir_rows,
+        vnir_success=vnir_success,
+        swir_success=swir_success,
+        vnir_output_indices=vnir_output_indices,
+        swir_output_indices=swir_output_indices,
+        output_width=output_width,
+        out_output_rows=out_rows,
+        out_status_codes=out_status_codes,
+    )
+    return np.asarray(output_rows, dtype=np.float64), np.asarray(status_codes, dtype=np.int32)
+
+
+def _stitch_target_sensor_segment_rows(
+    *,
+    vnir_rows: np.ndarray,
+    swir_rows: np.ndarray,
+    vnir_success: np.ndarray,
+    swir_success: np.ndarray,
+    vnir_output_indices: np.ndarray,
+    swir_output_indices: np.ndarray,
+    output_width: int,
+    out_rows: np.ndarray | None = None,
+    out_status_codes: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    output_rows, status_codes = _merge_target_sensor_segments_batch_accel(
+        vnir_rows=vnir_rows,
+        swir_rows=swir_rows,
+        vnir_success=vnir_success,
+        swir_success=swir_success,
+        vnir_output_indices=vnir_output_indices,
+        swir_output_indices=swir_output_indices,
+        output_width=output_width,
+        out_rows=out_rows,
+        out_status_codes=out_status_codes,
+    )
+    return np.asarray(output_rows, dtype=np.float64), np.asarray(status_codes, dtype=np.int32)
 
 
 def _segment_confidence_payload(
@@ -1239,6 +1920,87 @@ def _segment_confidence_payload(
     }
 
 
+def _segment_confidence_payload_batch(
+    *,
+    query_matrix: np.ndarray,
+    valid_band_count: int,
+    total_band_count: int,
+    neighbor_distance_matrix: np.ndarray,
+    neighbor_weight_matrix: np.ndarray,
+    source_fit_rmse: np.ndarray,
+) -> tuple[np.ndarray, tuple[dict[str, float], ...]]:
+    """Vectorized confidence scoring for one successful segment batch."""
+
+    batch_size = int(np.asarray(query_matrix).shape[0])
+    if valid_band_count <= 0 or total_band_count <= 0 or batch_size == 0:
+        empty_scores = np.zeros(batch_size, dtype=np.float64)
+        empty_components = tuple(
+            {
+                "coverage": 0.0,
+                "distance": 0.0,
+                "fit": 0.0,
+                "weight_concentration": 0.0,
+            }
+            for _ in range(batch_size)
+        )
+        return empty_scores, empty_components
+
+    query_matrix_f64 = np.asarray(query_matrix, dtype=np.float64)
+    neighbor_distance_matrix_f64 = np.asarray(neighbor_distance_matrix, dtype=np.float64)
+    neighbor_weight_matrix_f64 = np.asarray(neighbor_weight_matrix, dtype=np.float64)
+    source_fit_rmse_f64 = np.asarray(source_fit_rmse, dtype=np.float64)
+
+    if neighbor_distance_matrix_f64.ndim != 2 or neighbor_weight_matrix_f64.ndim != 2:
+        raise MappingInputError("Batch confidence inputs must be two-dimensional.")
+    if neighbor_distance_matrix_f64.shape[0] != batch_size or neighbor_weight_matrix_f64.shape[0] != batch_size:
+        raise MappingInputError("Batch confidence inputs must align on sample count.")
+    if source_fit_rmse_f64.shape != (batch_size,):
+        raise MappingInputError("Batch confidence source_fit_rmse must align on sample count.")
+
+    if query_matrix_f64.shape[1] == 0 or neighbor_distance_matrix_f64.shape[1] == 0:
+        empty_scores = np.zeros(batch_size, dtype=np.float64)
+        empty_components = tuple(
+            {
+                "coverage": 0.0,
+                "distance": 0.0,
+                "fit": 0.0,
+                "weight_concentration": 0.0,
+            }
+            for _ in range(batch_size)
+        )
+        return empty_scores, empty_components
+
+    query_scale = np.mean(np.abs(query_matrix_f64), axis=1)
+    invalid_scale = ~np.isfinite(query_scale) | (query_scale <= 1e-12)
+    if np.any(invalid_scale):
+        query_scale = np.asarray(query_scale, dtype=np.float64)
+        query_scale[invalid_scale] = 1.0
+
+    coverage = float(valid_band_count) / float(total_band_count)
+    distance_score = np.exp(-np.mean(neighbor_distance_matrix_f64, axis=1) / query_scale)
+    fit_score = np.exp(-source_fit_rmse_f64 / query_scale)
+    weight_concentration = (
+        np.max(neighbor_weight_matrix_f64, axis=1)
+        if neighbor_weight_matrix_f64.shape[1] > 0
+        else np.zeros(batch_size, dtype=np.float64)
+    )
+    confidence_scores = np.clip(
+        0.25 * coverage + 0.35 * distance_score + 0.25 * fit_score + 0.15 * weight_concentration,
+        0.0,
+        1.0,
+    ).astype(np.float64, copy=False)
+    confidence_components = tuple(
+        {
+            "coverage": coverage,
+            "distance": float(distance_score[row_index]),
+            "fit": float(fit_score[row_index]),
+            "weight_concentration": float(weight_concentration[row_index]),
+        }
+        for row_index in range(batch_size)
+    )
+    return confidence_scores, confidence_components
+
+
 def _confidence_policy_payload(confidence_score: float | None) -> dict[str, object]:
     """Translate a confidence score into the public review/accept policy."""
 
@@ -1267,73 +2029,6 @@ def _confidence_policy_payload(confidence_score: float | None) -> dict[str, obje
         "review_threshold": CONFIDENCE_REVIEW_THRESHOLD,
         "accept_threshold": CONFIDENCE_ACCEPT_THRESHOLD,
     }
-
-
-def _project_simplex(values: np.ndarray) -> np.ndarray:
-    """Project a vector onto the probability simplex."""
-
-    if values.ndim != 1:
-        raise MappingInputError("Simplex projection requires a one-dimensional vector.")
-    if values.size == 0:
-        raise MappingInputError("Simplex projection requires at least one value.")
-    sorted_values = np.sort(np.asarray(values, dtype=np.float64))[::-1]
-    cumulative = np.cumsum(sorted_values) - 1.0
-    indices = np.arange(1, sorted_values.size + 1, dtype=np.float64)
-    positive = sorted_values - cumulative / indices > 0.0
-    if not np.any(positive):
-        return np.full(values.shape, 1.0 / float(values.size), dtype=np.float64)
-    rho = int(np.flatnonzero(positive)[-1])
-    theta = cumulative[rho] / float(rho + 1)
-    projected = np.maximum(np.asarray(values, dtype=np.float64) - theta, 0.0)
-    projected_sum = float(np.sum(projected))
-    if projected_sum <= 0.0:
-        return np.full(values.shape, 1.0 / float(values.size), dtype=np.float64)
-    return projected / projected_sum
-
-
-def _fit_simplex_neighbor_weights(
-    neighbor_band_values: np.ndarray,
-    query_vector: np.ndarray,
-    neighbor_distances: np.ndarray,
-) -> np.ndarray:
-    """Fit non-negative mixture weights that sum to one."""
-
-    candidate_matrix = np.asarray(neighbor_band_values, dtype=np.float64)
-    query = np.asarray(query_vector, dtype=np.float64)
-    if candidate_matrix.ndim != 2:
-        raise MappingInputError("Simplex mixture fitting requires a two-dimensional candidate matrix.")
-    neighbor_count = int(candidate_matrix.shape[0])
-    if neighbor_count < 1:
-        raise MappingInputError("Simplex mixture fitting requires at least one neighbor candidate.")
-    if neighbor_count == 1:
-        return np.asarray([1.0], dtype=np.float64)
-
-    exact_match_mask = np.asarray(neighbor_distances <= 1e-12, dtype=bool)
-    if np.any(exact_match_mask):
-        weights = np.asarray(exact_match_mask, dtype=np.float64)
-        return weights / float(np.sum(weights))
-
-    gram = candidate_matrix @ candidate_matrix.T
-    linear = candidate_matrix @ query
-    max_eigenvalue = float(np.max(np.linalg.eigvalsh(gram)))
-    if not np.isfinite(max_eigenvalue) or max_eigenvalue <= 1e-12:
-        return np.full(neighbor_count, 1.0 / float(neighbor_count), dtype=np.float64)
-
-    step = 1.0 / max_eigenvalue
-    weights = np.full(neighbor_count, 1.0 / float(neighbor_count), dtype=np.float64)
-    momentum = np.asarray(weights, dtype=np.float64)
-    t_prev = 1.0
-    for _ in range(250):
-        gradient = gram @ momentum - linear
-        updated = _project_simplex(momentum - step * gradient)
-        if np.linalg.norm(updated - weights, ord=1) <= 1e-10:
-            weights = updated
-            break
-        t_next = 0.5 * (1.0 + math.sqrt(1.0 + 4.0 * t_prev * t_prev))
-        momentum = updated + ((t_prev - 1.0) / t_next) * (updated - weights)
-        weights = updated
-        t_prev = t_next
-    return np.asarray(weights / float(np.sum(weights)), dtype=np.float64)
 
 
 def _source_retrieval_bands(schema: SensorSRFSchema, segment: str) -> tuple[SensorBandDefinition, ...]:
@@ -2085,8 +2780,18 @@ def _failed_segment_retrieval(
     query_values: np.ndarray,
     query_valid_mask: np.ndarray,
     reason: str,
+    include_diagnostics: bool = True,
 ) -> _SegmentRetrieval:
     """Build a failed retrieval payload with normalized query state."""
+
+    if not include_diagnostics:
+        return _SegmentRetrieval(
+            segment=segment,
+            valid_band_count=valid_band_count,
+            query_band_ids=query_band_ids,
+            success=False,
+            reason=reason,
+        )
 
     return _SegmentRetrieval(
         segment=segment,
@@ -2096,6 +2801,136 @@ def _failed_segment_retrieval(
         query_valid_mask=np.asarray(query_valid_mask, dtype=bool),
         success=False,
         reason=reason,
+    )
+
+
+def _segment_diagnostics_payload_from_fields(
+    *,
+    success: bool,
+    reason: str | None,
+    valid_band_count: int,
+    query_band_ids: tuple[str, ...],
+    query_band_values: np.ndarray,
+    query_valid_mask: np.ndarray,
+    neighbor_ids: tuple[str, ...],
+    neighbor_distances: np.ndarray,
+    neighbor_weights: np.ndarray,
+    source_fit_rmse: float | None,
+    confidence_score: float | None,
+    confidence_components: Mapping[str, float],
+    neighbor_band_values: np.ndarray,
+) -> dict[str, object]:
+    normalized_query_values = np.asarray(query_band_values, dtype=np.float64)
+    normalized_query_mask = np.asarray(query_valid_mask, dtype=bool)
+    normalized_neighbor_distances = np.asarray(neighbor_distances, dtype=np.float64)
+    normalized_neighbor_weights = np.asarray(neighbor_weights, dtype=np.float64)
+    normalized_neighbor_band_values = np.asarray(neighbor_band_values, dtype=np.float64)
+    return {
+        "status": "ok" if success else reason,
+        "valid_band_count": valid_band_count,
+        "query_band_ids": list(query_band_ids),
+        "query_band_values": [
+            float(value) if bool(is_valid) and np.isfinite(value) else None
+            for value, is_valid in zip(normalized_query_values, normalized_query_mask)
+        ],
+        "query_valid_mask": normalized_query_mask.astype(bool, copy=False).tolist(),
+        "neighbor_ids": list(neighbor_ids),
+        "neighbor_distances": normalized_neighbor_distances.tolist(),
+        "neighbor_weights": normalized_neighbor_weights.tolist(),
+        "source_fit_rmse": None if source_fit_rmse is None else float(source_fit_rmse),
+        "confidence_score": None if confidence_score is None else float(confidence_score),
+        "confidence_components": dict(confidence_components),
+        "confidence_policy": _confidence_policy_payload(confidence_score),
+        "neighbor_band_values": normalized_neighbor_band_values.tolist(),
+    }
+
+
+def _failed_segment_metadata(
+    *,
+    valid_band_count: int,
+    query_band_ids: tuple[str, ...],
+    query_values: np.ndarray,
+    query_valid_mask: np.ndarray,
+    reason: str,
+) -> _RichSegmentMetadata:
+    diagnostics = _segment_diagnostics_payload_from_fields(
+        success=False,
+        reason=reason,
+        valid_band_count=valid_band_count,
+        query_band_ids=query_band_ids,
+        query_band_values=query_values,
+        query_valid_mask=query_valid_mask,
+        neighbor_ids=(),
+        neighbor_distances=np.empty(0, dtype=np.float64),
+        neighbor_weights=np.empty(0, dtype=np.float64),
+        source_fit_rmse=None,
+        confidence_score=None,
+        confidence_components={},
+        neighbor_band_values=np.empty((0, 0), dtype=np.float64),
+    )
+    return _RichSegmentMetadata(
+        valid_band_count=valid_band_count,
+        success=False,
+        confidence_score=None,
+        diagnostics=diagnostics,
+        reason=reason,
+    )
+
+
+def _successful_segment_metadata(
+    *,
+    valid_band_count: int,
+    query_band_ids: tuple[str, ...],
+    query_values: np.ndarray,
+    query_valid_mask: np.ndarray,
+    query_vector: np.ndarray,
+    neighbor_indices: np.ndarray,
+    neighbor_distances: np.ndarray,
+    neighbor_weights: np.ndarray,
+    neighbor_band_values: np.ndarray,
+    source_fit_rmse: float | None,
+    row_ids: Sequence[str],
+    include_confidence: bool = True,
+    confidence_score: float | None = None,
+    confidence_components: Mapping[str, float] | None = None,
+) -> _RichSegmentMetadata:
+    normalized_neighbor_indices = np.asarray(neighbor_indices, dtype=np.int64)
+    normalized_neighbor_distances = np.asarray(neighbor_distances, dtype=np.float64)
+    normalized_neighbor_weights = np.asarray(neighbor_weights, dtype=np.float64)
+    resolved_confidence_score = confidence_score
+    resolved_confidence_components = dict(confidence_components or {})
+    if include_confidence and confidence_components is None:
+        resolved_confidence_score, resolved_confidence_components = _segment_confidence_payload(
+            query_vector=np.asarray(query_vector, dtype=np.float64),
+            valid_band_count=valid_band_count,
+            total_band_count=len(query_band_ids),
+            neighbor_distances=normalized_neighbor_distances,
+            neighbor_weights=normalized_neighbor_weights,
+            source_fit_rmse=source_fit_rmse,
+        )
+    neighbor_ids = tuple(row_ids[index] for index in normalized_neighbor_indices)
+    diagnostics = _segment_diagnostics_payload_from_fields(
+        success=True,
+        reason=None,
+        valid_band_count=valid_band_count,
+        query_band_ids=query_band_ids,
+        query_band_values=query_values,
+        query_valid_mask=query_valid_mask,
+        neighbor_ids=neighbor_ids,
+        neighbor_distances=normalized_neighbor_distances,
+        neighbor_weights=normalized_neighbor_weights,
+        source_fit_rmse=source_fit_rmse,
+        confidence_score=resolved_confidence_score,
+        confidence_components=resolved_confidence_components,
+        neighbor_band_values=neighbor_band_values,
+    )
+    return _RichSegmentMetadata(
+        valid_band_count=valid_band_count,
+        success=True,
+        neighbor_ids=neighbor_ids,
+        neighbor_distances=normalized_neighbor_distances,
+        confidence_score=resolved_confidence_score,
+        diagnostics=diagnostics,
     )
 
 
@@ -2114,17 +2949,32 @@ def _successful_segment_retrieval(
     source_fit_rmse: float | None,
     reconstructed: np.ndarray,
     row_ids: Sequence[str],
+    include_confidence: bool = True,
+    include_diagnostics: bool = True,
 ) -> _SegmentRetrieval:
     """Build a successful retrieval payload including confidence diagnostics."""
 
-    confidence_score, confidence_components = _segment_confidence_payload(
-        query_vector=np.asarray(query_vector, dtype=np.float64),
-        valid_band_count=valid_band_count,
-        total_band_count=len(query_band_ids),
-        neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
-        neighbor_weights=np.asarray(neighbor_weights, dtype=np.float64),
-        source_fit_rmse=source_fit_rmse,
-    )
+    if not include_diagnostics:
+        return _SegmentRetrieval(
+            segment=segment,
+            valid_band_count=valid_band_count,
+            query_band_ids=query_band_ids,
+            success=True,
+            reconstructed=np.asarray(reconstructed, dtype=np.float64),
+            source_fit_rmse=source_fit_rmse,
+        )
+
+    confidence_score: float | None = None
+    confidence_components: dict[str, float] = {}
+    if include_confidence:
+        confidence_score, confidence_components = _segment_confidence_payload(
+            query_vector=np.asarray(query_vector, dtype=np.float64),
+            valid_band_count=valid_band_count,
+            total_band_count=len(query_band_ids),
+            neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
+            neighbor_weights=np.asarray(neighbor_weights, dtype=np.float64),
+            source_fit_rmse=source_fit_rmse,
+        )
     return _SegmentRetrieval(
         segment=segment,
         valid_band_count=valid_band_count,
@@ -2147,27 +2997,21 @@ def _successful_segment_retrieval(
 def _segment_diagnostics_payload(retrieval: _SegmentRetrieval) -> dict[str, object]:
     """Serialize one segment retrieval into a JSON-friendly diagnostic payload."""
 
-    return {
-        "status": "ok" if retrieval.success else retrieval.reason,
-        "valid_band_count": retrieval.valid_band_count,
-        "query_band_ids": list(retrieval.query_band_ids),
-        "query_band_values": [
-            float(value) if bool(is_valid) and np.isfinite(value) else None
-            for value, is_valid in zip(retrieval.query_band_values, retrieval.query_valid_mask)
-        ],
-        "query_valid_mask": [bool(value) for value in retrieval.query_valid_mask],
-        "neighbor_ids": list(retrieval.neighbor_ids),
-        "neighbor_distances": [float(value) for value in retrieval.neighbor_distances],
-        "neighbor_weights": [float(value) for value in retrieval.neighbor_weights],
-        "source_fit_rmse": None if retrieval.source_fit_rmse is None else float(retrieval.source_fit_rmse),
-        "confidence_score": None if retrieval.confidence_score is None else float(retrieval.confidence_score),
-        "confidence_components": dict(retrieval.confidence_components),
-        "confidence_policy": _confidence_policy_payload(retrieval.confidence_score),
-        "neighbor_band_values": [
-            [float(value) for value in row]
-            for row in np.asarray(retrieval.neighbor_band_values, dtype=np.float64)
-        ],
-    }
+    return _segment_diagnostics_payload_from_fields(
+        success=retrieval.success,
+        reason=retrieval.reason,
+        valid_band_count=retrieval.valid_band_count,
+        query_band_ids=retrieval.query_band_ids,
+        query_band_values=retrieval.query_band_values,
+        query_valid_mask=retrieval.query_valid_mask,
+        neighbor_ids=retrieval.neighbor_ids,
+        neighbor_distances=retrieval.neighbor_distances,
+        neighbor_weights=retrieval.neighbor_weights,
+        source_fit_rmse=retrieval.source_fit_rmse,
+        confidence_score=retrieval.confidence_score,
+        confidence_components=retrieval.confidence_components,
+        neighbor_band_values=retrieval.neighbor_band_values,
+    )
 
 
 class SpectralMapper:
@@ -2194,8 +3038,10 @@ class SpectralMapper:
         self._hyperspectral_cache: dict[str, np.ndarray] = {}
         self._source_matrix_cache: dict[tuple[str, str], np.ndarray] = {}
         self._response_cache: dict[tuple[str, str, bool], np.ndarray] = {}
+        self._target_sensor_projection_cache: dict[str, _TargetSensorProjection] = {}
         self._source_query_cache: dict[str, np.ndarray] = {}
         self._knn_index_cache: dict[tuple[str, str, str], Any] = {}
+        self._scipy_ckdtree_cache: dict[tuple[str, str], _ScipyCkdtreeCacheEntry] = {}
 
         self._validate_prepared_layout()
 
@@ -2399,7 +3245,7 @@ class SpectralMapper:
             return False
         if not np.all(valid_mask):
             return False
-        if candidate_row_indices.shape != self._all_row_indices.shape or not np.array_equal(candidate_row_indices, self._all_row_indices):
+        if not self._uses_all_candidate_rows(candidate_row_indices):
             return False
         return self._persisted_knn_index_path(backend, source_sensor, segment) is not None
 
@@ -2429,6 +3275,69 @@ class SpectralMapper:
         if cache_key not in self._response_cache:
             self._response_cache[cache_key] = _resample_band_response(band, segment_only=segment_only)
         return self._response_cache[cache_key]
+
+    def _target_sensor_projection(self, target_sensor: str) -> _TargetSensorProjection:
+        if target_sensor not in self._target_sensor_projection_cache:
+            schema = self.get_sensor_schema(target_sensor)
+            response_columns: dict[str, list[np.ndarray]] = {segment: [] for segment in SEGMENTS}
+            output_indices: dict[str, list[int]] = {segment: [] for segment in SEGMENTS}
+            for output_index, band in enumerate(schema.bands):
+                response = np.asarray(self._band_response(target_sensor, band, segment_only=True), dtype=np.float64)
+                denominator = float(np.sum(response))
+                if denominator <= 0:
+                    raise SensorSchemaError(
+                        "Resampled target SRF support must remain positive.",
+                        context={"target_sensor": target_sensor, "band_id": band.band_id},
+                    )
+                response_columns[band.segment].append(response / denominator)
+                output_indices[band.segment].append(output_index)
+
+            def _compressed_projection(segment: str) -> tuple[np.ndarray, np.ndarray]:
+                if not response_columns[segment]:
+                    return (
+                        np.empty((0, 0), dtype=np.float64),
+                        np.empty(0, dtype=np.int64),
+                    )
+                full_projection = np.ascontiguousarray(np.column_stack(response_columns[segment]), dtype=np.float64)
+                support_mask = np.any(full_projection != 0.0, axis=1)
+                support_indices = np.flatnonzero(support_mask).astype(np.int64)
+                if support_indices.size == 0:
+                    return (
+                        np.empty((0, full_projection.shape[1]), dtype=np.float64),
+                        support_indices,
+                    )
+                return (
+                    np.ascontiguousarray(full_projection[support_indices], dtype=np.float64),
+                    support_indices,
+                )
+
+            vnir_response_matrix, vnir_support_indices = _compressed_projection("vnir")
+            swir_response_matrix, swir_support_indices = _compressed_projection("swir")
+            vnir_hyperspectral_rows = np.ascontiguousarray(
+                self._load_hyperspectral("vnir")[:, vnir_support_indices],
+                dtype=np.float64,
+            )
+            swir_hyperspectral_rows = np.ascontiguousarray(
+                self._load_hyperspectral("swir")[:, swir_support_indices],
+                dtype=np.float64,
+            )
+            vnir_target_rows = np.ascontiguousarray(vnir_hyperspectral_rows @ vnir_response_matrix, dtype=np.float64)
+            swir_target_rows = np.ascontiguousarray(swir_hyperspectral_rows @ swir_response_matrix, dtype=np.float64)
+
+            self._target_sensor_projection_cache[target_sensor] = _TargetSensorProjection(
+                output_width=len(schema.bands),
+                vnir_response_matrix=vnir_response_matrix,
+                swir_response_matrix=swir_response_matrix,
+                vnir_output_indices=np.asarray(output_indices["vnir"], dtype=np.int64),
+                swir_output_indices=np.asarray(output_indices["swir"], dtype=np.int64),
+                vnir_support_indices=vnir_support_indices,
+                swir_support_indices=swir_support_indices,
+                vnir_hyperspectral_rows=vnir_hyperspectral_rows,
+                swir_hyperspectral_rows=swir_hyperspectral_rows,
+                vnir_target_rows=vnir_target_rows,
+                swir_target_rows=swir_target_rows,
+            )
+        return self._target_sensor_projection_cache[target_sensor]
 
     def _coerce_query(
         self,
@@ -2483,6 +3392,85 @@ class SpectralMapper:
             )
         return source_matrix
 
+    def _uses_all_candidate_rows(self, candidate_row_indices: np.ndarray) -> bool:
+        return candidate_row_indices is self._all_row_indices or (
+            candidate_row_indices.shape == self._all_row_indices.shape
+            and np.array_equal(candidate_row_indices, self._all_row_indices)
+        )
+
+    def _candidate_source_matrix_view(
+        self,
+        source_matrix: np.ndarray,
+        candidate_row_indices: np.ndarray,
+    ) -> np.ndarray:
+        if self._uses_all_candidate_rows(candidate_row_indices):
+            return source_matrix
+        return source_matrix[candidate_row_indices]
+
+    def _load_scipy_ckdtree(
+        self,
+        *,
+        source_sensor: str,
+        segment: str,
+        query_band_ids: tuple[str, ...],
+    ) -> Any:
+        cache_key = (source_sensor, segment)
+        if cache_key not in self._scipy_ckdtree_cache:
+            source_matrix = self._validated_source_matrix(source_sensor, segment, query_band_ids)
+            tree_data = np.asarray(source_matrix, dtype=np.float64)
+            cKDTree = _load_ckdtree_class()
+            self._scipy_ckdtree_cache[cache_key] = _ScipyCkdtreeCacheEntry(
+                data=tree_data,
+                index=cKDTree(tree_data),
+            )
+        return self._scipy_ckdtree_cache[cache_key].index
+
+    def _query_cached_scipy_ckdtree_local_indices(
+        self,
+        *,
+        source_sensor: str,
+        segment: str,
+        query_band_ids: tuple[str, ...],
+        query_values: np.ndarray,
+        k: int,
+        knn_eps: float,
+    ) -> np.ndarray:
+        index = self._load_scipy_ckdtree(
+            source_sensor=source_sensor,
+            segment=segment,
+            query_band_ids=query_band_ids,
+        )
+        return _query_knn_index(
+            index,
+            query_values,
+            k=k,
+            knn_backend="scipy_ckdtree",
+            knn_eps=knn_eps,
+        )
+
+    def _query_cached_scipy_ckdtree_local_results(
+        self,
+        *,
+        source_sensor: str,
+        segment: str,
+        query_band_ids: tuple[str, ...],
+        query_values: np.ndarray,
+        k: int,
+        knn_eps: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        index = self._load_scipy_ckdtree(
+            source_sensor=source_sensor,
+            segment=segment,
+            query_band_ids=query_band_ids,
+        )
+        return _query_knn_index_with_distances(
+            index,
+            query_values,
+            k=k,
+            knn_backend="scipy_ckdtree",
+            knn_eps=knn_eps,
+        )
+
     def _retrieve_segment(
         self,
         *,
@@ -2496,6 +3484,7 @@ class SpectralMapper:
         knn_backend: str = "numpy",
         knn_eps: float = 0.0,
         candidate_row_indices: np.ndarray,
+        include_diagnostics: bool = True,
     ) -> _SegmentRetrieval:
         source_schema = self.get_sensor_schema(source_sensor)
         query_band_ids = _source_retrieval_band_ids(source_schema, segment)
@@ -2508,13 +3497,60 @@ class SpectralMapper:
                 query_values=query_values,
                 query_valid_mask=valid_mask,
                 reason="insufficient_valid_bands",
+                include_diagnostics=include_diagnostics,
             )
 
         source_matrix = self._validated_source_matrix(source_sensor, segment, query_band_ids)
-        valid_indices = np.flatnonzero(valid_mask)
-        candidate_matrix = np.asarray(source_matrix[candidate_row_indices][:, valid_indices], dtype=np.float64)
-        query_vector = query_values[valid_indices]
-        if self._can_use_persisted_knn_index(
+        candidate_source_matrix = self._candidate_source_matrix_view(source_matrix, candidate_row_indices)
+        if np.all(valid_mask):
+            valid_indices: slice | np.ndarray = slice(None)
+            candidate_matrix = candidate_source_matrix
+            query_vector = query_values
+        else:
+            valid_indices = np.flatnonzero(valid_mask)
+            candidate_matrix = candidate_source_matrix[:, valid_indices]
+            query_vector = query_values[valid_indices]
+        if knn_backend == "scipy_ckdtree" and float(knn_eps) == 0.0:
+            if self._uses_all_candidate_rows(candidate_row_indices) and np.all(valid_mask):
+                local_indices, local_distances = self._query_cached_scipy_ckdtree_local_results(
+                    source_sensor=source_sensor,
+                    segment=segment,
+                    query_band_ids=query_band_ids,
+                    query_values=query_values,
+                    k=min(int(k), int(candidate_row_indices.size)),
+                    knn_eps=knn_eps,
+                )
+            else:
+                local_indices, local_distances = _query_local_scipy_ckdtree_results(
+                    candidate_matrix,
+                    np.asarray(query_vector, dtype=np.float64),
+                    k=min(int(k), int(candidate_row_indices.size)),
+                    knn_eps=knn_eps,
+                )
+            neighbor_indices, neighbor_distances = _ordered_neighbor_rows_from_local_distances(
+                local_indices[0],
+                local_distances[0],
+                candidate_row_indices,
+                query_width=int(query_vector.shape[0]),
+                k=k,
+            )
+        elif knn_backend == "scipy_ckdtree" and self._uses_all_candidate_rows(candidate_row_indices) and np.all(valid_mask):
+            local_indices = self._query_cached_scipy_ckdtree_local_indices(
+                source_sensor=source_sensor,
+                segment=segment,
+                query_band_ids=query_band_ids,
+                query_values=query_values,
+                k=min(int(k), int(candidate_row_indices.size)),
+                knn_eps=knn_eps,
+            )
+            neighbor_indices, neighbor_distances = _refine_neighbor_rows(
+                candidate_source_matrix,
+                query_values,
+                candidate_row_indices,
+                local_indices[0],
+                k=k,
+            )
+        elif self._can_use_persisted_knn_index(
             backend=knn_backend,
             source_sensor=source_sensor,
             segment=segment,
@@ -2529,10 +3565,14 @@ class SpectralMapper:
                 k=min(int(k), int(candidate_row_indices.size)),
                 knn_eps=knn_eps,
             )
-            assert local_indices is not None
+            if local_indices is None:
+                raise MappingInputError(
+                    f"Persisted KNN index query returned no results for {source_sensor}/{segment}.",
+                    context={"source_sensor": source_sensor, "segment": segment, "knn_backend": knn_backend},
+                )
             neighbor_indices, neighbor_distances = _refine_neighbor_rows(
-                np.asarray(source_matrix[candidate_row_indices], dtype=np.float64),
-                np.asarray(query_values, dtype=np.float64),
+                candidate_source_matrix,
+                query_values,
                 candidate_row_indices,
                 local_indices[0],
                 k=k,
@@ -2547,15 +3587,26 @@ class SpectralMapper:
                 knn_eps=knn_eps,
             )
 
-        neighbor_band_values = np.asarray(source_matrix[neighbor_indices], dtype=np.float64)
-        reconstructed, neighbor_weights, source_fit_rmse = _combine_neighbor_spectra(
-            self._load_hyperspectral(segment),
-            neighbor_indices,
-            neighbor_distances,
-            neighbor_band_values[:, valid_indices],
-            query_vector,
+        resolved_valid_indices = None if isinstance(valid_indices, slice) else np.asarray(valid_indices, dtype=np.int64)
+        neighbor_index_matrix = np.asarray(neighbor_indices, dtype=np.int64)[np.newaxis, :]
+        neighbor_distance_matrix = np.asarray(neighbor_distances, dtype=np.float64)[np.newaxis, :]
+        reconstructed_batch, neighbor_weight_batch, source_fit_rmse_batch = _combine_neighbor_spectra_batch_accel(
+            hyperspectral_rows=self._load_hyperspectral(segment),
+            source_matrix=source_matrix,
+            neighbor_indices=neighbor_index_matrix,
+            neighbor_distances=neighbor_distance_matrix,
+            query_values=np.asarray(query_vector, dtype=np.float64)[np.newaxis, :],
+            valid_indices=resolved_valid_indices,
             neighbor_estimator=neighbor_estimator,
         )
+        neighbor_band_values = (
+            np.asarray(source_matrix[neighbor_indices], dtype=np.float64)
+            if include_diagnostics
+            else np.empty((0, 0), dtype=np.float64)
+        )
+        reconstructed = reconstructed_batch[0]
+        neighbor_weights = neighbor_weight_batch[0]
+        source_fit_rmse = float(source_fit_rmse_batch[0])
         return _successful_segment_retrieval(
             segment=segment,
             valid_band_count=valid_band_count,
@@ -2570,6 +3621,7 @@ class SpectralMapper:
             source_fit_rmse=source_fit_rmse,
             reconstructed=reconstructed,
             row_ids=self._row_ids,
+            include_diagnostics=include_diagnostics,
         )
 
     def _retrieve_segment_batch(
@@ -2585,22 +3637,25 @@ class SpectralMapper:
         knn_backend: str = "numpy",
         knn_eps: float = 0.0,
         candidate_row_indices: np.ndarray,
-    ) -> tuple[_SegmentRetrieval, ...]:
+        include_confidence: bool = True,
+    ) -> _RichSegmentBatch:
         source_schema = self.get_sensor_schema(source_sensor)
         query_band_ids = _source_retrieval_band_ids(source_schema, segment)
         source_matrix = self._validated_source_matrix(source_sensor, segment, query_band_ids)
-        retrievals: list[_SegmentRetrieval | None] = [None] * int(query_values.shape[0])
-        candidate_matrix = np.asarray(source_matrix[candidate_row_indices], dtype=np.float64)
-        segment_hyperspectral = np.asarray(self._load_hyperspectral(segment), dtype=np.float64)
+        batch_size = int(query_values.shape[0])
+        dense_output = _empty_dense_segment_output_batch(segment=segment, batch_size=batch_size)
+        metadata_rows: list[_RichSegmentMetadata | None] = [None] * batch_size
+        candidate_matrix = self._candidate_source_matrix_view(source_matrix, candidate_row_indices)
+        segment_hyperspectral = self._load_hyperspectral(segment)
         valid_patterns, inverse = np.unique(valid_mask, axis=0, return_inverse=True)
 
         for pattern_index, pattern in enumerate(valid_patterns):
             batch_indices = np.flatnonzero(inverse == pattern_index)
             valid_band_count = int(pattern.sum())
+            dense_output.valid_band_count[batch_indices] = valid_band_count
             if valid_band_count < min_valid_bands:
                 for batch_index in batch_indices:
-                    retrievals[int(batch_index)] = _failed_segment_retrieval(
-                        segment=segment,
+                    metadata_rows[int(batch_index)] = _failed_segment_metadata(
                         valid_band_count=valid_band_count,
                         query_band_ids=query_band_ids,
                         query_values=query_values[batch_index],
@@ -2609,88 +3664,89 @@ class SpectralMapper:
                     )
                 continue
 
-            valid_indices = np.flatnonzero(pattern)
-            candidate_valid = candidate_matrix[:, valid_indices]
-            query_group = np.asarray(query_values[batch_indices][:, valid_indices], dtype=np.float64)
-            if self._can_use_persisted_knn_index(
-                backend=knn_backend,
+            if np.all(pattern):
+                valid_indices = slice(None)
+                candidate_valid = candidate_matrix
+                query_group = query_values[batch_indices]
+            else:
+                valid_indices = np.flatnonzero(pattern)
+                candidate_valid = candidate_matrix[:, valid_indices]
+                query_group = query_values[batch_indices][:, valid_indices]
+            neighbor_index_matrix, neighbor_distance_matrix = self._refine_neighbor_rows_batch(
                 source_sensor=source_sensor,
                 segment=segment,
-                valid_mask=np.asarray(pattern, dtype=bool),
+                query_band_ids=query_band_ids,
+                query_values=np.asarray(query_values[batch_indices], dtype=np.float64),
+                query_group=np.asarray(query_group, dtype=np.float64),
+                valid_pattern=np.asarray(pattern, dtype=bool),
                 candidate_row_indices=candidate_row_indices,
-            ):
-                group_local_indices = self._query_persisted_knn_local_indices(
-                    backend=knn_backend,
-                    source_sensor=source_sensor,
-                    segment=segment,
-                    query_values=query_values[batch_indices],
-                    k=min(int(k), int(candidate_row_indices.size)),
-                    knn_eps=knn_eps,
+                candidate_valid=candidate_valid,
+                k=k,
+                knn_backend=knn_backend,
+                knn_eps=knn_eps,
+            )
+            resolved_valid_indices = None if isinstance(valid_indices, slice) else np.asarray(valid_indices, dtype=np.int64)
+            reconstructed_batch, neighbor_weight_batch, source_fit_rmse_batch = _combine_neighbor_spectra_batch_accel(
+                hyperspectral_rows=segment_hyperspectral,
+                source_matrix=source_matrix,
+                neighbor_indices=neighbor_index_matrix,
+                neighbor_distances=neighbor_distance_matrix,
+                query_values=np.asarray(query_group, dtype=np.float64),
+                valid_indices=resolved_valid_indices,
+                neighbor_estimator=neighbor_estimator,
+            )
+            neighbor_band_values_batch = np.asarray(source_matrix[neighbor_index_matrix], dtype=np.float64)
+            if include_confidence:
+                confidence_scores_batch, confidence_components_batch = _segment_confidence_payload_batch(
+                    query_matrix=np.asarray(query_group, dtype=np.float64),
+                    valid_band_count=valid_band_count,
+                    total_band_count=len(query_band_ids),
+                    neighbor_distance_matrix=neighbor_distance_matrix,
+                    neighbor_weight_matrix=np.asarray(neighbor_weight_batch, dtype=np.float64),
+                    source_fit_rmse=np.asarray(source_fit_rmse_batch, dtype=np.float64),
                 )
             else:
-                group_local_indices = _search_local_neighbor_indices(
-                    candidate_valid,
-                    query_group,
-                    k=k,
-                    knn_backend=knn_backend,
-                    knn_eps=knn_eps,
-                )
+                confidence_scores_batch = np.zeros(batch_indices.size, dtype=np.float64)
+                confidence_components_batch = tuple({} for _ in range(batch_indices.size))
+            dense_output.success[batch_indices] = True
+            dense_output.reconstructed[batch_indices] = np.asarray(reconstructed_batch, dtype=np.float64)
+            dense_output.source_fit_rmse[batch_indices] = np.asarray(source_fit_rmse_batch, dtype=np.float64)
 
             for local_index, batch_index in enumerate(batch_indices):
-                if group_local_indices is None:
-                    neighbor_indices, neighbor_distances = _search_neighbor_rows(
-                        candidate_valid,
-                        query_group[local_index],
-                        candidate_row_indices,
-                        k=k,
-                        knn_backend=knn_backend,
-                        knn_eps=knn_eps,
-                    )
-                else:
-                    neighbor_indices, neighbor_distances = _refine_neighbor_rows(
-                        candidate_valid,
-                        query_group[local_index],
-                        candidate_row_indices,
-                        group_local_indices[local_index],
-                        k=k,
-                    )
-                neighbor_band_values = np.asarray(source_matrix[neighbor_indices], dtype=np.float64)
-                reconstructed, neighbor_weights, source_fit_rmse = _combine_neighbor_spectra(
-                    segment_hyperspectral,
-                    neighbor_indices,
-                    neighbor_distances,
-                    neighbor_band_values[:, valid_indices],
-                    query_group[local_index],
-                    neighbor_estimator=neighbor_estimator,
-                )
-                retrievals[int(batch_index)] = _successful_segment_retrieval(
-                    segment=segment,
+                metadata = _successful_segment_metadata(
                     valid_band_count=valid_band_count,
                     query_band_ids=query_band_ids,
                     query_values=query_values[batch_index],
                     query_valid_mask=valid_mask[batch_index],
                     query_vector=query_group[local_index],
-                    neighbor_indices=neighbor_indices,
-                    neighbor_distances=np.asarray(neighbor_distances, dtype=np.float64),
-                    neighbor_weights=neighbor_weights,
-                    neighbor_band_values=neighbor_band_values,
-                    source_fit_rmse=source_fit_rmse,
-                    reconstructed=reconstructed,
+                    neighbor_indices=neighbor_index_matrix[local_index],
+                    neighbor_distances=neighbor_distance_matrix[local_index],
+                    neighbor_weights=neighbor_weight_batch[local_index],
+                    neighbor_band_values=neighbor_band_values_batch[local_index],
+                    source_fit_rmse=float(source_fit_rmse_batch[local_index]),
                     row_ids=self._row_ids,
+                    include_confidence=include_confidence,
+                    confidence_score=None if not include_confidence else float(confidence_scores_batch[local_index]),
+                    confidence_components=confidence_components_batch[local_index],
                 )
+                metadata_rows[int(batch_index)] = metadata
+                if metadata.confidence_score is not None:
+                    dense_output.confidence_score[int(batch_index)] = float(metadata.confidence_score)
 
-        return tuple(
-            retrieval
-            if retrieval is not None
-            else _failed_segment_retrieval(
-                segment=segment,
-                valid_band_count=0,
-                query_band_ids=query_band_ids,
-                query_values=np.empty(0, dtype=np.float64),
-                query_valid_mask=np.empty(0, dtype=bool),
-                reason="insufficient_valid_bands",
-            )
-            for retrieval in retrievals
+        return _RichSegmentBatch(
+            dense_output=dense_output,
+            metadata=tuple(
+                metadata
+                if metadata is not None
+                else _failed_segment_metadata(
+                    valid_band_count=0,
+                    query_band_ids=query_band_ids,
+                    query_values=np.empty(0, dtype=np.float64),
+                    query_valid_mask=np.empty(0, dtype=bool),
+                    reason="insufficient_valid_bands",
+                )
+                for metadata in metadata_rows
+            ),
         )
 
     def _simulate_target_sensor(
@@ -2701,26 +3757,104 @@ class SpectralMapper:
         target_schema = self.get_sensor_schema(target_sensor)
         values: list[float] = []
         band_ids: list[str] = []
-        for segment in SEGMENTS:
-            if segment not in segment_outputs:
+        for band in target_schema.bands:
+            if band.segment not in segment_outputs:
                 continue
-            reconstructed = segment_outputs[segment]
-            for band in target_schema.bands_for_segment(segment):
-                response = self._band_response(target_sensor, band, segment_only=True)
-                values.append(
-                    float(
-                        _response_weighted_average(
-                            reconstructed,
-                            response,
-                            error_message="Resampled target SRF support must remain positive.",
-                            error_context={"target_sensor": target_sensor, "band_id": band.band_id},
-                        )
+            reconstructed = segment_outputs[band.segment]
+            response = self._band_response(target_sensor, band, segment_only=True)
+            values.append(
+                float(
+                    _response_weighted_average(
+                        reconstructed,
+                        response,
+                        error_message="Resampled target SRF support must remain positive.",
+                        error_context={"target_sensor": target_sensor, "band_id": band.band_id},
                     )
                 )
-                band_ids.append(band.band_id)
+            )
+            band_ids.append(band.band_id)
         if not values:
             return None, ()
         return np.asarray(values, dtype=np.float64), tuple(band_ids)
+
+    def compile_linear_mapper(
+        self,
+        *,
+        source_sensor: str,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        dtype: str | np.dtype[Any] = np.float32,
+        compile_chunk_size: int | None = None,
+    ) -> LinearSpectralMapper:
+        """Compile a dense array-to-array mapper for high-throughput inference."""
+
+        _ensure_supported_output_mode(output_mode)
+        runtime_dtype = _normalized_linear_mapper_dtype(dtype)
+        source_schema = self.get_sensor_schema(source_sensor)
+        source_queries = self._source_queries(source_sensor)
+
+        output_band_ids: tuple[str, ...] = ()
+        output_wavelength_nm: np.ndarray | None = None
+        if output_mode == "target_sensor":
+            if not target_sensor:
+                raise MappingInputError("target_sensor is required when output_mode is target_sensor.")
+            target_matrix, output_band_ids = self._simulate_full_sensor_matrix(target_sensor)
+            output_width = int(target_matrix.shape[1])
+
+            def output_loader(start: int, stop: int) -> np.ndarray:
+                return np.asarray(target_matrix[start:stop], dtype=np.float64)
+
+        elif output_mode == "vnir_spectrum":
+            vnir = self._load_hyperspectral("vnir")
+            output_width = int(vnir.shape[1])
+            output_wavelength_nm = VNIR_WAVELENGTHS.astype(np.float64)
+
+            def output_loader(start: int, stop: int) -> np.ndarray:
+                return np.asarray(vnir[start:stop], dtype=np.float64)
+
+        elif output_mode == "swir_spectrum":
+            swir = self._load_hyperspectral("swir")
+            output_width = int(swir.shape[1])
+            output_wavelength_nm = SWIR_WAVELENGTHS.astype(np.float64)
+
+            def output_loader(start: int, stop: int) -> np.ndarray:
+                return np.asarray(swir[start:stop], dtype=np.float64)
+
+        else:
+            vnir = self._load_hyperspectral("vnir")
+            swir = self._load_hyperspectral("swir")
+            output_width = FULL_WAVELENGTH_COUNT
+            output_wavelength_nm = CANONICAL_WAVELENGTHS.astype(np.float64)
+
+            def output_loader(start: int, stop: int) -> np.ndarray:
+                return _assemble_full_spectrum_batch(
+                    np.asarray(vnir[start:stop], dtype=np.float64),
+                    np.asarray(swir[start:stop], dtype=np.float64),
+                )
+
+        resolved_compile_chunk_size = _normalized_linear_mapper_chunk_size(
+            compile_chunk_size,
+            input_width=int(source_queries.shape[1]),
+            output_width=int(output_width),
+            dtype=np.dtype(np.float64),
+        )
+        bias, weights = _fit_linear_map(
+            source_queries,
+            output_width=output_width,
+            output_loader=output_loader,
+            compile_chunk_size=resolved_compile_chunk_size,
+        )
+        return LinearSpectralMapper(
+            source_sensor=source_sensor,
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+            source_band_ids=source_schema.band_ids(),
+            output_band_ids=output_band_ids,
+            output_wavelength_nm=output_wavelength_nm,
+            weights=np.ascontiguousarray(weights, dtype=runtime_dtype),
+            bias=np.ascontiguousarray(bias, dtype=runtime_dtype),
+            dtype=runtime_dtype,
+        )
 
     def _candidate_rows(
         self,
@@ -2730,7 +3864,7 @@ class SpectralMapper:
         exclude_sample_names: Sequence[str] | None = None,
     ) -> np.ndarray:
         if candidate_row_indices is None:
-            candidate = np.arange(self.manifest.row_count, dtype=np.int64)
+            candidate = self._all_row_indices
         else:
             candidate = np.asarray(candidate_row_indices, dtype=np.int64)
             if candidate.ndim != 1 or candidate.size == 0:
@@ -2857,6 +3991,246 @@ class SpectralMapper:
             "exclude_row_ids_per_sample must be a sequence aligned to reflectance_rows or a mapping keyed by sample_id."
         )
 
+    def _batch_candidate_groups(
+        self,
+        *,
+        sample_ids: Sequence[str],
+        exclude_row_ids: Sequence[str] | None,
+        exclude_sample_names: Sequence[str] | None,
+        exclude_row_ids_per_sample: Sequence[str | None],
+        self_exclude_sample_id: bool,
+    ) -> tuple[_CandidateBatchGroup, ...]:
+        base_candidate_rows = self._candidate_rows(
+            None,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+        )
+        grouped_indices: dict[tuple[int, ...], list[int]] = {}
+        grouped_candidates: dict[tuple[int, ...], np.ndarray] = {}
+
+        for sample_index, (sample_id, sample_exclude_row_id) in enumerate(zip(sample_ids, exclude_row_ids_per_sample)):
+            candidate_rows = base_candidate_rows
+            effective_excluded: list[np.ndarray] = []
+
+            if sample_exclude_row_id:
+                if sample_exclude_row_id not in self._row_index_by_id:
+                    raise _attach_sample_context(
+                        MappingInputError(
+                            "exclude_row_ids must refer to existing prepared row ids.",
+                            context={"unknown_row_ids": [sample_exclude_row_id]},
+                        ),
+                        sample_id=sample_id,
+                        sample_index=sample_index,
+                    )
+                excluded_row_index = self._row_index_by_id[sample_exclude_row_id]
+                if np.any(candidate_rows == excluded_row_index):
+                    effective_excluded.append(np.asarray([excluded_row_index], dtype=np.int64))
+                    candidate_rows = candidate_rows[candidate_rows != excluded_row_index]
+                if candidate_rows.size == 0:
+                    raise _attach_sample_context(
+                        MappingInputError(
+                            "Candidate exclusions removed every prepared-library row.",
+                            context={
+                                "row_count": self.manifest.row_count,
+                                "excluded_row_id_count": 1,
+                                "excluded_sample_name_count": 0,
+                            },
+                        ),
+                        sample_id=sample_id,
+                        sample_index=sample_index,
+                    )
+
+            if self_exclude_sample_id and self.has_prepared_sample_name(sample_id):
+                excluded_sample_rows = np.asarray(self._row_indices_by_sample_name[sample_id], dtype=np.int64)
+                if excluded_sample_rows.size:
+                    effective_rows = excluded_sample_rows[np.isin(excluded_sample_rows, candidate_rows, assume_unique=False)]
+                    if effective_rows.size:
+                        effective_excluded.append(effective_rows)
+                        candidate_rows = candidate_rows[~np.isin(candidate_rows, effective_rows, assume_unique=False)]
+                if candidate_rows.size == 0:
+                    raise _attach_sample_context(
+                        MappingInputError(
+                            "Candidate exclusions removed every prepared-library row.",
+                            context={
+                                "row_count": self.manifest.row_count,
+                                "excluded_row_id_count": 0,
+                                "excluded_sample_name_count": 1,
+                            },
+                        ),
+                        sample_id=sample_id,
+                        sample_index=sample_index,
+                    )
+
+            if effective_excluded:
+                group_key = tuple(
+                    int(value)
+                    for value in np.unique(np.concatenate(effective_excluded))
+                )
+            else:
+                group_key = ()
+            grouped_indices.setdefault(group_key, []).append(sample_index)
+            grouped_candidates.setdefault(group_key, candidate_rows)
+
+        return tuple(
+            _CandidateBatchGroup(
+                sample_indices=np.asarray(sample_indices, dtype=np.int64),
+                candidate_rows=np.asarray(grouped_candidates[group_key], dtype=np.int64),
+            )
+            for group_key, sample_indices in grouped_indices.items()
+        )
+
+    def _coerced_batch_query_arrays(
+        self,
+        *,
+        source_sensor: str,
+        batch_rows: Sequence[Sequence[float] | Mapping[str, float]],
+        batch_valid_masks: Sequence[Sequence[bool] | Mapping[str, bool] | None],
+        sample_ids: Sequence[str],
+    ) -> tuple[SensorSRFSchema, np.ndarray, np.ndarray]:
+        source_schema = self.get_sensor_schema(source_sensor)
+        query_values_batch = np.empty((len(batch_rows), len(source_schema.bands)), dtype=np.float64)
+        query_valid_mask_batch = np.empty((len(batch_rows), len(source_schema.bands)), dtype=bool)
+        for sample_index, (sample_id, reflectance, valid_mask) in enumerate(
+            zip(sample_ids, batch_rows, batch_valid_masks)
+        ):
+            try:
+                query_values, query_valid_mask = self._coerce_query(source_schema, reflectance, valid_mask)
+            except SpectralLibraryError as error:
+                raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
+            query_values_batch[sample_index] = query_values
+            query_valid_mask_batch[sample_index] = query_valid_mask
+        return source_schema, query_values_batch, query_valid_mask_batch
+
+    def _coerced_ndarray_batch_query_arrays(
+        self,
+        *,
+        source_sensor: str,
+        reflectance_rows: np.ndarray,
+        valid_mask_rows: np.ndarray | None,
+    ) -> tuple[SensorSRFSchema, np.ndarray, np.ndarray]:
+        source_schema = self.get_sensor_schema(source_sensor)
+        query_values_batch = np.asarray(reflectance_rows, dtype=np.float64)
+        if query_values_batch.ndim != 2 or query_values_batch.shape[0] == 0:
+            raise MappingInputError(
+                "reflectance_rows arrays must be two-dimensional with at least one sample row.",
+                context={"shape": list(query_values_batch.shape)},
+            )
+        expected_width = len(source_schema.bands)
+        if query_values_batch.shape[1] != expected_width:
+            raise MappingInputError(
+                "Reflectance arrays must align to the source sensor band order.",
+                context={"sensor_id": source_sensor, "expected_length": expected_width},
+            )
+        if valid_mask_rows is None:
+            query_valid_mask_batch = np.isfinite(query_values_batch)
+        else:
+            query_valid_mask_batch = np.asarray(valid_mask_rows, dtype=bool)
+            if query_valid_mask_batch.shape != query_values_batch.shape:
+                raise MappingInputError(
+                    "valid_mask_rows arrays must have the same shape as reflectance_rows.",
+                    context={
+                        "reflectance_shape": list(query_values_batch.shape),
+                        "valid_mask_shape": list(query_valid_mask_batch.shape),
+                    },
+                )
+            query_valid_mask_batch = query_valid_mask_batch & np.isfinite(query_values_batch)
+        if not np.all(np.any(query_valid_mask_batch, axis=1)):
+            failing_row = int(np.flatnonzero(~np.any(query_valid_mask_batch, axis=1))[0])
+            raise MappingInputError(
+                "At least one valid source reflectance band is required for mapping.",
+                context={"sample_index": failing_row},
+            )
+        return source_schema, query_values_batch, query_valid_mask_batch
+
+    def _grouped_segment_retrievals(
+        self,
+        *,
+        source_sensor: str,
+        sample_ids: Sequence[str],
+        query_values_batch: np.ndarray,
+        query_valid_mask_batch: np.ndarray,
+        k: int,
+        min_valid_bands: int,
+        neighbor_estimator: str,
+        knn_backend: str,
+        knn_eps: float,
+        exclude_row_ids: Sequence[str] | None,
+        exclude_sample_names: Sequence[str] | None,
+        exclude_row_ids_per_sample: Sequence[str | None],
+        self_exclude_sample_id: bool,
+        include_confidence: bool = True,
+    ) -> dict[str, _RichSegmentBatch]:
+        source_schema = self.get_sensor_schema(source_sensor)
+        segment_indices = {
+            segment: list(_source_retrieval_band_indices(source_schema, segment))
+            for segment in SEGMENTS
+        }
+        candidate_groups = self._batch_candidate_groups(
+            sample_ids=sample_ids,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+        )
+        dense_outputs_by_segment = {
+            segment: _empty_dense_segment_output_batch(
+                segment=segment,
+                batch_size=int(query_values_batch.shape[0]),
+            )
+            for segment in SEGMENTS
+        }
+        metadata_by_segment: dict[str, list[_RichSegmentMetadata | None]] = {
+            segment: [None] * int(query_values_batch.shape[0]) for segment in SEGMENTS
+        }
+        for candidate_group in candidate_groups:
+            anchor_index = int(candidate_group.sample_indices[0])
+            anchor_sample_id = str(sample_ids[anchor_index])
+            try:
+                group_batches_by_segment = self._segment_retrievals_by_segment_for_candidate_rows(
+                    source_sensor=source_sensor,
+                    segment_indices_by_segment=segment_indices,
+                    query_values_batch=query_values_batch,
+                    query_valid_mask_batch=query_valid_mask_batch,
+                    sample_indices=candidate_group.sample_indices,
+                    k=k,
+                    min_valid_bands=min_valid_bands,
+                    neighbor_estimator=neighbor_estimator,
+                    knn_backend=knn_backend,
+                    knn_eps=knn_eps,
+                    candidate_row_indices=candidate_group.candidate_rows,
+                    include_confidence=include_confidence,
+                )
+            except SpectralLibraryError as error:
+                raise _attach_sample_context(error, sample_id=anchor_sample_id, sample_index=anchor_index) from error
+            for segment in SEGMENTS:
+                group_batch = group_batches_by_segment[segment]
+                _assign_dense_segment_output_batch_rows(
+                    target=dense_outputs_by_segment[segment],
+                    sample_indices=candidate_group.sample_indices,
+                    source=group_batch.dense_output,
+                )
+                for local_index, batch_index in enumerate(candidate_group.sample_indices):
+                    metadata_by_segment[segment][int(batch_index)] = group_batch.metadata[local_index]
+
+        return {
+            segment: _RichSegmentBatch(
+                dense_output=dense_outputs_by_segment[segment],
+                metadata=tuple(
+                    metadata
+                    if metadata is not None
+                    else _failed_segment_metadata(
+                        valid_band_count=0,
+                        query_band_ids=_source_retrieval_band_ids(source_schema, segment),
+                        query_values=np.empty(0, dtype=np.float64),
+                        query_valid_mask=np.empty(0, dtype=bool),
+                        reason="unassigned_retrieval",
+                    )
+                    for metadata in metadata_by_segment[segment]
+                )
+            )
+            for segment in SEGMENTS
+        }
+
     def _build_mapping_result(
         self,
         *,
@@ -2868,46 +4242,52 @@ class SpectralMapper:
         knn_backend: str = "numpy",
         knn_eps: float = 0.0,
         segment_retrievals: Mapping[str, _SegmentRetrieval],
+        include_diagnostics: bool = True,
     ) -> MappingResult:
-        segment_outputs: dict[str, np.ndarray] = {}
+        successful_segment_outputs: dict[str, np.ndarray] = {}
         segment_valid_band_counts: dict[str, int] = {}
         neighbor_ids_by_segment: dict[str, tuple[str, ...]] = {}
         neighbor_distances_by_segment: dict[str, np.ndarray] = {}
 
         for segment, retrieval in segment_retrievals.items():
             segment_valid_band_counts[segment] = retrieval.valid_band_count
-            neighbor_ids_by_segment[segment] = retrieval.neighbor_ids
-            neighbor_distances_by_segment[segment] = retrieval.neighbor_distances
             if retrieval.success and retrieval.reconstructed is not None:
-                segment_outputs[segment] = retrieval.reconstructed
+                successful_segment_outputs[segment] = retrieval.reconstructed
+            if include_diagnostics:
+                neighbor_ids_by_segment[segment] = retrieval.neighbor_ids
+                neighbor_distances_by_segment[segment] = retrieval.neighbor_distances
 
-        diagnostics: dict[str, object] = {
-            "source_sensor": source_sensor,
-            "target_sensor": target_sensor,
-            "output_mode": output_mode,
-            "k": k,
-            "neighbor_estimator": neighbor_estimator,
-            "knn_backend": knn_backend,
-            "knn_eps": float(knn_eps),
-            "segments": {},
-        }
-        diagnostics_segments: dict[str, object] = {}
-        confidence_weights: list[int] = []
-        confidence_scores: list[float] = []
-        for segment, retrieval in segment_retrievals.items():
-            if retrieval.success and retrieval.confidence_score is not None:
-                confidence_weights.append(max(retrieval.valid_band_count, 1))
-                confidence_scores.append(float(retrieval.confidence_score))
-            diagnostics_segments[segment] = _segment_diagnostics_payload(retrieval)
-        diagnostics["segments"] = diagnostics_segments
-        if confidence_scores:
-            diagnostics["confidence_score"] = float(np.average(np.asarray(confidence_scores), weights=np.asarray(confidence_weights)))
-        else:
-            diagnostics["confidence_score"] = 0.0
-        diagnostics["confidence_policy"] = _confidence_policy_payload(float(diagnostics["confidence_score"]))
+        diagnostics: dict[str, object] = {}
+        if include_diagnostics:
+            diagnostics = {
+                "source_sensor": source_sensor,
+                "target_sensor": target_sensor,
+                "output_mode": output_mode,
+                "k": k,
+                "neighbor_estimator": neighbor_estimator,
+                "knn_backend": knn_backend,
+                "knn_eps": float(knn_eps),
+                "segments": {},
+            }
+            diagnostics_segments: dict[str, object] = {}
+            confidence_weights: list[int] = []
+            confidence_scores: list[float] = []
+            for segment, retrieval in segment_retrievals.items():
+                if retrieval.success and retrieval.confidence_score is not None:
+                    confidence_weights.append(max(retrieval.valid_band_count, 1))
+                    confidence_scores.append(float(retrieval.confidence_score))
+                diagnostics_segments[segment] = _segment_diagnostics_payload(retrieval)
+            diagnostics["segments"] = diagnostics_segments
+            if confidence_scores:
+                diagnostics["confidence_score"] = float(
+                    np.average(np.asarray(confidence_scores), weights=np.asarray(confidence_weights))
+                )
+            else:
+                diagnostics["confidence_score"] = 0.0
+            diagnostics["confidence_policy"] = _confidence_policy_payload(float(diagnostics["confidence_score"]))
 
-        reconstructed_vnir = segment_outputs.get("vnir")
-        reconstructed_swir = segment_outputs.get("swir")
+        reconstructed_vnir = successful_segment_outputs.get("vnir")
+        reconstructed_swir = successful_segment_outputs.get("swir")
         reconstructed_full: np.ndarray | None = None
         if reconstructed_vnir is not None and reconstructed_swir is not None:
             reconstructed_full = _assemble_full_spectrum(reconstructed_vnir, reconstructed_swir)
@@ -2929,11 +4309,12 @@ class SpectralMapper:
                 "Full-spectrum reconstruction requires both VNIR and SWIR segment retrievals.",
                 context={"diagnostics": diagnostics},
             )
+        
 
         target_reflectance: np.ndarray | None = None
         target_band_ids: tuple[str, ...] = ()
         if target_sensor:
-            target_reflectance, target_band_ids = self._simulate_target_sensor(target_sensor, segment_outputs)
+            target_reflectance, target_band_ids = self._simulate_target_sensor(target_sensor, successful_segment_outputs)
             if output_mode == "target_sensor" and target_reflectance is None:
                 raise MappingInputError(
                     "Target-sensor mapping could not produce any bands because no target segments were retrievable.",
@@ -2957,10 +4338,561 @@ class SpectralMapper:
             reconstructed_wavelength_nm=reconstructed_wavelength_nm,
             neighbor_ids_by_segment=neighbor_ids_by_segment,
             neighbor_distances_by_segment=neighbor_distances_by_segment,
-            segment_outputs=segment_outputs,
+            segment_outputs=successful_segment_outputs if include_diagnostics else {},
             segment_valid_band_counts=segment_valid_band_counts,
             diagnostics=diagnostics,
         )
+
+    def _segment_retrievals_by_segment_for_candidate_rows(
+        self,
+        *,
+        source_sensor: str,
+        segment_indices_by_segment: Mapping[str, Sequence[int]],
+        query_values_batch: np.ndarray,
+        query_valid_mask_batch: np.ndarray,
+        sample_indices: np.ndarray,
+        k: int,
+        min_valid_bands: int,
+        neighbor_estimator: str,
+        knn_backend: str,
+        knn_eps: float,
+        candidate_row_indices: np.ndarray,
+        include_confidence: bool = True,
+    ) -> dict[str, _RichSegmentBatch]:
+        query_values_group = np.asarray(query_values_batch[sample_indices], dtype=np.float64)
+        query_valid_mask_group = np.asarray(query_valid_mask_batch[sample_indices], dtype=bool)
+        segment_retrievals_by_segment: dict[str, _RichSegmentBatch] = {}
+        for segment, segment_indices in segment_indices_by_segment.items():
+            segment_retrievals_by_segment[segment] = self._retrieve_segment_batch(
+                source_sensor=source_sensor,
+                segment=segment,
+                query_values=query_values_group[:, segment_indices],
+                valid_mask=query_valid_mask_group[:, segment_indices],
+                k=k,
+                min_valid_bands=min_valid_bands,
+                neighbor_estimator=neighbor_estimator,
+                knn_backend=knn_backend,
+                knn_eps=knn_eps,
+                candidate_row_indices=candidate_row_indices,
+                include_confidence=include_confidence,
+            )
+        return segment_retrievals_by_segment
+
+    def _dense_segment_outputs_by_segment_for_candidate_rows(
+        self,
+        *,
+        source_sensor: str,
+        segment_indices_by_segment: Mapping[str, Sequence[int]],
+        query_values_batch: np.ndarray,
+        query_valid_mask_batch: np.ndarray,
+        sample_indices: np.ndarray,
+        k: int,
+        min_valid_bands: int,
+        neighbor_estimator: str,
+        knn_backend: str,
+        knn_eps: float,
+        candidate_row_indices: np.ndarray,
+        hyperspectral_rows_by_segment: Mapping[str, np.ndarray] | None = None,
+        target_output_indices_by_segment: Mapping[str, np.ndarray] | None = None,
+    ) -> dict[str, _DenseSegmentOutputBatch]:
+        query_values_group = np.asarray(query_values_batch[sample_indices], dtype=np.float64)
+        query_valid_mask_group = np.asarray(query_valid_mask_batch[sample_indices], dtype=bool)
+        dense_outputs_by_segment: dict[str, _DenseSegmentOutputBatch] = {}
+        for segment, segment_indices in segment_indices_by_segment.items():
+            dense_outputs_by_segment[segment] = self._retrieve_segment_dense_batch(
+                source_sensor=source_sensor,
+                segment=segment,
+                query_values=query_values_group[:, segment_indices],
+                valid_mask=query_valid_mask_group[:, segment_indices],
+                k=k,
+                min_valid_bands=min_valid_bands,
+                neighbor_estimator=neighbor_estimator,
+                knn_backend=knn_backend,
+                knn_eps=knn_eps,
+                candidate_row_indices=candidate_row_indices,
+                hyperspectral_rows=None if hyperspectral_rows_by_segment is None else hyperspectral_rows_by_segment.get(segment),
+                target_output_indices=(
+                    None if target_output_indices_by_segment is None else target_output_indices_by_segment.get(segment)
+                ),
+            )
+        return dense_outputs_by_segment
+
+    def _grouped_dense_segment_outputs(
+        self,
+        *,
+        source_sensor: str,
+        sample_ids: Sequence[str],
+        query_values_batch: np.ndarray,
+        query_valid_mask_batch: np.ndarray,
+        k: int,
+        min_valid_bands: int,
+        neighbor_estimator: str,
+        knn_backend: str,
+        knn_eps: float,
+        exclude_row_ids: Sequence[str] | None,
+        exclude_sample_names: Sequence[str] | None,
+        exclude_row_ids_per_sample: Sequence[str | None],
+        self_exclude_sample_id: bool,
+        hyperspectral_rows_by_segment: Mapping[str, np.ndarray] | None = None,
+        target_output_indices_by_segment: Mapping[str, np.ndarray] | None = None,
+    ) -> dict[str, _DenseSegmentOutputBatch]:
+        source_schema = self.get_sensor_schema(source_sensor)
+        segment_indices = {
+            segment: list(_source_retrieval_band_indices(source_schema, segment))
+            for segment in SEGMENTS
+        }
+        candidate_groups = self._batch_candidate_groups(
+            sample_ids=sample_ids,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+        )
+        dense_outputs_by_segment = {
+            segment: _empty_dense_segment_output_batch(
+                segment=segment,
+                batch_size=int(query_values_batch.shape[0]),
+                output_width=(
+                    None if hyperspectral_rows_by_segment is None else int(hyperspectral_rows_by_segment[segment].shape[1])
+                ),
+                target_output_indices=(
+                    None if target_output_indices_by_segment is None else target_output_indices_by_segment.get(segment)
+                ),
+            )
+            for segment in SEGMENTS
+        }
+        for candidate_group in candidate_groups:
+            anchor_index = int(candidate_group.sample_indices[0])
+            anchor_sample_id = str(sample_ids[anchor_index])
+            try:
+                group_dense_outputs_by_segment = self._dense_segment_outputs_by_segment_for_candidate_rows(
+                    source_sensor=source_sensor,
+                    segment_indices_by_segment=segment_indices,
+                    query_values_batch=query_values_batch,
+                    query_valid_mask_batch=query_valid_mask_batch,
+                    sample_indices=candidate_group.sample_indices,
+                    k=k,
+                    min_valid_bands=min_valid_bands,
+                    neighbor_estimator=neighbor_estimator,
+                    knn_backend=knn_backend,
+                    knn_eps=knn_eps,
+                    candidate_row_indices=candidate_group.candidate_rows,
+                    hyperspectral_rows_by_segment=hyperspectral_rows_by_segment,
+                    target_output_indices_by_segment=target_output_indices_by_segment,
+                )
+            except SpectralLibraryError as error:
+                raise _attach_sample_context(error, sample_id=anchor_sample_id, sample_index=anchor_index) from error
+            for segment in SEGMENTS:
+                _assign_dense_segment_output_batch_rows(
+                    target=dense_outputs_by_segment[segment],
+                    sample_indices=candidate_group.sample_indices,
+                    source=group_dense_outputs_by_segment[segment],
+                )
+
+        return dense_outputs_by_segment
+
+    def _retrieve_segment_dense_batch(
+        self,
+        *,
+        source_sensor: str,
+        segment: str,
+        query_values: np.ndarray,
+        valid_mask: np.ndarray,
+        k: int,
+        min_valid_bands: int,
+        neighbor_estimator: str,
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
+        candidate_row_indices: np.ndarray,
+        hyperspectral_rows: np.ndarray | None = None,
+        target_output_indices: np.ndarray | None = None,
+    ) -> _DenseSegmentOutputBatch:
+        source_schema = self.get_sensor_schema(source_sensor)
+        query_band_ids = _source_retrieval_band_ids(source_schema, segment)
+        source_matrix = self._validated_source_matrix(source_sensor, segment, query_band_ids)
+        segment_hyperspectral = (
+            self._load_hyperspectral(segment)
+            if hyperspectral_rows is None
+            else np.ascontiguousarray(hyperspectral_rows, dtype=np.float64)
+        )
+        output_width = int(segment_hyperspectral.shape[1])
+        batch_size = int(query_values.shape[0])
+        success = np.zeros(batch_size, dtype=bool)
+        reconstructed = np.zeros((batch_size, output_width), dtype=np.float64)
+        source_fit_rmse = np.zeros(batch_size, dtype=np.float64)
+        valid_band_count = np.zeros(batch_size, dtype=np.int32)
+        reconstructed_scratch = np.empty((batch_size, output_width), dtype=np.float64)
+        source_fit_rmse_scratch = np.empty(batch_size, dtype=np.float64)
+        candidate_matrix = self._candidate_source_matrix_view(source_matrix, candidate_row_indices)
+        valid_patterns, inverse = np.unique(valid_mask, axis=0, return_inverse=True)
+
+        for pattern_index, pattern in enumerate(valid_patterns):
+            batch_indices = np.flatnonzero(inverse == pattern_index)
+            pattern_valid_band_count = int(pattern.sum())
+            valid_band_count[batch_indices] = pattern_valid_band_count
+            if pattern_valid_band_count < min_valid_bands:
+                continue
+
+            if np.all(pattern):
+                valid_indices = slice(None)
+                candidate_valid = candidate_matrix
+                query_group = query_values[batch_indices]
+            else:
+                valid_indices = np.flatnonzero(pattern)
+                candidate_valid = candidate_matrix[:, valid_indices]
+                query_group = query_values[batch_indices][:, valid_indices]
+            query_group = np.asarray(query_group, dtype=np.float64)
+            resolved_valid_indices = None if isinstance(valid_indices, slice) else np.asarray(valid_indices, dtype=np.int64)
+            group_size = int(batch_indices.size)
+            reconstructed_out = reconstructed_scratch[:group_size]
+            source_fit_rmse_out = source_fit_rmse_scratch[:group_size]
+
+            if knn_backend == "scipy_ckdtree" and float(knn_eps) == 0.0:
+                if self._uses_all_candidate_rows(candidate_row_indices) and np.all(pattern):
+                    group_local_indices, group_local_distances = self._query_cached_scipy_ckdtree_local_results(
+                        source_sensor=source_sensor,
+                        segment=segment,
+                        query_band_ids=query_band_ids,
+                        query_values=np.asarray(query_values[batch_indices], dtype=np.float64),
+                        k=min(int(k), int(candidate_row_indices.size)),
+                        knn_eps=knn_eps,
+                    )
+                else:
+                    group_local_indices, group_local_distances = _query_local_scipy_ckdtree_results(
+                        candidate_valid,
+                        query_group,
+                        k=min(int(k), int(candidate_row_indices.size)),
+                        knn_eps=knn_eps,
+                    )
+                reconstructed_batch, source_fit_rmse_batch = _refine_and_combine_neighbor_spectra_batch_accel(
+                    candidate_matrix=candidate_valid,
+                    candidate_row_indices=candidate_row_indices,
+                    source_matrix=source_matrix,
+                    hyperspectral_rows=segment_hyperspectral,
+                    query_values=query_group,
+                    local_candidate_indices=np.asarray(group_local_indices, dtype=np.int64),
+                    local_candidate_distances=np.asarray(group_local_distances, dtype=np.float64),
+                    valid_indices=resolved_valid_indices,
+                    k=k,
+                    neighbor_estimator=neighbor_estimator,
+                    out_reconstructed=reconstructed_out,
+                    out_source_fit_rmse=source_fit_rmse_out,
+                )
+            else:
+                if knn_backend == "scipy_ckdtree" and self._uses_all_candidate_rows(candidate_row_indices) and np.all(pattern):
+                    group_local_indices = self._query_cached_scipy_ckdtree_local_indices(
+                        source_sensor=source_sensor,
+                        segment=segment,
+                        query_band_ids=query_band_ids,
+                        query_values=np.asarray(query_values[batch_indices], dtype=np.float64),
+                        k=min(int(k), int(candidate_row_indices.size)),
+                        knn_eps=knn_eps,
+                    )
+                elif self._can_use_persisted_knn_index(
+                    backend=knn_backend,
+                    source_sensor=source_sensor,
+                    segment=segment,
+                    valid_mask=np.asarray(pattern, dtype=bool),
+                    candidate_row_indices=candidate_row_indices,
+                ):
+                    group_local_indices = self._query_persisted_knn_local_indices(
+                        backend=knn_backend,
+                        source_sensor=source_sensor,
+                        segment=segment,
+                        query_values=np.asarray(query_values[batch_indices], dtype=np.float64),
+                        k=min(int(k), int(candidate_row_indices.size)),
+                        knn_eps=knn_eps,
+                    )
+                else:
+                    group_local_indices = _search_local_neighbor_indices(
+                        candidate_valid,
+                        query_group,
+                        k=k,
+                        knn_backend=knn_backend,
+                        knn_eps=knn_eps,
+                    )
+                reconstructed_batch, source_fit_rmse_batch = _refine_and_combine_neighbor_spectra_batch_accel(
+                    candidate_matrix=candidate_valid,
+                    candidate_row_indices=candidate_row_indices,
+                    source_matrix=source_matrix,
+                    hyperspectral_rows=segment_hyperspectral,
+                    query_values=query_group,
+                    local_candidate_indices=None
+                    if group_local_indices is None
+                    else np.asarray(group_local_indices, dtype=np.int64),
+                    local_candidate_distances=None,
+                    valid_indices=resolved_valid_indices,
+                    k=k,
+                    neighbor_estimator=neighbor_estimator,
+                    out_reconstructed=reconstructed_out,
+                    out_source_fit_rmse=source_fit_rmse_out,
+                )
+            success[batch_indices] = True
+            reconstructed[batch_indices] = np.asarray(reconstructed_batch, dtype=np.float64)
+            source_fit_rmse[batch_indices] = np.asarray(source_fit_rmse_batch, dtype=np.float64)
+
+        return _DenseSegmentOutputBatch(
+            success=success,
+            reconstructed=reconstructed,
+            confidence_score=np.zeros(batch_size, dtype=np.float64),
+            source_fit_rmse=source_fit_rmse,
+            valid_band_count=valid_band_count,
+            target_output_indices=(
+                None if target_output_indices is None else np.asarray(target_output_indices, dtype=np.int64)
+            ),
+        )
+
+    def _refine_neighbor_rows_batch(
+        self,
+        *,
+        source_sensor: str,
+        segment: str,
+        query_band_ids: tuple[str, ...],
+        query_values: np.ndarray,
+        query_group: np.ndarray,
+        valid_pattern: np.ndarray,
+        candidate_row_indices: np.ndarray,
+        candidate_valid: np.ndarray,
+        k: int,
+        knn_backend: str,
+        knn_eps: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        group_local_distances: np.ndarray | None = None
+        if knn_backend == "scipy_ckdtree" and float(knn_eps) == 0.0:
+            if self._uses_all_candidate_rows(candidate_row_indices) and np.all(valid_pattern):
+                group_local_indices, group_local_distances = self._query_cached_scipy_ckdtree_local_results(
+                    source_sensor=source_sensor,
+                    segment=segment,
+                    query_band_ids=query_band_ids,
+                    query_values=query_values,
+                    k=min(int(k), int(candidate_row_indices.size)),
+                    knn_eps=knn_eps,
+                )
+            else:
+                group_local_indices, group_local_distances = _query_local_scipy_ckdtree_results(
+                    candidate_valid,
+                    query_group,
+                    k=min(int(k), int(candidate_row_indices.size)),
+                    knn_eps=knn_eps,
+                )
+        elif self._can_use_persisted_knn_index(
+            backend=knn_backend,
+            source_sensor=source_sensor,
+            segment=segment,
+            valid_mask=np.asarray(valid_pattern, dtype=bool),
+            candidate_row_indices=candidate_row_indices,
+        ):
+            group_local_indices = self._query_persisted_knn_local_indices(
+                backend=knn_backend,
+                source_sensor=source_sensor,
+                segment=segment,
+                query_values=query_values,
+                k=min(int(k), int(candidate_row_indices.size)),
+                knn_eps=knn_eps,
+            )
+        else:
+            group_local_indices = _search_local_neighbor_indices(
+                candidate_valid,
+                query_group,
+                k=k,
+                knn_backend=knn_backend,
+                knn_eps=knn_eps,
+            )
+
+        return _refine_neighbor_rows_batch_accel(
+            candidate_matrix=candidate_valid,
+            query_values=query_group,
+            candidate_row_indices=candidate_row_indices,
+            local_candidate_indices=None
+            if group_local_indices is None
+            else np.asarray(group_local_indices, dtype=np.int64),
+            local_candidate_distances=None
+            if group_local_distances is None
+            else np.asarray(group_local_distances, dtype=np.float64),
+            k=k,
+        )
+
+    def _batched_result_materialization(
+        self,
+        *,
+        target_sensor: str | None,
+        segment_batches_by_segment: Mapping[str, _RichSegmentBatch],
+    ) -> _BatchedResultMaterialization:
+        vnir_batch = segment_batches_by_segment["vnir"].dense_output
+        swir_batch = segment_batches_by_segment["swir"].dense_output
+        confidence_scores = self._segment_confidence_scores_from_dense_batches(
+            vnir_batch=vnir_batch,
+            swir_batch=swir_batch,
+        )
+
+        reconstructed_full_batch: np.ndarray | None = None
+        full_success = np.asarray(vnir_batch.success & swir_batch.success, dtype=bool)
+        if np.any(full_success):
+            reconstructed_full_batch = np.empty((vnir_batch.reconstructed.shape[0], FULL_WAVELENGTH_COUNT), dtype=np.float64)
+            reconstructed_full_batch[full_success] = _assemble_full_spectrum_batch(
+                vnir_batch.reconstructed[full_success],
+                swir_batch.reconstructed[full_success],
+            )
+
+        target_rows: np.ndarray | None = None
+        target_status_codes: np.ndarray | None = None
+        target_band_ids: tuple[str, ...] = ()
+        if target_sensor:
+            projection = self._target_sensor_projection(target_sensor)
+            target_rows, target_status_codes = _finalize_target_sensor_batch_accel(
+                vnir_reconstructed=vnir_batch.reconstructed[:, projection.vnir_support_indices],
+                swir_reconstructed=swir_batch.reconstructed[:, projection.swir_support_indices],
+                vnir_success=vnir_batch.success,
+                swir_success=swir_batch.success,
+                vnir_response_matrix=projection.vnir_response_matrix,
+                swir_response_matrix=projection.swir_response_matrix,
+                vnir_output_indices=projection.vnir_output_indices,
+                swir_output_indices=projection.swir_output_indices,
+                output_width=projection.output_width,
+            )
+            target_band_ids = self.get_sensor_schema(target_sensor).band_ids()
+
+        return _BatchedResultMaterialization(
+            vnir_batch=vnir_batch,
+            swir_batch=swir_batch,
+            confidence_scores=np.asarray(confidence_scores, dtype=np.float64),
+            reconstructed_full_batch=reconstructed_full_batch,
+            target_rows=None if target_rows is None else np.asarray(target_rows, dtype=np.float64),
+            target_status_codes=None if target_status_codes is None else np.asarray(target_status_codes, dtype=np.int32),
+            target_band_ids=target_band_ids,
+        )
+
+    def _mapping_results_from_segment_retrievals_batch(
+        self,
+        *,
+        sample_ids: Sequence[str],
+        source_sensor: str,
+        target_sensor: str | None,
+        output_mode: str,
+        k: int,
+        neighbor_estimator: str,
+        knn_backend: str,
+        knn_eps: float,
+        segment_batches_by_segment: Mapping[str, _RichSegmentBatch],
+    ) -> tuple[MappingResult, ...]:
+        materialized = self._batched_result_materialization(
+            target_sensor=target_sensor,
+            segment_batches_by_segment=segment_batches_by_segment,
+        )
+        reconstructed_wavelength_nm: np.ndarray | None = None
+        if output_mode == "vnir_spectrum":
+            reconstructed_wavelength_nm = VNIR_WAVELENGTHS.astype(np.float64)
+        elif output_mode == "swir_spectrum":
+            reconstructed_wavelength_nm = SWIR_WAVELENGTHS.astype(np.float64)
+        elif output_mode == "full_spectrum":
+            reconstructed_wavelength_nm = CANONICAL_WAVELENGTHS.astype(np.float64)
+
+        results: list[MappingResult] = []
+        for sample_index, sample_id in enumerate(sample_ids):
+            try:
+                sample_metadata = {
+                    segment: segment_batches_by_segment[segment].metadata[sample_index] for segment in SEGMENTS
+                }
+                segment_outputs: dict[str, np.ndarray] = {}
+                segment_valid_band_counts: dict[str, int] = {}
+                neighbor_ids_by_segment: dict[str, tuple[str, ...]] = {}
+                neighbor_distances_by_segment: dict[str, np.ndarray] = {}
+                diagnostics_segments: dict[str, object] = {}
+                for segment, metadata in sample_metadata.items():
+                    dense_output = segment_batches_by_segment[segment].dense_output
+                    segment_valid_band_counts[segment] = metadata.valid_band_count
+                    neighbor_ids_by_segment[segment] = metadata.neighbor_ids
+                    neighbor_distances_by_segment[segment] = metadata.neighbor_distances
+                    diagnostics_segments[segment] = metadata.diagnostics
+                    if metadata.success:
+                        segment_outputs[segment] = dense_output.reconstructed[sample_index]
+
+                diagnostics: dict[str, object] = {
+                    "source_sensor": source_sensor,
+                    "target_sensor": target_sensor,
+                    "output_mode": output_mode,
+                    "k": k,
+                    "neighbor_estimator": neighbor_estimator,
+                    "knn_backend": knn_backend,
+                    "knn_eps": float(knn_eps),
+                    "segments": diagnostics_segments,
+                    "confidence_score": float(materialized.confidence_scores[sample_index]),
+                }
+                diagnostics["confidence_policy"] = _confidence_policy_payload(float(diagnostics["confidence_score"]))
+
+                reconstructed_vnir = (
+                    materialized.vnir_batch.reconstructed[sample_index]
+                    if materialized.vnir_batch.success[sample_index]
+                    else None
+                )
+                reconstructed_swir = (
+                    materialized.swir_batch.reconstructed[sample_index]
+                    if materialized.swir_batch.success[sample_index]
+                    else None
+                )
+                reconstructed_full = (
+                    None
+                    if materialized.reconstructed_full_batch is None
+                    or not (materialized.vnir_batch.success[sample_index] and materialized.swir_batch.success[sample_index])
+                    else materialized.reconstructed_full_batch[sample_index]
+                )
+
+                if output_mode == "target_sensor" and not target_sensor:
+                    raise MappingInputError("target_sensor is required when output_mode is target_sensor.")
+                if output_mode == "vnir_spectrum" and reconstructed_vnir is None:
+                    raise MappingInputError(
+                        "VNIR reconstruction requires enough valid VNIR source bands.",
+                        context={"diagnostics": diagnostics},
+                    )
+                if output_mode == "swir_spectrum" and reconstructed_swir is None:
+                    raise MappingInputError(
+                        "SWIR reconstruction requires enough valid SWIR source bands.",
+                        context={"diagnostics": diagnostics},
+                    )
+                if output_mode == "full_spectrum" and reconstructed_full is None:
+                    raise MappingInputError(
+                        "Full-spectrum reconstruction requires both VNIR and SWIR segment retrievals.",
+                        context={"diagnostics": diagnostics},
+                    )
+
+                target_reflectance: np.ndarray | None = None
+                target_band_ids: tuple[str, ...] = ()
+                if target_sensor:
+                    assert materialized.target_rows is not None
+                    assert materialized.target_status_codes is not None
+                    target_row = np.asarray(materialized.target_rows[sample_index], dtype=np.float64)
+                    available_mask = np.isfinite(target_row)
+                    if np.any(available_mask):
+                        target_reflectance = np.asarray(target_row[available_mask], dtype=np.float64)
+                        target_band_ids = tuple(
+                            band_id
+                            for band_id, available in zip(materialized.target_band_ids, available_mask)
+                            if bool(available)
+                        )
+                    if output_mode == "target_sensor" and int(materialized.target_status_codes[sample_index]) != 0:
+                        raise MappingInputError(
+                            "Target-sensor mapping could not produce any bands because no target segments were retrievable.",
+                            context={"diagnostics": diagnostics, "target_sensor": target_sensor},
+                        )
+
+                results.append(
+                    MappingResult(
+                        target_reflectance=target_reflectance,
+                        target_band_ids=target_band_ids,
+                        reconstructed_vnir=reconstructed_vnir,
+                        reconstructed_swir=reconstructed_swir,
+                        reconstructed_full_spectrum=reconstructed_full,
+                        reconstructed_wavelength_nm=reconstructed_wavelength_nm,
+                        neighbor_ids_by_segment=neighbor_ids_by_segment,
+                        neighbor_distances_by_segment=neighbor_distances_by_segment,
+                        segment_outputs=segment_outputs,
+                        segment_valid_band_counts=segment_valid_band_counts,
+                        diagnostics=diagnostics,
+                    )
+                )
+            except SpectralLibraryError as error:
+                raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
+        return tuple(results)
 
     def _map_reflectance_internal(
         self,
@@ -2976,6 +4908,7 @@ class SpectralMapper:
         knn_backend: str = "numpy",
         knn_eps: float = 0.0,
         candidate_row_indices: Sequence[int] | None,
+        include_diagnostics: bool = True,
     ) -> MappingResult:
         _validate_mapping_request(
             output_mode,
@@ -3006,6 +4939,7 @@ class SpectralMapper:
                 knn_backend=knn_backend,
                 knn_eps=knn_eps,
                 candidate_row_indices=candidate_rows,
+                include_diagnostics=include_diagnostics,
             )
             segment_retrievals[segment] = retrieval
         return self._build_mapping_result(
@@ -3017,6 +4951,7 @@ class SpectralMapper:
             knn_backend=knn_backend,
             knn_eps=knn_eps,
             segment_retrievals=segment_retrievals,
+            include_diagnostics=include_diagnostics,
         )
 
     def map_reflectance(
@@ -3053,6 +4988,44 @@ class SpectralMapper:
                 exclude_row_ids=exclude_row_ids,
                 exclude_sample_names=exclude_sample_names,
             ),
+            include_diagnostics=False,
+        )
+
+    def map_reflectance_debug(
+        self,
+        *,
+        source_sensor: str,
+        reflectance: Sequence[float] | Mapping[str, float],
+        valid_mask: Sequence[bool] | Mapping[str, bool] | None = None,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        k: int = 10,
+        min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+    ) -> MappingResult:
+        """Map one sample and include neighbor/diagnostic payloads for inspection."""
+
+        return self._map_reflectance_internal(
+            source_sensor=source_sensor,
+            reflectance=reflectance,
+            valid_mask=valid_mask,
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+            candidate_row_indices=self._candidate_rows(
+                None,
+                exclude_row_ids=exclude_row_ids,
+                exclude_sample_names=exclude_sample_names,
+            ),
+            include_diagnostics=True,
         )
 
     def map_reflectance_batch(
@@ -3073,8 +5046,47 @@ class SpectralMapper:
         exclude_sample_names: Sequence[str] | None = None,
         exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
         self_exclude_sample_id: bool = False,
+    ) -> BatchMappingArrayResult:
+        """Map a batch of samples into dense arrays for the default fast path."""
+
+        return self.map_reflectance_batch_arrays(
+            source_sensor=source_sensor,
+            reflectance_rows=reflectance_rows,
+            valid_mask_rows=valid_mask_rows,
+            sample_ids=sample_ids,
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+        )
+
+    def map_reflectance_batch_debug(
+        self,
+        *,
+        source_sensor: str,
+        reflectance_rows: Sequence[Sequence[float] | Mapping[str, float]] | np.ndarray,
+        valid_mask_rows: Sequence[Sequence[bool] | Mapping[str, bool] | None] | np.ndarray | None = None,
+        sample_ids: Sequence[str] | None = None,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        k: int = 10,
+        min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+        exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
+        self_exclude_sample_id: bool = False,
     ) -> BatchMappingResult:
-        """Map a batch of samples, reusing retrieval work when masks align."""
+        """Map a batch of samples and return rich per-sample debug payloads."""
 
         _validate_mapping_request(
             output_mode,
@@ -3091,94 +5103,950 @@ class SpectralMapper:
             exclude_row_ids_per_sample,
             sample_ids=normalized_sample_ids,
         )
-
-        source_schema = self.get_sensor_schema(source_sensor)
-        query_values_batch = np.empty((len(batch_rows), len(source_schema.bands)), dtype=np.float64)
-        query_valid_mask_batch = np.empty((len(batch_rows), len(source_schema.bands)), dtype=bool)
-        for sample_index, (sample_id, reflectance, valid_mask) in enumerate(
-            zip(normalized_sample_ids, batch_rows, batch_valid_masks)
-        ):
-            try:
-                query_values, query_valid_mask = self._coerce_query(source_schema, reflectance, valid_mask)
-            except SpectralLibraryError as error:
-                raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
-            query_values_batch[sample_index] = query_values
-            query_valid_mask_batch[sample_index] = query_valid_mask
-
-        if exclude_row_ids or exclude_sample_names or self_exclude_sample_id or any(normalized_exclude_row_ids_per_sample):
-            base_candidate_rows = self._candidate_rows(
-                None,
-                exclude_row_ids=exclude_row_ids,
-                exclude_sample_names=exclude_sample_names,
-            )
-            results: list[MappingResult] = []
-            for sample_index, (sample_id, reflectance, valid_mask, sample_exclude_row_id) in enumerate(
-                zip(normalized_sample_ids, batch_rows, batch_valid_masks, normalized_exclude_row_ids_per_sample)
-            ):
-                try:
-                    candidate_rows = base_candidate_rows
-                    if sample_exclude_row_id:
-                        candidate_rows = self._candidate_rows(candidate_rows, exclude_row_ids=[sample_exclude_row_id])
-                    if self_exclude_sample_id and self.has_prepared_sample_name(sample_id):
-                        candidate_rows = self._candidate_rows(candidate_rows, exclude_sample_names=[sample_id])
-                    results.append(
-                        self._map_reflectance_internal(
-                            source_sensor=source_sensor,
-                            reflectance=reflectance,
-                            valid_mask=valid_mask,
-                            output_mode=output_mode,
-                            target_sensor=target_sensor,
-                            k=k,
-                            min_valid_bands=min_valid_bands,
-                            neighbor_estimator=neighbor_estimator,
-                            knn_backend=knn_backend,
-                            knn_eps=knn_eps,
-                            candidate_row_indices=candidate_rows,
-                        )
-                    )
-                except SpectralLibraryError as error:
-                    raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
-            return BatchMappingResult(sample_ids=normalized_sample_ids, results=tuple(results))
-
-        candidate_rows = self._candidate_rows(None)
-        segment_retrievals_by_segment: dict[str, tuple[_SegmentRetrieval, ...]] = {}
-        for segment in SEGMENTS:
-            segment_indices = list(_source_retrieval_band_indices(source_schema, segment))
-            segment_retrievals_by_segment[segment] = self._retrieve_segment_batch(
+        _, query_values_batch, query_valid_mask_batch = self._coerced_batch_query_arrays(
+            source_sensor=source_sensor,
+            batch_rows=batch_rows,
+            batch_valid_masks=batch_valid_masks,
+            sample_ids=normalized_sample_ids,
+        )
+        segment_batches_by_segment = self._grouped_segment_retrievals(
+            source_sensor=source_sensor,
+            sample_ids=normalized_sample_ids,
+            query_values_batch=query_values_batch,
+            query_valid_mask_batch=query_valid_mask_batch,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=normalized_exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+            include_confidence=True,
+        )
+        return BatchMappingResult(
+            sample_ids=normalized_sample_ids,
+            results=self._mapping_results_from_segment_retrievals_batch(
+                sample_ids=normalized_sample_ids,
                 source_sensor=source_sensor,
-                segment=segment,
-                query_values=query_values_batch[:, segment_indices],
-                valid_mask=query_valid_mask_batch[:, segment_indices],
+                target_sensor=target_sensor,
+                output_mode=output_mode,
+                k=k,
+                neighbor_estimator=neighbor_estimator,
+                knn_backend=knn_backend,
+                knn_eps=knn_eps,
+                segment_batches_by_segment=segment_batches_by_segment,
+            ),
+        )
+
+    def map_reflectance_batch_arrays(
+        self,
+        *,
+        source_sensor: str,
+        reflectance_rows: Sequence[Sequence[float] | Mapping[str, float]] | np.ndarray,
+        valid_mask_rows: Sequence[Sequence[bool] | Mapping[str, bool] | None] | np.ndarray | None = None,
+        sample_ids: Sequence[str] | None = None,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        k: int = 10,
+        min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+        exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
+        self_exclude_sample_id: bool = False,
+        out: np.ndarray | None = None,
+        source_fit_rmse_out: np.ndarray | None = None,
+    ) -> BatchMappingArrayResult:
+        """Map a batch of samples into dense arrays without per-sample result objects."""
+
+        _, output_axis_name, output_axis_values = self._batch_output_layout(
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+        )
+        normalized_sample_ids, output_rows, source_fit_rmse, output_columns = self._map_reflectance_batch_output_arrays(
+            source_sensor=source_sensor,
+            reflectance_rows=reflectance_rows,
+            valid_mask_rows=valid_mask_rows,
+            sample_ids=sample_ids,
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+            out=out,
+            source_fit_rmse_out=source_fit_rmse_out,
+        )
+        resolved_out = self._validated_output_buffer(
+            buffer=out,
+            expected_shape=tuple(output_rows.shape),
+            name="out",
+        )
+        if resolved_out is not None and output_rows is not resolved_out:
+            np.copyto(resolved_out, output_rows)
+            output_rows = resolved_out
+        resolved_source_fit_out = self._validated_output_buffer(
+            buffer=source_fit_rmse_out,
+            expected_shape=tuple(source_fit_rmse.shape),
+            name="source_fit_rmse_out",
+        )
+        if resolved_source_fit_out is not None and source_fit_rmse is not resolved_source_fit_out:
+            np.copyto(resolved_source_fit_out, source_fit_rmse)
+            source_fit_rmse = resolved_source_fit_out
+        wavelength_nm = None
+        if output_axis_name == "wavelength_nm":
+            wavelength_nm = np.array(output_axis_values, dtype=np.int32)
+        return BatchMappingArrayResult(
+            sample_ids=normalized_sample_ids,
+            reflectance=np.asarray(output_rows, dtype=np.float64),
+            source_fit_rmse=np.asarray(source_fit_rmse, dtype=np.float64),
+            output_columns=output_columns,
+            wavelength_nm=wavelength_nm,
+        )
+
+    def map_reflectance_batch_ndarray(
+        self,
+        *,
+        source_sensor: str,
+        reflectance_rows: np.ndarray,
+        valid_mask_rows: np.ndarray | None = None,
+        sample_ids: Sequence[str] | None = None,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        k: int = 10,
+        min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+        exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
+        self_exclude_sample_id: bool = False,
+        out: np.ndarray | None = None,
+        source_fit_rmse_out: np.ndarray | None = None,
+    ) -> BatchMappingArrayResult:
+        """Map a strict ndarray batch in source-band order, optionally reusing output buffers."""
+
+        return self.map_reflectance_batch_arrays_ndarray(
+            source_sensor=source_sensor,
+            reflectance_rows=reflectance_rows,
+            valid_mask_rows=valid_mask_rows,
+            sample_ids=sample_ids,
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+            out=out,
+            source_fit_rmse_out=source_fit_rmse_out,
+        )
+
+    def map_reflectance_batch_arrays_ndarray(
+        self,
+        *,
+        source_sensor: str,
+        reflectance_rows: np.ndarray,
+        valid_mask_rows: np.ndarray | None = None,
+        sample_ids: Sequence[str] | None = None,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        k: int = 10,
+        min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+        exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
+        self_exclude_sample_id: bool = False,
+        out: np.ndarray | None = None,
+        source_fit_rmse_out: np.ndarray | None = None,
+    ) -> BatchMappingArrayResult:
+        """Map a strict ndarray batch in source-band order, optionally reusing output buffers."""
+
+        _validate_mapping_request(
+            output_mode,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+        )
+        _, query_values_batch, query_valid_mask_batch = self._coerced_ndarray_batch_query_arrays(
+            source_sensor=source_sensor,
+            reflectance_rows=reflectance_rows,
+            valid_mask_rows=valid_mask_rows,
+        )
+        normalized_sample_ids = _normalized_sample_ids(sample_ids, sample_count=int(query_values_batch.shape[0]))
+        normalized_exclude_row_ids_per_sample = self._normalized_batch_exclude_row_ids(
+            exclude_row_ids_per_sample,
+            sample_ids=normalized_sample_ids,
+        )
+        _, output_axis_name, output_axis_values = self._batch_output_layout(
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+        )
+        output_rows, source_fit_rmse, output_columns = self._map_reflectance_batch_output_arrays_from_coerced(
+            source_sensor=source_sensor,
+            normalized_sample_ids=normalized_sample_ids,
+            query_values_batch=query_values_batch,
+            query_valid_mask_batch=query_valid_mask_batch,
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=normalized_exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+            out=out,
+            source_fit_rmse_out=source_fit_rmse_out,
+        )
+        resolved_out = self._validated_output_buffer(
+            buffer=out,
+            expected_shape=tuple(output_rows.shape),
+            name="out",
+        )
+        if resolved_out is not None and output_rows is not resolved_out:
+            np.copyto(resolved_out, output_rows)
+            output_rows = resolved_out
+        resolved_source_fit_out = self._validated_output_buffer(
+            buffer=source_fit_rmse_out,
+            expected_shape=tuple(source_fit_rmse.shape),
+            name="source_fit_rmse_out",
+        )
+        if resolved_source_fit_out is not None and source_fit_rmse is not resolved_source_fit_out:
+            np.copyto(resolved_source_fit_out, source_fit_rmse)
+            source_fit_rmse = resolved_source_fit_out
+        wavelength_nm = None
+        if output_axis_name == "wavelength_nm":
+            wavelength_nm = np.array(output_axis_values, dtype=np.int32)
+        return BatchMappingArrayResult(
+            sample_ids=normalized_sample_ids,
+            reflectance=output_rows,
+            source_fit_rmse=source_fit_rmse,
+            output_columns=output_columns,
+            wavelength_nm=wavelength_nm,
+        )
+
+    def _batch_output_layout(
+        self,
+        *,
+        output_mode: str,
+        target_sensor: str | None,
+    ) -> tuple[tuple[str, ...], str, np.ndarray]:
+        if output_mode == "target_sensor":
+            if not target_sensor:
+                raise MappingInputError("target_sensor is required when output_mode is target_sensor.")
+            band_ids = self.get_sensor_schema(target_sensor).band_ids()
+            axis_values = np.asarray(band_ids, dtype=object)
+            return tuple(band_ids), "band_id", axis_values
+        if output_mode == "vnir_spectrum":
+            return (
+                tuple(f"nm_{int(wavelength_nm)}" for wavelength_nm in VNIR_WAVELENGTHS),
+                "wavelength_nm",
+                np.asarray(VNIR_WAVELENGTHS, dtype=np.int32),
+            )
+        if output_mode == "swir_spectrum":
+            return (
+                tuple(f"nm_{int(wavelength_nm)}" for wavelength_nm in SWIR_WAVELENGTHS),
+                "wavelength_nm",
+                np.asarray(SWIR_WAVELENGTHS, dtype=np.int32),
+            )
+        if output_mode == "full_spectrum":
+            return (
+                tuple(f"nm_{int(wavelength_nm)}" for wavelength_nm in CANONICAL_WAVELENGTHS),
+                "wavelength_nm",
+                np.asarray(CANONICAL_WAVELENGTHS, dtype=np.int32),
+            )
+        _ensure_supported_output_mode(output_mode)
+        raise MappingInputError(
+            "Unsupported output_mode.",
+            context={"output_mode": output_mode, "supported_output_modes": list(SUPPORTED_OUTPUT_MODES)},
+        )
+
+    def _resolved_batch_output_chunk_size(
+        self,
+        *,
+        source_sensor: str,
+        output_width: int,
+        chunk_size: int | None,
+    ) -> int:
+        return _normalized_linear_mapper_chunk_size(
+            chunk_size,
+            input_width=len(self.get_sensor_schema(source_sensor).bands),
+            output_width=output_width,
+            dtype=np.dtype(np.float64),
+        )
+
+    def _open_batch_zarr_export(
+        self,
+        *,
+        zarr_path: Path,
+        source_sensor: str,
+        output_mode: str,
+        target_sensor: str | None,
+        chunk_size: int,
+        k: int,
+        min_valid_bands: int,
+        neighbor_estimator: str,
+        knn_backend: str,
+        knn_eps: float,
+    ) -> _ZarrBatchExport:
+        output_columns, axis_name, axis_values = self._batch_output_layout(
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+        )
+        output_width = int(axis_values.shape[0])
+        zarr = _load_zarr_module()
+        compressor = _default_zarr_compressor()
+        utf8_codec = _zarr_utf8_codec()
+        output_store = Path(zarr_path)
+        output_store.parent.mkdir(parents=True, exist_ok=True)
+        root = zarr.open_group(str(output_store), mode="w")
+        reflectance_dataset = root.create_dataset(
+            "reflectance",
+            shape=(0, output_width),
+            chunks=(int(chunk_size), output_width),
+            dtype="f8",
+            overwrite=True,
+            compressor=compressor,
+        )
+        source_fit_dataset = root.create_dataset(
+            "source_fit_rmse",
+            shape=(0,),
+            chunks=(int(chunk_size),),
+            dtype="f8",
+            overwrite=True,
+            compressor=compressor,
+        )
+        sample_id_dataset = root.create_dataset(
+            "sample_id",
+            shape=(0,),
+            chunks=(int(chunk_size),),
+            dtype=object,
+            object_codec=utf8_codec,
+            overwrite=True,
+            compressor=compressor,
+        )
+        if axis_name == "band_id":
+            root.create_dataset(
+                axis_name,
+                data=np.asarray(axis_values, dtype=object),
+                dtype=object,
+                object_codec=utf8_codec,
+                overwrite=True,
+                compressor=compressor,
+            )
+        else:
+            root.create_dataset(
+                axis_name,
+                data=np.asarray(axis_values),
+                overwrite=True,
+                compressor=compressor,
+            )
+        root.attrs.update(
+            {
+                "format": "spectral_library.batch_mapping.zarr",
+                "source_sensor": source_sensor,
+                "target_sensor": target_sensor,
+                "output_mode": output_mode,
+                "sample_count": 0,
+                "output_width": output_width,
+                "output_columns": list(output_columns),
+                "chunk_size": int(chunk_size),
+                "neighbor_estimator": neighbor_estimator,
+                "knn_backend": knn_backend,
+                "knn_eps": float(knn_eps),
+                "k": int(k),
+                "min_valid_bands": int(min_valid_bands),
+                "sample_id_encoding": "utf-8",
+            }
+        )
+        return _ZarrBatchExport(
+            root=root,
+            reflectance_dataset=reflectance_dataset,
+            source_fit_rmse_dataset=source_fit_dataset,
+            sample_id_dataset=sample_id_dataset,
+            output_columns=output_columns,
+            output_width=output_width,
+            chunk_size=int(chunk_size),
+        )
+
+    def _append_batch_output_arrays_to_zarr(
+        self,
+        export: _ZarrBatchExport,
+        *,
+        sample_ids: Sequence[str],
+        output_chunk: np.ndarray,
+        source_fit_chunk: np.ndarray,
+    ) -> int:
+        current_count = int(export.reflectance_dataset.shape[0])
+        append_count = int(len(sample_ids))
+        next_count = current_count + append_count
+        normalized_output_chunk = np.asarray(output_chunk, dtype=np.float64)
+        normalized_source_fit_chunk = np.asarray(source_fit_chunk, dtype=np.float64)
+        if normalized_output_chunk.shape != (append_count, export.output_width):
+            raise MappingInputError(
+                "output_chunk shape must match the append count and configured output width.",
+                context={"expected_shape": [append_count, export.output_width], "actual_shape": list(normalized_output_chunk.shape)},
+            )
+        if normalized_source_fit_chunk.shape != (append_count,):
+            raise MappingInputError(
+                "source_fit_chunk must be one-dimensional and aligned to sample_ids.",
+                context={"expected_shape": [append_count], "actual_shape": list(normalized_source_fit_chunk.shape)},
+            )
+        export.reflectance_dataset.resize((next_count, export.output_width))
+        export.source_fit_rmse_dataset.resize((next_count,))
+        export.sample_id_dataset.resize((next_count,))
+        export.reflectance_dataset[current_count:next_count, :] = normalized_output_chunk
+        export.source_fit_rmse_dataset[current_count:next_count] = normalized_source_fit_chunk
+        export.sample_id_dataset[current_count:next_count] = np.asarray(sample_ids, dtype=object)
+        export.root.attrs["sample_count"] = next_count
+        return next_count
+
+    def _mapping_result_output_row(
+        self,
+        result: MappingResult,
+        *,
+        output_mode: str,
+        target_band_index: Mapping[str, int],
+        output_width: int,
+    ) -> np.ndarray:
+        row = np.full(int(output_width), np.nan, dtype=np.float64)
+        if output_mode == "target_sensor":
+            if result.target_reflectance is None:
+                raise SpectralLibraryError("invalid_result", "Batch mapping result is missing target_reflectance.")
+            for band_id, reflectance in zip(result.target_band_ids, result.target_reflectance):
+                if band_id not in target_band_index:
+                    raise SpectralLibraryError(
+                        "invalid_result",
+                        "Batch mapping result emitted an unexpected target band.",
+                        context={"band_id": band_id},
+                    )
+                row[int(target_band_index[band_id])] = float(reflectance)
+            return row
+
+        if output_mode == "vnir_spectrum":
+            reflectance = result.reconstructed_vnir
+        elif output_mode == "swir_spectrum":
+            reflectance = result.reconstructed_swir
+        else:
+            reflectance = result.reconstructed_full_spectrum
+        if reflectance is None:
+            raise SpectralLibraryError(
+                "invalid_result",
+                "Batch mapping result is missing reconstructed spectral output.",
+                context={"output_mode": output_mode},
+            )
+        if len(reflectance) != int(output_width):
+            raise SpectralLibraryError(
+                "invalid_result",
+                "Batch mapping result emitted a spectral output with the wrong width.",
+                context={"output_mode": output_mode, "expected_length": int(output_width), "actual_length": len(reflectance)},
+            )
+        row[:] = np.asarray(reflectance, dtype=np.float64)
+        return row
+
+    def _dense_segment_output_batch(
+        self,
+        *,
+        segment: str,
+        retrievals: Sequence[_SegmentRetrieval],
+    ) -> _DenseSegmentOutputBatch:
+        output_width = int(SEGMENT_WAVELENGTHS[segment].size)
+        batch_size = len(retrievals)
+        success = np.zeros(batch_size, dtype=bool)
+        reconstructed = np.zeros((batch_size, output_width), dtype=np.float64)
+        confidence_score = np.zeros(batch_size, dtype=np.float64)
+        source_fit_rmse = np.zeros(batch_size, dtype=np.float64)
+        valid_band_count = np.zeros(batch_size, dtype=np.int32)
+
+        for batch_index, retrieval in enumerate(retrievals):
+            valid_band_count[batch_index] = int(retrieval.valid_band_count)
+            if not retrieval.success or retrieval.reconstructed is None:
+                continue
+            row = np.asarray(retrieval.reconstructed, dtype=np.float64)
+            if row.shape != (output_width,):
+                raise SpectralLibraryError(
+                    "invalid_result",
+                    "Batch mapping result emitted a spectral output with the wrong width.",
+                    context={
+                        "segment": segment,
+                        "expected_length": output_width,
+                        "actual_length": int(row.shape[0]),
+                    },
+                )
+            success[batch_index] = True
+            reconstructed[batch_index] = row
+            if retrieval.confidence_score is not None:
+                confidence_score[batch_index] = float(retrieval.confidence_score)
+            if retrieval.source_fit_rmse is not None:
+                source_fit_rmse[batch_index] = float(retrieval.source_fit_rmse)
+
+        return _DenseSegmentOutputBatch(
+            success=success,
+            reconstructed=reconstructed,
+            confidence_score=confidence_score,
+            source_fit_rmse=source_fit_rmse,
+            valid_band_count=valid_band_count,
+        )
+
+    def _segment_confidence_scores_from_dense_batches(
+        self,
+        *,
+        vnir_batch: _DenseSegmentOutputBatch,
+        swir_batch: _DenseSegmentOutputBatch,
+    ) -> np.ndarray:
+        vnir_weights = np.where(vnir_batch.success, np.maximum(vnir_batch.valid_band_count, 1), 0).astype(np.float64)
+        swir_weights = np.where(swir_batch.success, np.maximum(swir_batch.valid_band_count, 1), 0).astype(np.float64)
+        total_weights = vnir_weights + swir_weights
+        numerator = vnir_weights * vnir_batch.confidence_score + swir_weights * swir_batch.confidence_score
+        confidence_scores = np.zeros(vnir_weights.shape[0], dtype=np.float64)
+        np.divide(numerator, total_weights, out=confidence_scores, where=total_weights > 0)
+        return confidence_scores
+
+    def _segment_source_fit_rmse_from_dense_batches(
+        self,
+        *,
+        vnir_batch: _DenseSegmentOutputBatch,
+        swir_batch: _DenseSegmentOutputBatch,
+    ) -> np.ndarray:
+        vnir_weights = np.where(vnir_batch.success, np.maximum(vnir_batch.valid_band_count, 1), 0).astype(np.float64)
+        swir_weights = np.where(swir_batch.success, np.maximum(swir_batch.valid_band_count, 1), 0).astype(np.float64)
+        total_weights = vnir_weights + swir_weights
+        numerator = vnir_weights * vnir_batch.source_fit_rmse + swir_weights * swir_batch.source_fit_rmse
+        source_fit_rmse = np.zeros(vnir_weights.shape[0], dtype=np.float64)
+        np.divide(numerator, total_weights, out=source_fit_rmse, where=total_weights > 0)
+        return source_fit_rmse
+
+    def _finalize_dense_batch_outputs(
+        self,
+        *,
+        dense_outputs_by_segment: Mapping[str, _DenseSegmentOutputBatch],
+        output_mode: str,
+        target_sensor: str | None,
+        sample_ids: Sequence[str],
+        sample_indices: Sequence[int],
+        out: np.ndarray | None = None,
+        source_fit_rmse_out: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        vnir_batch = dense_outputs_by_segment["vnir"]
+        swir_batch = dense_outputs_by_segment["swir"]
+        source_fit_rmse = self._segment_source_fit_rmse_from_dense_batches(
+            vnir_batch=vnir_batch,
+            swir_batch=swir_batch,
+        )
+        resolved_source_fit_rmse_out = self._reusable_output_buffer(
+            buffer=source_fit_rmse_out,
+            expected_shape=tuple(source_fit_rmse.shape),
+            name="source_fit_rmse_out",
+        )
+        if resolved_source_fit_rmse_out is not None:
+            np.copyto(resolved_source_fit_rmse_out, source_fit_rmse)
+            source_fit_rmse = resolved_source_fit_rmse_out
+
+        def _raise_first_failure(failure_mask: np.ndarray, *, status_codes: np.ndarray | None = None) -> None:
+            if not np.any(failure_mask):
+                return
+            local_index = int(np.flatnonzero(failure_mask)[0])
+            self._raise_batch_output_error(
+                output_mode=output_mode,
+                sample_id=str(sample_ids[local_index]),
+                sample_index=int(sample_indices[local_index]),
+                target_sensor=target_sensor,
+                status_code=None if status_codes is None else int(status_codes[local_index]),
+            )
+
+        if output_mode == "vnir_spectrum":
+            _raise_first_failure(~vnir_batch.success)
+            return np.asarray(vnir_batch.reconstructed, dtype=np.float64), source_fit_rmse
+        if output_mode == "swir_spectrum":
+            _raise_first_failure(~swir_batch.success)
+            return np.asarray(swir_batch.reconstructed, dtype=np.float64), source_fit_rmse
+        if output_mode == "full_spectrum":
+            _raise_first_failure(~(vnir_batch.success & swir_batch.success))
+            return _assemble_full_spectrum_batch(vnir_batch.reconstructed, swir_batch.reconstructed), source_fit_rmse
+
+        if not target_sensor:
+            raise MappingInputError("target_sensor is required when output_mode is target_sensor.")
+        projection = self._target_sensor_projection(target_sensor)
+        if vnir_batch.target_output_indices is not None and swir_batch.target_output_indices is not None:
+            resolved_out = self._reusable_output_buffer(
+                buffer=out,
+                expected_shape=(int(vnir_batch.reconstructed.shape[0]), int(projection.output_width)),
+                name="out",
+            )
+            status_codes_out = None if resolved_out is None else np.empty(vnir_batch.reconstructed.shape[0], dtype=np.int32)
+            output_rows, status_codes = _stitch_target_sensor_segment_rows(
+                vnir_rows=vnir_batch.reconstructed,
+                swir_rows=swir_batch.reconstructed,
+                vnir_success=vnir_batch.success,
+                swir_success=swir_batch.success,
+                vnir_output_indices=vnir_batch.target_output_indices,
+                swir_output_indices=swir_batch.target_output_indices,
+                output_width=projection.output_width,
+                out_rows=resolved_out,
+                out_status_codes=status_codes_out,
+            )
+            _raise_first_failure(status_codes != 0, status_codes=status_codes)
+            return np.asarray(output_rows, dtype=np.float64), source_fit_rmse
+        vnir_reconstructed = (
+            vnir_batch.reconstructed
+            if vnir_batch.reconstructed.shape[1] == projection.vnir_response_matrix.shape[0]
+            else vnir_batch.reconstructed[:, projection.vnir_support_indices]
+        )
+        swir_reconstructed = (
+            swir_batch.reconstructed
+            if swir_batch.reconstructed.shape[1] == projection.swir_response_matrix.shape[0]
+            else swir_batch.reconstructed[:, projection.swir_support_indices]
+        )
+        output_rows, status_codes = _finalize_target_sensor_batch_accel(
+            vnir_reconstructed=vnir_reconstructed,
+            swir_reconstructed=swir_reconstructed,
+            vnir_success=vnir_batch.success,
+            swir_success=swir_batch.success,
+            vnir_response_matrix=projection.vnir_response_matrix,
+            swir_response_matrix=projection.swir_response_matrix,
+            vnir_output_indices=projection.vnir_output_indices,
+            swir_output_indices=projection.swir_output_indices,
+            output_width=projection.output_width,
+        )
+        status_codes = np.asarray(status_codes, dtype=np.int32)
+        _raise_first_failure(status_codes != 0, status_codes=status_codes)
+        return np.asarray(output_rows, dtype=np.float64), source_fit_rmse
+
+    def _raise_batch_output_error(
+        self,
+        *,
+        output_mode: str,
+        sample_id: str,
+        sample_index: int,
+        target_sensor: str | None,
+        status_code: int | None = None,
+    ) -> None:
+        if output_mode == "target_sensor":
+            if status_code is None or int(status_code) == 1:
+                error = MappingInputError(
+                    "Target-sensor mapping could not produce any bands because no target segments were retrievable.",
+                    context={"target_sensor": target_sensor},
+                )
+            else:
+                error = MappingInputError(
+                    "Target-sensor mapping emitted an unexpected batch finalization status.",
+                    context={"target_sensor": target_sensor, "status_code": int(status_code)},
+                )
+        elif output_mode == "vnir_spectrum":
+            error = MappingInputError("VNIR reconstruction requires enough valid VNIR source bands.")
+        elif output_mode == "swir_spectrum":
+            error = MappingInputError("SWIR reconstruction requires enough valid SWIR source bands.")
+        else:
+            error = MappingInputError("Full-spectrum reconstruction requires both VNIR and SWIR segment retrievals.")
+        raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index)
+
+    def _map_reflectance_batch_output_arrays_from_coerced(
+        self,
+        *,
+        source_sensor: str,
+        normalized_sample_ids: tuple[str, ...],
+        query_values_batch: np.ndarray,
+        query_valid_mask_batch: np.ndarray,
+        output_mode: str,
+        target_sensor: str | None,
+        k: int,
+        min_valid_bands: int,
+        neighbor_estimator: str,
+        knn_backend: str,
+        knn_eps: float,
+        exclude_row_ids: Sequence[str] | None,
+        exclude_sample_names: Sequence[str] | None,
+        exclude_row_ids_per_sample: Sequence[str | None],
+        self_exclude_sample_id: bool,
+        out: np.ndarray | None = None,
+        source_fit_rmse_out: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, tuple[str, ...]]:
+        output_columns, _, _ = self._batch_output_layout(
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+        )
+        projection = None if output_mode != "target_sensor" else self._target_sensor_projection(str(target_sensor))
+        hyperspectral_rows_by_segment = None
+        target_output_indices_by_segment = None
+        if projection is not None:
+            hyperspectral_rows_by_segment = {
+                "vnir": projection.vnir_target_rows,
+                "swir": projection.swir_target_rows,
+            }
+            target_output_indices_by_segment = {
+                "vnir": projection.vnir_output_indices,
+                "swir": projection.swir_output_indices,
+            }
+        dense_outputs_by_segment = self._grouped_dense_segment_outputs(
+            source_sensor=source_sensor,
+            sample_ids=normalized_sample_ids,
+            query_values_batch=query_values_batch,
+            query_valid_mask_batch=query_valid_mask_batch,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+            hyperspectral_rows_by_segment=hyperspectral_rows_by_segment,
+            target_output_indices_by_segment=target_output_indices_by_segment,
+        )
+        output_rows, source_fit_rmse = self._finalize_dense_batch_outputs(
+            dense_outputs_by_segment=dense_outputs_by_segment,
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+            sample_ids=normalized_sample_ids,
+            sample_indices=tuple(range(len(normalized_sample_ids))),
+            out=out,
+            source_fit_rmse_out=source_fit_rmse_out,
+        )
+        return np.asarray(output_rows, dtype=np.float64), np.asarray(source_fit_rmse, dtype=np.float64), output_columns
+
+    def _validated_output_buffer(
+        self,
+        *,
+        buffer: np.ndarray | None,
+        expected_shape: tuple[int, ...],
+        name: str,
+    ) -> np.ndarray | None:
+        if buffer is None:
+            return None
+        if not isinstance(buffer, np.ndarray):
+            raise MappingInputError(f"{name} must be a NumPy array when provided.")
+        if buffer.dtype != np.float64:
+            raise MappingInputError(
+                f"{name} must have dtype float64.",
+                context={"name": name, "dtype": str(buffer.dtype)},
+            )
+        if buffer.shape != expected_shape:
+            raise MappingInputError(
+                f"{name} must match the requested batch output shape.",
+                context={"name": name, "expected_shape": list(expected_shape), "actual_shape": list(buffer.shape)},
+            )
+        if not buffer.flags.writeable:
+            raise MappingInputError(f"{name} must be writeable.")
+        return buffer
+
+    def _reusable_output_buffer(
+        self,
+        *,
+        buffer: np.ndarray | None,
+        expected_shape: tuple[int, ...],
+        name: str,
+    ) -> np.ndarray | None:
+        resolved = self._validated_output_buffer(
+            buffer=buffer,
+            expected_shape=expected_shape,
+            name=name,
+        )
+        if resolved is None or not resolved.flags.c_contiguous:
+            return None
+        return resolved
+
+    def _map_reflectance_batch_output_arrays(
+        self,
+        *,
+        source_sensor: str,
+        reflectance_rows: Sequence[Sequence[float] | Mapping[str, float]] | np.ndarray,
+        valid_mask_rows: Sequence[Sequence[bool] | Mapping[str, bool] | None] | np.ndarray | None = None,
+        sample_ids: Sequence[str] | None = None,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        k: int = 10,
+        min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+        exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
+        self_exclude_sample_id: bool = False,
+        out: np.ndarray | None = None,
+        source_fit_rmse_out: np.ndarray | None = None,
+    ) -> tuple[tuple[str, ...], np.ndarray, np.ndarray, tuple[str, ...]]:
+        _validate_mapping_request(
+            output_mode,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+        )
+
+        if isinstance(reflectance_rows, np.ndarray) and (valid_mask_rows is None or isinstance(valid_mask_rows, np.ndarray)):
+            _, query_values_batch, query_valid_mask_batch = self._coerced_ndarray_batch_query_arrays(
+                source_sensor=source_sensor,
+                reflectance_rows=reflectance_rows,
+                valid_mask_rows=None if valid_mask_rows is None else np.asarray(valid_mask_rows, dtype=bool),
+            )
+            normalized_sample_ids = _normalized_sample_ids(sample_ids, sample_count=int(query_values_batch.shape[0]))
+        else:
+            batch_rows = _normalized_batch_rows(reflectance_rows)
+            normalized_sample_ids = _normalized_sample_ids(sample_ids, sample_count=len(batch_rows))
+            batch_valid_masks = _normalized_batch_valid_masks(valid_mask_rows, sample_count=len(batch_rows))
+            _, query_values_batch, query_valid_mask_batch = self._coerced_batch_query_arrays(
+                source_sensor=source_sensor,
+                batch_rows=batch_rows,
+                batch_valid_masks=batch_valid_masks,
+                sample_ids=normalized_sample_ids,
+            )
+        normalized_exclude_row_ids_per_sample = self._normalized_batch_exclude_row_ids(
+            exclude_row_ids_per_sample,
+            sample_ids=normalized_sample_ids,
+        )
+        output_rows, source_fit_rmse, output_columns = self._map_reflectance_batch_output_arrays_from_coerced(
+            source_sensor=source_sensor,
+            normalized_sample_ids=normalized_sample_ids,
+            query_values_batch=query_values_batch,
+            query_valid_mask_batch=query_valid_mask_batch,
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+            exclude_row_ids=exclude_row_ids,
+            exclude_sample_names=exclude_sample_names,
+            exclude_row_ids_per_sample=normalized_exclude_row_ids_per_sample,
+            self_exclude_sample_id=self_exclude_sample_id,
+            out=out,
+            source_fit_rmse_out=source_fit_rmse_out,
+        )
+        return normalized_sample_ids, output_rows, source_fit_rmse, output_columns
+
+    def map_reflectance_batch_to_zarr(
+        self,
+        *,
+        zarr_path: Path,
+        source_sensor: str,
+        reflectance_rows: Sequence[Sequence[float] | Mapping[str, float]] | np.ndarray,
+        valid_mask_rows: Sequence[Sequence[bool] | Mapping[str, bool] | None] | np.ndarray | None = None,
+        sample_ids: Sequence[str] | None = None,
+        output_mode: str = "target_sensor",
+        target_sensor: str | None = None,
+        k: int = 10,
+        min_valid_bands: int = 1,
+        neighbor_estimator: str = "mean",
+        knn_backend: str = "numpy",
+        knn_eps: float = 0.0,
+        exclude_row_ids: Sequence[str] | None = None,
+        exclude_sample_names: Sequence[str] | None = None,
+        exclude_row_ids_per_sample: Sequence[str | None] | Mapping[str, str | None] | None = None,
+        self_exclude_sample_id: bool = False,
+        chunk_size: int | None = None,
+    ) -> dict[str, object]:
+        """Map a batch in chunks and persist dense outputs into a Zarr store."""
+
+        _validate_mapping_request(
+            output_mode,
+            k=k,
+            min_valid_bands=min_valid_bands,
+            neighbor_estimator=neighbor_estimator,
+            knn_backend=knn_backend,
+            knn_eps=knn_eps,
+        )
+
+        batch_rows = _normalized_batch_rows(reflectance_rows)
+        normalized_sample_ids = _normalized_sample_ids(sample_ids, sample_count=len(batch_rows))
+        batch_valid_masks = _normalized_batch_valid_masks(valid_mask_rows, sample_count=len(batch_rows))
+        normalized_exclude_row_ids_per_sample = self._normalized_batch_exclude_row_ids(
+            exclude_row_ids_per_sample,
+            sample_ids=normalized_sample_ids,
+        )
+        sample_count = int(len(normalized_sample_ids))
+        output_columns, _, axis_values = self._batch_output_layout(
+            output_mode=output_mode,
+            target_sensor=target_sensor,
+        )
+        resolved_chunk_size = min(
+            sample_count,
+            self._resolved_batch_output_chunk_size(
+                source_sensor=source_sensor,
+                output_width=int(axis_values.shape[0]),
+                chunk_size=chunk_size,
+            ),
+        )
+        temp_zarr_path = _temporary_output_path(Path(zarr_path))
+        _remove_output_path(temp_zarr_path)
+        try:
+            export = self._open_batch_zarr_export(
+                zarr_path=temp_zarr_path,
+                source_sensor=source_sensor,
+                output_mode=output_mode,
+                target_sensor=target_sensor,
+                chunk_size=resolved_chunk_size,
                 k=k,
                 min_valid_bands=min_valid_bands,
                 neighbor_estimator=neighbor_estimator,
                 knn_backend=knn_backend,
                 knn_eps=knn_eps,
-                candidate_row_indices=candidate_rows,
             )
-
-        results: list[MappingResult] = []
-        for sample_index, sample_id in enumerate(normalized_sample_ids):
-            try:
-                sample_retrievals = {
-                    segment: segment_retrievals_by_segment[segment][sample_index] for segment in SEGMENTS
-                }
-                results.append(
-                    self._build_mapping_result(
-                        source_sensor=source_sensor,
-                        target_sensor=target_sensor,
-                        output_mode=output_mode,
-                        k=k,
-                        neighbor_estimator=neighbor_estimator,
-                        knn_backend=knn_backend,
-                        knn_eps=knn_eps,
-                        segment_retrievals=sample_retrievals,
-                    )
+            for start in range(0, sample_count, resolved_chunk_size):
+                stop = min(sample_count, start + resolved_chunk_size)
+                chunk_sample_ids, output_chunk, source_fit_chunk, _ = self._map_reflectance_batch_output_arrays(
+                    source_sensor=source_sensor,
+                    reflectance_rows=batch_rows[start:stop],
+                    valid_mask_rows=batch_valid_masks[start:stop],
+                    sample_ids=normalized_sample_ids[start:stop],
+                    output_mode=output_mode,
+                    target_sensor=target_sensor,
+                    k=k,
+                    min_valid_bands=min_valid_bands,
+                    neighbor_estimator=neighbor_estimator,
+                    knn_backend=knn_backend,
+                    knn_eps=knn_eps,
+                    exclude_row_ids=exclude_row_ids,
+                    exclude_sample_names=exclude_sample_names,
+                    exclude_row_ids_per_sample=normalized_exclude_row_ids_per_sample[start:stop],
+                    self_exclude_sample_id=self_exclude_sample_id,
                 )
-            except SpectralLibraryError as error:
-                raise _attach_sample_context(error, sample_id=sample_id, sample_index=sample_index) from error
-
-        return BatchMappingResult(sample_ids=normalized_sample_ids, results=tuple(results))
+                self._append_batch_output_arrays_to_zarr(
+                    export,
+                    sample_ids=chunk_sample_ids,
+                    output_chunk=output_chunk,
+                    source_fit_chunk=source_fit_chunk,
+                )
+            _finalize_output_path(temp_zarr_path, Path(zarr_path))
+        except Exception:
+            _remove_output_path(temp_zarr_path)
+            raise
+        return {
+            "path": str(Path(zarr_path)),
+            "sample_count": sample_count,
+            "output_columns": output_columns,
+            "chunk_size": resolved_chunk_size,
+            "estimated_output_bytes": _estimated_dense_array_bytes(
+                row_count=sample_count,
+                column_count=int(axis_values.shape[0]),
+                dtype=np.dtype(np.float64),
+            ),
+        }
 
     def _source_queries(self, source_sensor: str) -> np.ndarray:
         if source_sensor not in self._source_query_cache:
@@ -3196,19 +6064,21 @@ class SpectralMapper:
         schema = self.get_sensor_schema(sensor_id)
         values: list[np.ndarray] = []
         band_ids: list[str] = []
-        for segment in SEGMENTS:
-            segment_hyperspectral = np.asarray(self._load_hyperspectral(segment), dtype=np.float64)
-            for band in schema.bands_for_segment(segment):
-                response = self._band_response(sensor_id, band, segment_only=True)
-                values.append(
-                    _response_weighted_average(
-                        segment_hyperspectral,
-                        response,
-                        error_message="Resampled SRF support must remain positive.",
-                        error_context={"sensor_id": sensor_id, "band_id": band.band_id},
-                    )
+        segment_hyperspectral = {
+            segment: np.asarray(self._load_hyperspectral(segment), dtype=np.float64)
+            for segment in SEGMENTS
+        }
+        for band in schema.bands:
+            response = self._band_response(sensor_id, band, segment_only=True)
+            values.append(
+                _response_weighted_average(
+                    segment_hyperspectral[band.segment],
+                    response,
+                    error_message="Resampled SRF support must remain positive.",
+                    error_context={"sensor_id": sensor_id, "band_id": band.band_id},
                 )
-                band_ids.append(band.band_id)
+            )
+            band_ids.append(band.band_id)
         if not values:
             raise SensorSchemaError("Sensor schema must include at least one band.", context={"sensor_id": sensor_id})
         return np.column_stack(values), tuple(band_ids)
