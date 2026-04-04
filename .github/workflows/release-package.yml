@@ -20,8 +20,10 @@ jobs:
             cibw_archs: x86_64
           - os: ubuntu-latest
             cibw_archs: aarch64
+          - os: macos-13
+            cibw_archs: x86_64
           - os: macos-latest
-            cibw_archs: x86_64 arm64
+            cibw_archs: arm64
           - os: windows-latest
             cibw_archs: AMD64
     steps:
@@ -32,10 +34,6 @@ jobs:
           python-version: "3.11"
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - name: Add macOS x86_64 Rust target for cross-compilation
-        if: runner.os == 'macOS'
-        run: rustup target add x86_64-apple-darwin
 
       - name: Set up QEMU for aarch64
         if: matrix.cibw_archs == 'aarch64'
