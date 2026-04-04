@@ -12,7 +12,7 @@ Project identity:
 - import package: `spectral_library`
 - public CLI: `spectral-library`
 - internal maintainer CLI: `spectral-library-internal`
-- current version: `0.2.0`
+- current version: `0.3.0`
 - license: `MIT` for repository software and repository-authored docs; referenced or redistributed third-party datasets, metadata, and derived artifacts may remain subject to upstream terms
 
 Documentation:
