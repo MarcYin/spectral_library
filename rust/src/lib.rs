@@ -516,24 +516,8 @@ fn compute_sample<'a, T: FloatLike>(
         NeighborEstimator::Mean => {
             let inverse_neighbor_count = 1.0 / (neighbor_rows.len() as f64);
             for row_offset in 0..neighbor_rows.len() {
-                for (output, value) in reconstructed_out.iter_mut().zip(hyperspectral_rows[row_offset].iter()) {
-                    *output += value.to_f64();
-                }
-                if use_full_width_columns {
-                    for (predicted, value) in predicted_query.iter_mut().zip(source_rows[row_offset].iter()) {
-                        *predicted += value.to_f64();
-                    }
-                } else {
-                    for (predicted, &source_column) in predicted_query.iter_mut().zip(valid_columns.iter()) {
-                        *predicted += source_rows[row_offset][source_column].to_f64();
-                    }
-                }
-            }
-            for output in reconstructed_out.iter_mut() {
-                *output *= inverse_neighbor_count;
-            }
-            for predicted in predicted_query.iter_mut() {
-                *predicted *= inverse_neighbor_count;
+                weights_out[row_offset] = inverse_neighbor_count;
+                accumulate_row(row_offset, inverse_neighbor_count);
             }
         }
         NeighborEstimator::DistanceWeightedMean => {
@@ -545,13 +529,16 @@ fn compute_sample<'a, T: FloatLike>(
                 let weight = 1.0 / (exact_count as f64);
                 for (row_offset, &distance) in neighbor_distances.iter().enumerate() {
                     if distance <= 1e-12 {
+                        weights_out[row_offset] = weight;
                         accumulate_row(row_offset, weight);
                     }
                 }
             } else {
                 let inv_distance_sum = neighbor_distances.iter().map(|distance| 1.0 / *distance).sum::<f64>();
                 for (row_offset, &distance) in neighbor_distances.iter().enumerate() {
-                    accumulate_row(row_offset, (1.0 / distance) / inv_distance_sum);
+                    let weight = (1.0 / distance) / inv_distance_sum;
+                    weights_out[row_offset] = weight;
+                    accumulate_row(row_offset, weight);
                 }
             }
         }
@@ -893,6 +880,12 @@ fn refine_neighbor_rows_batch_impl<T: FloatLike + Element>(
         return Err(PyValueError::new_err("k must be at least 1"));
     }
 
+    let global_row_count = row_indices
+        .iter()
+        .map(|&index| if index >= 0 { index as usize + 1 } else { 0 })
+        .max()
+        .unwrap_or(0);
+
     let results = py.allow_threads(|| {
         (0..batch_size)
             .into_par_iter()
@@ -928,7 +921,7 @@ fn refine_neighbor_rows_batch_impl<T: FloatLike + Element>(
                     requested_neighbor_count,
                     shortlist_row,
                     shortlist_distance_row,
-                    row_indices.len(),
+                    global_row_count,
                 )
             })
             .collect::<Vec<_>>()
