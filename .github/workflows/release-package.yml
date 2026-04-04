@@ -148,7 +148,7 @@ jobs:
           . .venv-release-smoke/bin/activate
           python -m pip install --upgrade pip
           if [ "${{ matrix.artifact-type }}" = "wheel" ]; then
-            python -m pip install spectral-library --no-index --find-links dist/
+            python -m pip install spectral-library --find-links dist/
           else
             python -m pip install "$(find dist -name '*.tar.gz' -print -quit)"
           fi
@@ -161,7 +161,7 @@ jobs:
           .\.venv-release-smoke\Scripts\Activate.ps1
           python -m pip install --upgrade pip
           if ("${{ matrix.artifact-type }}" -eq "wheel") {
-            python -m pip install spectral-library --no-index --find-links dist/
+            python -m pip install spectral-library --find-links dist/
           } else {
             $sdist = Get-ChildItem dist -Filter '*.tar.gz' | Select-Object -First 1
             python -m pip install $sdist.FullName
