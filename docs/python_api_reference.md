@@ -6,6 +6,7 @@ This page documents the stable public imports for `spectral-library`.
 
 ```python
 from spectral_library import (
+    BatchMappingArrayResult,
     BatchMappingResult,
     MappingInputError,
     MappingResult,
@@ -116,8 +117,12 @@ Public methods:
 | Method | Purpose |
 | --- | --- |
 | `get_sensor_schema(sensor_id)` | return the loaded `SensorSRFSchema` |
-| `map_reflectance(...)` | map one source observation |
-| `map_reflectance_batch(...)` | map many observations in one call |
+| `compile_linear_mapper(...)` | compile a fixed array-to-array mapper for high-throughput inference |
+| `map_reflectance(...)` | map one source observation on the slim default path |
+| `map_reflectance_debug(...)` | map one source observation and include neighbor/diagnostic payloads |
+| `map_reflectance_batch(...)` | map many observations and return dense arrays on the fast default path |
+| `map_reflectance_batch_debug(...)` | map many observations and return rich `MappingResult` objects |
+| `map_reflectance_batch_arrays(...)` | explicit alias for the dense batch path |
 
 ## Single-Sample Example
 
@@ -148,6 +153,10 @@ result = mapper.map_reflectance(
 )
 ```
 
+`map_reflectance(...)` now defaults to the slim result path. If you need
+neighbor ids, per-segment diagnostics, or review payloads, call
+`map_reflectance_debug(...)` instead.
+
 ## Batch Example
 
 ```python
@@ -176,6 +185,11 @@ batch = mapper.map_reflectance_batch(
 )
 ```
 
+`map_reflectance_batch(...)` returns `BatchMappingArrayResult` by default, so
+the main outputs are `batch.reflectance`, `batch.output_columns`, and
+`batch.source_fit_rmse`. If you need per-sample `MappingResult` objects and
+diagnostics, call `map_reflectance_batch_debug(...)`.
+
 Supported exclusion controls:
 
 - `neighbor_estimator="mean"`, `"distance_weighted_mean"`, or `"simplex_mixture"`
@@ -197,6 +211,41 @@ python3 -m pip install "spectral-library[knn-pynndescent]"
 python3 -m pip install "spectral-library[knn-scann]"
 ```
 
+## High-Throughput Linear Mapper
+
+If you need to map millions of pixels and can trade retrieval-style diagnostics
+for a fixed fast model, compile the prepared runtime into one linear mapper and
+then apply it to dense arrays in chunks.
+
+```python
+import numpy as np
+from spectral_library import SpectralMapper
+
+mapper = SpectralMapper(Path("build/official_mapping_runtime"))
+linear_mapper = mapper.compile_linear_mapper(
+    source_sensor="landsat8_oli",
+    target_sensor="sentinel2a_msi",
+    output_mode="target_sensor",
+    dtype="float32",
+)
+
+pixel_block = np.asarray(
+    [
+        [0.08565344, 0.08364366, 0.10364797, 0.06556322, 0.39777808, 0.09562342, 0.03500909],
+        [0.05807071, 0.09366218, 0.19350962, 0.28368705, 0.36777489, 0.48421241, 0.45429637],
+    ],
+    dtype=np.float32,
+)
+mapped = linear_mapper.map_array(pixel_block, chunk_size=65536)
+```
+
+This fast path is intentionally narrow:
+
+- input must be a dense `numpy.ndarray` in source-band order
+- it returns a plain `numpy.ndarray` instead of `MappingResult` objects
+- it is best suited for raster/tile processing with reusable `out=` buffers or
+  `numpy.memmap` outputs
+
 ## Result Objects
 
 ### `MappingResult`
@@ -209,17 +258,21 @@ python3 -m pip install "spectral-library[knn-scann]"
 | `reconstructed_swir` | reconstructed `800-2500 nm` segment |
 | `reconstructed_full_spectrum` | overlap-blended `400-2500 nm` reconstruction |
 | `reconstructed_wavelength_nm` | wavelength grid for the requested spectral output |
-| `neighbor_ids_by_segment` | retrieved library row ids for each segment |
-| `neighbor_distances_by_segment` | neighbor distances for each segment |
-| `segment_outputs` | successful segment reconstructions |
+| `neighbor_ids_by_segment` | retrieved library row ids for each segment; empty on the slim default path |
+| `neighbor_distances_by_segment` | neighbor distances for each segment; empty on the slim default path |
+| `segment_outputs` | successful segment reconstructions; empty on the slim default path |
 | `segment_valid_band_counts` | number of valid source bands used per segment |
-| `diagnostics` | stable diagnostic payload, including per-segment query values, validity masks, neighbor weights, source-fit RMSE, and selected-neighbor source-band values |
+| `diagnostics` | stable debug payload, including per-segment query values when requested; empty on the slim default path |
 
 Helper:
 
 - `to_summary_dict()`
 
+Use `map_reflectance_debug(...)` when you need the populated diagnostic fields.
+
 ### `BatchMappingResult`
+
+Returned by `map_reflectance_batch_debug(...)`.
 
 | Field | Meaning |
 | --- | --- |
@@ -230,7 +283,19 @@ Helper:
 
 - `to_summary_dict()`
 
-## Error Handling
+### `BatchMappingArrayResult`
+
+Returned by `map_reflectance_batch(...)` and `map_reflectance_batch_arrays(...)`.
+
+| Field | Meaning |
+| --- | --- |
+| `sample_ids` | output sample ids in order |
+| `reflectance` | dense `(n_samples, n_outputs)` output matrix |
+| `source_fit_rmse` | one scalar source-sensor fit RMSE per sample; lower is better |
+| `output_columns` | output column labels aligned to `reflectance[:, j]` |
+| `wavelength_nm` | wavelength axis for spectral modes, otherwise `None` |
+
+## Public Error Types
 
 All public errors inherit from `SpectralLibraryError` and carry structured
 fields for programmatic handling.
@@ -306,9 +371,9 @@ many SIAC rows required gap repair during prepare. When requested at prepare
 time, they also expose `knn_index_artifacts` so you can see which persisted ANN
 indexes were written into the runtime.
 
-Mapping diagnostics now also expose a heuristic `confidence_score` at the
-overall mapping level and per segment. This is not a calibrated uncertainty
-model; it is a compact ranking signal derived from distance, source fit, weight
+Debug diagnostics expose a heuristic `confidence_score` at the overall mapping
+level and per segment. This is not a calibrated uncertainty model; it is a
+compact ranking signal derived from distance, source fit, weight
 concentration, and valid-band coverage. The diagnostics also include
 `confidence_policy`, which currently maps the score to:
 

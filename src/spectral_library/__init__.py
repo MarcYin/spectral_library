@@ -1,6 +1,8 @@
 from ._version import __version__
 from .mapping import (
     BatchMappingResult,
+    BatchMappingArrayResult,
+    LinearSpectralMapper,
     MappingInputError,
     MappingResult,
     PreparedLibraryCompatibilityError,
@@ -17,6 +19,8 @@ from .mapping import (
 __all__ = [
     "__version__",
     "BatchMappingResult",
+    "BatchMappingArrayResult",
+    "LinearSpectralMapper",
     "MappingInputError",
     "MappingResult",
     "PreparedLibraryCompatibilityError",

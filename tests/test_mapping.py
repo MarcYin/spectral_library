@@ -3,12 +3,14 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import importlib.util
 import json
 import os
 import pickle
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import duckdb
@@ -16,7 +18,9 @@ import numpy as np
 
 import spectral_library.mapping as mapping_module
 from spectral_library import (
+    BatchMappingArrayResult,
     BatchMappingResult,
+    LinearSpectralMapper,
     MappingInputError,
     PreparedLibraryCompatibilityError,
     PreparedLibraryManifest,
@@ -33,6 +37,8 @@ from spectral_library.mapping import PreparedLibraryBuildError, SensorSchemaErro
 
 WAVELENGTHS = list(range(400, 2501))
 NM_COLUMNS = [f"nm_{wavelength}" for wavelength in WAVELENGTHS]
+ZARR_AVAILABLE = importlib.util.find_spec("zarr") is not None
+RUST_ACCEL_AVAILABLE = importlib.util.find_spec("spectral_library._mapping_rust") is not None
 
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, object]]) -> None:
@@ -187,6 +193,31 @@ def _prepare_fixture(root: Path) -> tuple[dict[str, Path], PreparedLibraryManife
 
 
 class MappingWorkflowTests(unittest.TestCase):
+    def test_finalize_output_path_restores_existing_store_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_path = root / "existing.zarr"
+            temp_path = root / "staged.zarr"
+            output_path.mkdir(parents=True, exist_ok=True)
+            temp_path.mkdir(parents=True, exist_ok=True)
+            (output_path / "marker.txt").write_text("old", encoding="utf-8")
+            (temp_path / "marker.txt").write_text("new", encoding="utf-8")
+
+            original_replace = Path.replace
+
+            def _flaky_replace(self: Path, target: str | Path) -> Path:
+                if Path(self) == temp_path and Path(target) == output_path:
+                    raise OSError("simulated finalize failure")
+                return original_replace(self, target)
+
+            with patch.object(Path, "replace", new=_flaky_replace):
+                with self.assertRaises(OSError):
+                    mapping_module._finalize_output_path(temp_path, output_path)
+
+            self.assertEqual((output_path / "marker.txt").read_text(encoding="utf-8"), "old")
+            self.assertTrue(temp_path.exists())
+            self.assertEqual(len(list(root.glob(".existing.zarr.bak-*"))), 0)
+
     def test_prepare_mapping_library_writes_runtime_contract_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, manifest = _prepare_fixture(Path(tmpdir))
@@ -308,7 +339,7 @@ class MappingWorkflowTests(unittest.TestCase):
 
             with patch.object(mapping_module, "_load_faiss_module", return_value=QueryFaissModule):
                 mapper = SpectralMapper(fixture["prepared_root"])
-                result = mapper.map_reflectance(
+                result = mapper.map_reflectance_debug(
                     source_sensor="sensor_a",
                     reflectance={"blue": 0.79, "swir": 0.21},
                     output_mode="target_sensor",
@@ -397,7 +428,7 @@ class MappingWorkflowTests(unittest.TestCase):
                 self.assertTrue((fixture["prepared_root"] / "knn_indexes" / "scann_sensor_a_vnir").exists())
 
                 mapper = SpectralMapper(fixture["prepared_root"])
-                result = mapper.map_reflectance(
+                result = mapper.map_reflectance_debug(
                     source_sensor="sensor_a",
                     reflectance={"blue": 0.79, "swir": 0.21},
                     output_mode="target_sensor",
@@ -417,7 +448,7 @@ class MappingWorkflowTests(unittest.TestCase):
             fixture, _ = _prepare_fixture(Path(tmpdir))
 
             mapper = SpectralMapper(fixture["prepared_root"])
-            result = mapper.map_reflectance(
+            result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.80, "swir": 0.20},
                 output_mode="target_sensor",
@@ -450,7 +481,7 @@ class MappingWorkflowTests(unittest.TestCase):
             fixture, _ = _prepare_fixture(Path(tmpdir))
 
             mapper = SpectralMapper(fixture["prepared_root"])
-            by_row = mapper.map_reflectance(
+            by_row = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.80, "swir": 0.20},
                 output_mode="target_sensor",
@@ -458,7 +489,7 @@ class MappingWorkflowTests(unittest.TestCase):
                 k=1,
                 exclude_row_ids=["fixture_source:vnir_high:vnir_high"],
             )
-            by_sample = mapper.map_reflectance(
+            by_sample = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.80, "swir": 0.20},
                 output_mode="target_sensor",
@@ -510,7 +541,7 @@ class MappingWorkflowTests(unittest.TestCase):
                 ["sensor_overlap"],
             )
             mapper = SpectralMapper(fixture["prepared_root"])
-            result = mapper.map_reflectance(
+            result = mapper.map_reflectance_debug(
                 source_sensor="sensor_overlap",
                 reflectance={"blue": 0.80, "nir": 0.40, "swir": 0.20},
                 output_mode="swir_spectrum",
@@ -527,7 +558,7 @@ class MappingWorkflowTests(unittest.TestCase):
             fixture, _ = _prepare_fixture(Path(tmpdir))
 
             mapper = SpectralMapper(fixture["prepared_root"])
-            result = mapper.map_reflectance(
+            result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.80, "swir": 0.90},
                 output_mode="full_spectrum",
@@ -565,14 +596,14 @@ class MappingWorkflowTests(unittest.TestCase):
             fixture, _ = _prepare_fixture(Path(tmpdir))
             mapper = SpectralMapper(fixture["prepared_root"])
 
-            mean_result = mapper.map_reflectance(
+            mean_result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.79, "swir": 0.21},
                 output_mode="target_sensor",
                 target_sensor="sensor_b",
                 k=2,
             )
-            weighted_result = mapper.map_reflectance(
+            weighted_result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.79, "swir": 0.21},
                 output_mode="target_sensor",
@@ -588,12 +619,52 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertEqual(mean_result.diagnostics["neighbor_estimator"], "mean")
             self.assertEqual(weighted_result.diagnostics["neighbor_estimator"], "distance_weighted_mean")
 
+    @unittest.skipUnless(RUST_ACCEL_AVAILABLE, "Rust mapping acceleration module is not available.")
+    def test_rust_batch_combine_supports_all_estimators(self) -> None:
+        source_matrix = np.asarray(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [0.5, 0.5],
+            ],
+            dtype=np.float32,
+        )
+        hyperspectral_rows = np.asarray(
+            [
+                [0.9, 0.1, 0.2, 0.3],
+                [0.1, 0.9, 0.8, 0.7],
+                [0.5, 0.5, 0.5, 0.5],
+            ],
+            dtype=np.float32,
+        )
+        neighbor_indices = np.asarray([[0, 1, 2]], dtype=np.int64)
+        neighbor_distances = np.asarray([[0.1, 0.2, 0.3]], dtype=np.float64)
+        query_values = np.asarray([[0.8, 0.2]], dtype=np.float64)
+        valid_indices = np.asarray([0, 1], dtype=np.int64)
+
+        for estimator in mapping_module.SUPPORTED_NEIGHBOR_ESTIMATORS:
+            with self.subTest(neighbor_estimator=estimator):
+                reconstructed, weights, source_fit_rmse = mapping_module._combine_neighbor_spectra_batch_accel(
+                    hyperspectral_rows=hyperspectral_rows,
+                    source_matrix=source_matrix,
+                    neighbor_indices=neighbor_indices,
+                    neighbor_distances=neighbor_distances,
+                    query_values=query_values,
+                    valid_indices=valid_indices,
+                    neighbor_estimator=estimator,
+                )
+                self.assertEqual(reconstructed.shape, (1, 4))
+                self.assertEqual(weights.shape, (1, 3))
+                self.assertEqual(source_fit_rmse.shape, (1,))
+                self.assertAlmostEqual(float(np.sum(weights[0])), 1.0, places=6)
+                self.assertGreaterEqual(float(source_fit_rmse[0]), 0.0)
+
     def test_simplex_mixture_neighbor_estimator_can_fit_convex_queries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
             mapper = SpectralMapper(fixture["prepared_root"])
 
-            simplex_result = mapper.map_reflectance(
+            simplex_result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.79, "swir": 0.21},
                 output_mode="target_sensor",
@@ -610,7 +681,258 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertAlmostEqual(sum(simplex_result.diagnostics["segments"]["vnir"]["neighbor_weights"]), 1.0, places=6)
             self.assertAlmostEqual(sum(simplex_result.diagnostics["segments"]["swir"]["neighbor_weights"]), 1.0, places=6)
 
+    def test_segment_confidence_payload_batch_matches_scalar_helper(self) -> None:
+        query_matrix = np.asarray(
+            [
+                [0.25, 0.75, 0.50],
+                [0.10, 0.20, 0.30],
+                [0.00, 0.00, 0.00],
+            ],
+            dtype=np.float64,
+        )
+        neighbor_distances = np.asarray(
+            [
+                [0.1, 0.2, 0.3],
+                [0.2, 0.4, 0.8],
+                [0.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        neighbor_weights = np.asarray(
+            [
+                [0.2, 0.3, 0.5],
+                [0.7, 0.2, 0.1],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        source_fit_rmse = np.asarray([0.05, 0.12, 0.0], dtype=np.float64)
+
+        batch_scores, batch_components = mapping_module._segment_confidence_payload_batch(
+            query_matrix=query_matrix,
+            valid_band_count=3,
+            total_band_count=4,
+            neighbor_distance_matrix=neighbor_distances,
+            neighbor_weight_matrix=neighbor_weights,
+            source_fit_rmse=source_fit_rmse,
+        )
+
+        expected_scores = []
+        expected_components = []
+        for row_index in range(query_matrix.shape[0]):
+            score, components = mapping_module._segment_confidence_payload(
+                query_vector=query_matrix[row_index],
+                valid_band_count=3,
+                total_band_count=4,
+                neighbor_distances=neighbor_distances[row_index],
+                neighbor_weights=neighbor_weights[row_index],
+                source_fit_rmse=float(source_fit_rmse[row_index]),
+            )
+            expected_scores.append(score)
+            expected_components.append(components)
+
+        self.assertTrue(np.allclose(batch_scores, np.asarray(expected_scores, dtype=np.float64)))
+        self.assertEqual(batch_components, tuple(expected_components))
+
+    def test_combine_neighbor_spectra_batch_uses_rust_module_when_available(self) -> None:
+        hyperspectral_rows = np.asarray([[0.2, 0.3], [0.7, 0.8]], dtype=np.float32)
+        source_rows = np.asarray([[0.2, 0.4], [0.6, 0.8]], dtype=np.float32)
+        neighbor_indices = np.asarray([[0, 1]], dtype=np.int64)
+        neighbor_distances = np.asarray([[0.1, 0.2]], dtype=np.float64)
+        query_vectors = np.asarray([[0.25, 0.45]], dtype=np.float64)
+        native_result = (
+            np.asarray([[0.5, 0.6]], dtype=np.float64),
+            np.asarray([[0.4, 0.6]], dtype=np.float64),
+            np.asarray([0.07], dtype=np.float64),
+        )
+
+        with patch.object(mapping_module._rustaccel, "combine_neighbor_spectra_batch", return_value=native_result) as native_mock:
+            reconstructed, weights, source_fit_rmse = mapping_module._combine_neighbor_spectra_batch_accel(
+                hyperspectral_rows=hyperspectral_rows,
+                source_matrix=source_rows,
+                neighbor_indices=neighbor_indices,
+                neighbor_distances=neighbor_distances,
+                query_values=query_vectors,
+                valid_indices=None,
+                neighbor_estimator="mean",
+            )
+
+        native_mock.assert_called_once()
+        self.assertTrue(np.allclose(reconstructed, native_result[0]))
+        self.assertTrue(np.allclose(weights, native_result[1]))
+        self.assertTrue(np.allclose(source_fit_rmse, native_result[2]))
+
+    def test_finalize_target_sensor_batch_uses_rust_module(self) -> None:
+        native_result = (
+            np.asarray([[0.25, np.nan, 0.75]], dtype=np.float64),
+            np.asarray([0], dtype=np.int32),
+        )
+
+        with patch.object(mapping_module._rustaccel, "finalize_target_sensor_batch", return_value=native_result) as native_mock:
+            output_rows, status_codes = mapping_module._finalize_target_sensor_batch_accel(
+                vnir_reconstructed=np.zeros((1, 2), dtype=np.float64),
+                swir_reconstructed=np.zeros((1, 1), dtype=np.float64),
+                vnir_success=np.asarray([True], dtype=bool),
+                swir_success=np.asarray([False], dtype=bool),
+                vnir_response_matrix=np.zeros((2, 2), dtype=np.float64),
+                swir_response_matrix=np.zeros((1, 1), dtype=np.float64),
+                vnir_output_indices=np.asarray([0, 2], dtype=np.int64),
+                swir_output_indices=np.asarray([1], dtype=np.int64),
+                output_width=3,
+            )
+
+        native_mock.assert_called_once()
+        self.assertTrue(np.allclose(output_rows, native_result[0], equal_nan=True))
+        self.assertTrue(np.array_equal(status_codes, native_result[1]))
+
+    def test_stitch_target_sensor_segment_rows_combines_segment_outputs(self) -> None:
+        output_rows, status_codes = mapping_module._stitch_target_sensor_segment_rows(
+            vnir_rows=np.asarray([[0.2, 0.3], [9.0, 9.0]], dtype=np.float64),
+            swir_rows=np.asarray([[0.8], [0.9]], dtype=np.float64),
+            vnir_success=np.asarray([True, False], dtype=bool),
+            swir_success=np.asarray([True, True], dtype=bool),
+            vnir_output_indices=np.asarray([0, 2], dtype=np.int64),
+            swir_output_indices=np.asarray([1], dtype=np.int64),
+            output_width=3,
+        )
+
+        self.assertTrue(
+            np.allclose(
+                output_rows,
+                np.asarray([[0.2, 0.8, 0.3], [np.nan, 0.9, np.nan]], dtype=np.float64),
+                equal_nan=True,
+            )
+        )
+        self.assertTrue(np.array_equal(status_codes, np.asarray([0, 0], dtype=np.int32)))
+
+    def test_refine_and_combine_neighbor_spectra_batch_uses_rust_module(self) -> None:
+        native_result = (
+            np.asarray([[0.5, 0.6]], dtype=np.float64),
+            np.asarray([0.07], dtype=np.float64),
+        )
+
+        with patch.object(
+            mapping_module._rustaccel,
+            "refine_and_combine_neighbor_spectra_batch",
+            return_value=native_result,
+        ) as native_mock:
+            reconstructed, source_fit_rmse = mapping_module._refine_and_combine_neighbor_spectra_batch_accel(
+                candidate_matrix=np.asarray([[0.2, 0.4], [0.6, 0.8]], dtype=np.float32),
+                candidate_row_indices=np.asarray([0, 1], dtype=np.int64),
+                source_matrix=np.asarray([[0.2, 0.4], [0.6, 0.8]], dtype=np.float32),
+                hyperspectral_rows=np.asarray([[0.2, 0.3], [0.7, 0.8]], dtype=np.float32),
+                query_values=np.asarray([[0.25, 0.45]], dtype=np.float64),
+                local_candidate_indices=np.asarray([[0, 1]], dtype=np.int64),
+                local_candidate_distances=np.asarray([[0.1, 0.2]], dtype=np.float64),
+                valid_indices=None,
+                k=1,
+                neighbor_estimator="mean",
+            )
+
+        native_mock.assert_called_once()
+        self.assertTrue(np.allclose(reconstructed, native_result[0]))
+        self.assertTrue(np.allclose(source_fit_rmse, native_result[1]))
+
+    def test_refine_and_combine_neighbor_spectra_batch_forwards_native_output_buffers(self) -> None:
+        out_reconstructed = np.empty((1, 2), dtype=np.float64)
+        out_source_fit_rmse = np.empty((1,), dtype=np.float64)
+
+        def _fill_outputs(**kwargs: Any) -> tuple[np.ndarray, np.ndarray]:
+            self.assertIs(kwargs["out_reconstructed"], out_reconstructed)
+            self.assertIs(kwargs["out_source_fit_rmse"], out_source_fit_rmse)
+            kwargs["out_reconstructed"][:] = np.asarray([[0.9, 0.4]], dtype=np.float64)
+            kwargs["out_source_fit_rmse"][:] = np.asarray([0.02], dtype=np.float64)
+            return kwargs["out_reconstructed"], kwargs["out_source_fit_rmse"]
+
+        with patch.object(
+            mapping_module._rustaccel,
+            "refine_and_combine_neighbor_spectra_batch",
+            side_effect=_fill_outputs,
+        ) as native_mock:
+            reconstructed, source_fit_rmse = mapping_module._refine_and_combine_neighbor_spectra_batch_accel(
+                candidate_matrix=np.asarray([[0.2, 0.4], [0.6, 0.8]], dtype=np.float32),
+                candidate_row_indices=np.asarray([0, 1], dtype=np.int64),
+                source_matrix=np.asarray([[0.2, 0.4], [0.6, 0.8]], dtype=np.float32),
+                hyperspectral_rows=np.asarray([[0.2, 0.3], [0.7, 0.8]], dtype=np.float32),
+                query_values=np.asarray([[0.25, 0.45]], dtype=np.float64),
+                local_candidate_indices=np.asarray([[0, 1]], dtype=np.int64),
+                local_candidate_distances=np.asarray([[0.1, 0.2]], dtype=np.float64),
+                valid_indices=None,
+                k=1,
+                neighbor_estimator="mean",
+                out_reconstructed=out_reconstructed,
+                out_source_fit_rmse=out_source_fit_rmse,
+            )
+
+        native_mock.assert_called_once()
+        self.assertIs(reconstructed, out_reconstructed)
+        self.assertIs(source_fit_rmse, out_source_fit_rmse)
+
     def test_scipy_ckdtree_knn_backend_can_match_numpy_backend(self) -> None:
+        build_shapes: list[tuple[int, ...]] = []
+        worker_values: list[int] = []
+
+        class FakeKDTree:
+            def __init__(self, data: np.ndarray) -> None:
+                build_shapes.append(tuple(np.asarray(data).shape))
+                self.data = np.asarray(data, dtype=np.float64)
+
+            def query(self, query: np.ndarray, k: int, eps: float = 0.0, workers: int = 1) -> tuple[np.ndarray, np.ndarray]:
+                del eps
+                worker_values.append(int(workers))
+                query_array = np.asarray(query, dtype=np.float64)
+                if query_array.ndim == 1:
+                    distances = np.linalg.norm(self.data - query_array[None, :], axis=1)
+                    ordered = np.argsort(distances)[:k]
+                    return distances[ordered], ordered
+                distances = np.linalg.norm(self.data[None, :, :] - query_array[:, None, :], axis=2)
+                ordered = np.argsort(distances, axis=1)[:, :k]
+                selected = np.take_along_axis(distances, ordered, axis=1)
+                return selected, ordered
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            numpy_result = mapper.map_reflectance_debug(
+                source_sensor="sensor_a",
+                reflectance={"blue": 0.79, "swir": 0.21},
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=2,
+                neighbor_estimator="simplex_mixture",
+            )
+            with patch.dict(os.environ, {"SPECTRAL_LIBRARY_SCIPY_WORKERS": "-1"}, clear=True):
+                with patch.object(mapping_module, "_load_ckdtree_class", return_value=FakeKDTree):
+                    scipy_result = mapper.map_reflectance_debug(
+                        source_sensor="sensor_a",
+                        reflectance={"blue": 0.79, "swir": 0.21},
+                        output_mode="target_sensor",
+                        target_sensor="sensor_b",
+                        k=2,
+                        neighbor_estimator="simplex_mixture",
+                        knn_backend="scipy_ckdtree",
+                        knn_eps=0.1,
+                    )
+                    mapper.map_reflectance_debug(
+                        source_sensor="sensor_a",
+                        reflectance={"blue": 0.79, "swir": 0.21},
+                        output_mode="target_sensor",
+                        target_sensor="sensor_b",
+                        k=2,
+                        neighbor_estimator="simplex_mixture",
+                        knn_backend="scipy_ckdtree",
+                        knn_eps=0.1,
+                    )
+
+            assert numpy_result.target_reflectance is not None
+            assert scipy_result.target_reflectance is not None
+            self.assertTrue(np.allclose(numpy_result.target_reflectance, scipy_result.target_reflectance, atol=1e-6))
+            self.assertEqual(scipy_result.diagnostics["knn_backend"], "scipy_ckdtree")
+            self.assertAlmostEqual(scipy_result.diagnostics["knn_eps"], 0.1)
+            self.assertEqual(build_shapes, [(4, 1), (4, 1)])
+            self.assertEqual(worker_values, [-1, -1, -1, -1])
+
+    def test_scipy_ckdtree_knn_backend_matches_numpy_for_masked_query(self) -> None:
         class FakeKDTree:
             def __init__(self, data: np.ndarray) -> None:
                 self.data = np.asarray(data, dtype=np.float64)
@@ -630,31 +952,118 @@ class MappingWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
             mapper = SpectralMapper(fixture["prepared_root"])
-            numpy_result = mapper.map_reflectance(
+            numpy_result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.79, "swir": 0.21},
+                valid_mask={"blue": True, "swir": False},
+                output_mode="vnir_spectrum",
+                k=2,
+            )
+            with patch.object(mapping_module, "_load_ckdtree_class", return_value=FakeKDTree):
+                scipy_result = mapper.map_reflectance_debug(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.79, "swir": 0.21},
+                    valid_mask={"blue": True, "swir": False},
+                    output_mode="vnir_spectrum",
+                    k=2,
+                    knn_backend="scipy_ckdtree",
+                )
+
+            assert numpy_result.reconstructed_vnir is not None
+            assert scipy_result.reconstructed_vnir is not None
+            self.assertTrue(np.allclose(numpy_result.reconstructed_vnir, scipy_result.reconstructed_vnir, atol=1e-6))
+
+    def test_scipy_ckdtree_batch_backend_matches_numpy_for_distinct_valid_masks(self) -> None:
+        class FakeKDTree:
+            def __init__(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float64)
+
+            def query(self, query: np.ndarray, k: int, eps: float = 0.0, workers: int = 1) -> tuple[np.ndarray, np.ndarray]:
+                del eps, workers
+                query_array = np.asarray(query, dtype=np.float64)
+                if query_array.ndim == 1:
+                    distances = np.linalg.norm(self.data - query_array[None, :], axis=1)
+                    ordered = np.argsort(distances)[:k]
+                    return distances[ordered], ordered
+                distances = np.linalg.norm(self.data[None, :, :] - query_array[:, None, :], axis=2)
+                ordered = np.argsort(distances, axis=1)[:, :k]
+                selected = np.take_along_axis(distances, ordered, axis=1)
+                return selected, ordered
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            numpy_result = mapper.map_reflectance_batch_debug(
+                source_sensor="sensor_a",
+                reflectance_rows=[
+                    {"blue": 0.79, "swir": 0.21},
+                    {"blue": 0.11, "swir": 0.89},
+                ],
+                valid_mask_rows=[
+                    {"blue": True, "swir": False},
+                    {"blue": False, "swir": True},
+                ],
+                sample_ids=["alpha", "beta"],
                 output_mode="target_sensor",
                 target_sensor="sensor_b",
                 k=2,
-                neighbor_estimator="simplex_mixture",
             )
             with patch.object(mapping_module, "_load_ckdtree_class", return_value=FakeKDTree):
-                scipy_result = mapper.map_reflectance(
+                scipy_result = mapper.map_reflectance_batch_debug(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[
+                        {"blue": 0.79, "swir": 0.21},
+                        {"blue": 0.11, "swir": 0.89},
+                    ],
+                    valid_mask_rows=[
+                        {"blue": True, "swir": False},
+                        {"blue": False, "swir": True},
+                    ],
+                    sample_ids=["alpha", "beta"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=2,
+                    knn_backend="scipy_ckdtree",
+                )
+
+            for numpy_row, scipy_row in zip(numpy_result.results, scipy_result.results):
+                assert numpy_row.target_reflectance is not None
+                assert scipy_row.target_reflectance is not None
+                self.assertTrue(np.allclose(numpy_row.target_reflectance, scipy_row.target_reflectance, atol=1e-6))
+
+    def test_scipy_ckdtree_exact_backend_skips_single_sample_python_rerank(self) -> None:
+        class FakeKDTree:
+            def __init__(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float64)
+
+            def query(self, query: np.ndarray, k: int, eps: float = 0.0, workers: int = 1) -> tuple[np.ndarray, np.ndarray]:
+                del eps, workers
+                query_array = np.asarray(query, dtype=np.float64)
+                distances = np.linalg.norm(self.data[None, :, :] - query_array[:, None, :], axis=2)
+                ordered = np.argsort(distances, axis=1)[:, :k]
+                selected = np.take_along_axis(distances, ordered, axis=1)
+                return selected, ordered
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            with patch.object(mapping_module, "_load_ckdtree_class", return_value=FakeKDTree), patch.object(
+                mapping_module,
+                "_refine_neighbor_rows",
+                side_effect=AssertionError("exact cKDTree path should not rerank in Python"),
+            ):
+                result = mapper.map_reflectance_debug(
                     source_sensor="sensor_a",
                     reflectance={"blue": 0.79, "swir": 0.21},
                     output_mode="target_sensor",
                     target_sensor="sensor_b",
                     k=2,
-                    neighbor_estimator="simplex_mixture",
                     knn_backend="scipy_ckdtree",
-                    knn_eps=0.1,
+                    knn_eps=0.0,
                 )
 
-            assert numpy_result.target_reflectance is not None
-            assert scipy_result.target_reflectance is not None
-            self.assertTrue(np.allclose(numpy_result.target_reflectance, scipy_result.target_reflectance, atol=1e-6))
-            self.assertEqual(scipy_result.diagnostics["knn_backend"], "scipy_ckdtree")
-            self.assertAlmostEqual(scipy_result.diagnostics["knn_eps"], 0.1)
+            assert result.target_reflectance is not None
+            self.assertEqual(result.target_reflectance.shape, (2,))
 
     def test_faiss_pynndescent_and_scann_backends_can_match_numpy_backend(self) -> None:
         class FakeFaissIndex:
@@ -728,7 +1137,7 @@ class MappingWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
             mapper = SpectralMapper(fixture["prepared_root"])
-            numpy_result = mapper.map_reflectance(
+            numpy_result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.79, "swir": 0.21},
                 output_mode="target_sensor",
@@ -738,7 +1147,7 @@ class MappingWorkflowTests(unittest.TestCase):
             )
 
             with patch.object(mapping_module, "_load_faiss_module", return_value=FakeFaissModule):
-                faiss_result = mapper.map_reflectance(
+                faiss_result = mapper.map_reflectance_debug(
                     source_sensor="sensor_a",
                     reflectance={"blue": 0.79, "swir": 0.21},
                     output_mode="target_sensor",
@@ -749,7 +1158,7 @@ class MappingWorkflowTests(unittest.TestCase):
                     knn_eps=0.2,
                 )
             with patch.object(mapping_module, "_load_pynndescent_class", return_value=FakeNNDescent):
-                pynndescent_result = mapper.map_reflectance_batch(
+                pynndescent_result = mapper.map_reflectance_batch_debug(
                     source_sensor="sensor_a",
                     reflectance_rows=[{"blue": 0.79, "swir": 0.21}, {"blue": 0.15, "swir": 0.25}],
                     sample_ids=["alpha", "beta"],
@@ -761,7 +1170,7 @@ class MappingWorkflowTests(unittest.TestCase):
                     knn_eps=0.2,
                 )
             with patch.object(mapping_module, "_load_scann_ops", return_value=FakeScannOps()):
-                scann_result = mapper.map_reflectance(
+                scann_result = mapper.map_reflectance_debug(
                     source_sensor="sensor_a",
                     reflectance={"blue": 0.79, "swir": 0.21},
                     output_mode="target_sensor",
@@ -852,7 +1261,7 @@ class MappingWorkflowTests(unittest.TestCase):
             fixture, _ = _prepare_fixture(Path(tmpdir))
             mapper = SpectralMapper(fixture["prepared_root"])
 
-            result = mapper.map_reflectance(
+            result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.80, "swir": 0.20},
                 output_mode="target_sensor",
@@ -964,19 +1373,132 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertEqual(report["test_rows"], 1)
             self.assertEqual(report["max_test_rows"], 1)
 
+    def test_compile_linear_mapper_matches_target_regression_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+
+            mapper = SpectralMapper(fixture["prepared_root"])
+            linear_mapper = mapper.compile_linear_mapper(
+                source_sensor="sensor_a",
+                target_sensor="sensor_b",
+                compile_chunk_size=2,
+            )
+
+            self.assertIsInstance(linear_mapper, LinearSpectralMapper)
+            self.assertEqual(linear_mapper.source_band_ids, ("blue", "swir"))
+            self.assertEqual(linear_mapper.output_band_ids, ("target_vnir", "target_swir"))
+
+            source_queries = mapper._source_queries("sensor_a")
+            target_truth, _ = mapper._simulate_full_sensor_matrix("sensor_b")
+            design = np.column_stack([np.ones(source_queries.shape[0], dtype=np.float64), source_queries])
+            coefficients, _, _, _ = np.linalg.lstsq(design, target_truth, rcond=None)
+            expected = design @ coefficients
+
+            out = np.empty(expected.shape, dtype=np.float64)
+            mapped = linear_mapper.map_array(source_queries, out=out, chunk_size=1)
+            self.assertIs(mapped, out)
+            self.assertTrue(np.allclose(mapped, expected, atol=1e-6))
+
+    def test_compile_linear_mapper_supports_full_spectrum_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+
+            mapper = SpectralMapper(fixture["prepared_root"])
+            linear_mapper = mapper.compile_linear_mapper(
+                source_sensor="sensor_a",
+                output_mode="full_spectrum",
+                compile_chunk_size=2,
+            )
+
+            source_queries = mapper._source_queries("sensor_a")
+            full_truth = mapping_module._assemble_full_spectrum_batch(
+                np.asarray(mapper._load_hyperspectral("vnir"), dtype=np.float64),
+                np.asarray(mapper._load_hyperspectral("swir"), dtype=np.float64),
+            )
+            design = np.column_stack([np.ones(source_queries.shape[0], dtype=np.float64), source_queries])
+            coefficients, _, _, _ = np.linalg.lstsq(design, full_truth, rcond=None)
+            expected = design @ coefficients
+
+            mapped = linear_mapper.map_array(source_queries, chunk_size=2)
+            self.assertEqual(mapped.shape, (4, len(mapping_module.CANONICAL_WAVELENGTHS)))
+            self.assertTrue(np.array_equal(linear_mapper.output_wavelength_nm, mapping_module.CANONICAL_WAVELENGTHS.astype(np.float64)))
+            self.assertTrue(np.allclose(mapped, expected, atol=1e-6))
+
+    def test_interleaved_sensor_band_order_is_preserved_for_queries_and_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = _build_fixture(Path(tmpdir))
+
+            source_sensor = {
+                "sensor_id": "sensor_a",
+                "bands": [
+                    {
+                        "band_id": "swir",
+                        "segment": "swir",
+                        "wavelength_nm": [1595.0, 1600.0, 1605.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                    {
+                        "band_id": "blue",
+                        "segment": "vnir",
+                        "wavelength_nm": [445.0, 450.0, 455.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                ],
+            }
+            target_sensor = {
+                "sensor_id": "sensor_b",
+                "bands": [
+                    {
+                        "band_id": "target_swir",
+                        "segment": "swir",
+                        "wavelength_nm": [1695.0, 1700.0, 1705.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                    {
+                        "band_id": "target_vnir",
+                        "segment": "vnir",
+                        "wavelength_nm": [495.0, 500.0, 505.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                ],
+            }
+            (fixture["srf_root"] / "sensor_a.json").write_text(json.dumps(source_sensor, indent=2) + "\n", encoding="utf-8")
+            (fixture["srf_root"] / "sensor_b.json").write_text(json.dumps(target_sensor, indent=2) + "\n", encoding="utf-8")
+            prepare_mapping_library(
+                fixture["siac_root"],
+                fixture["srf_root"],
+                fixture["prepared_root"],
+                ["sensor_a"],
+            )
+
+            mapper = SpectralMapper(fixture["prepared_root"])
+            source_queries = mapper._source_queries("sensor_a")
+
+            self.assertEqual(mapper.get_sensor_schema("sensor_a").band_ids(), ("swir", "blue"))
+            self.assertEqual(mapper.compile_linear_mapper(source_sensor="sensor_a", target_sensor="sensor_b").output_band_ids, ("target_swir", "target_vnir"))
+
+            result = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance=source_queries[0],
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=1,
+            )
+            self.assertEqual(result.target_band_ids, ("target_swir", "target_vnir"))
+
     def test_segment_isolation_keeps_swir_output_stable_when_only_vnir_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
 
             mapper = SpectralMapper(fixture["prepared_root"])
-            base = mapper.map_reflectance(
+            base = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.15, "swir": 0.90},
                 output_mode="target_sensor",
                 target_sensor="sensor_b",
                 k=1,
             )
-            changed_vnir = mapper.map_reflectance(
+            changed_vnir = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.80, "swir": 0.90},
                 output_mode="target_sensor",
@@ -996,14 +1518,14 @@ class MappingWorkflowTests(unittest.TestCase):
             fixture, _ = _prepare_fixture(Path(tmpdir))
 
             mapper = SpectralMapper(fixture["prepared_root"])
-            base = mapper.map_reflectance(
+            base = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 target_sensor="sensor_b",
                 reflectance={"blue": 0.80, "swir": 0.15},
                 output_mode="target_sensor",
                 k=1,
             )
-            changed_swir = mapper.map_reflectance(
+            changed_swir = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 target_sensor="sensor_b",
                 reflectance={"blue": 0.80, "swir": 0.90},
@@ -1023,7 +1545,7 @@ class MappingWorkflowTests(unittest.TestCase):
             fixture, _ = _prepare_fixture(Path(tmpdir))
 
             mapper = SpectralMapper(fixture["prepared_root"])
-            result = mapper.map_reflectance(
+            result = mapper.map_reflectance_debug(
                 source_sensor="sensor_a",
                 reflectance={"blue": 0.80, "swir": 0.90},
                 valid_mask={"blue": True, "swir": False},
@@ -1036,6 +1558,424 @@ class MappingWorkflowTests(unittest.TestCase):
             assert result.target_reflectance is not None
             self.assertEqual(result.target_reflectance.shape, (1,))
             self.assertEqual(result.diagnostics["segments"]["swir"]["status"], "insufficient_valid_bands")
+
+    def test_map_reflectance_batch_output_arrays_preserve_nan_for_missing_target_segment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            sample_ids, output_rows, source_fit_rmse, output_columns = mapper._map_reflectance_batch_output_arrays(
+                source_sensor="sensor_a",
+                reflectance_rows=[{"blue": 0.80, "swir": 0.90}],
+                valid_mask_rows=[{"blue": True, "swir": False}],
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=1,
+            )
+
+            self.assertEqual(sample_ids, ("sample_000001",))
+            self.assertEqual(output_columns, ("target_vnir", "target_swir"))
+            self.assertEqual(output_rows.shape, (1, 2))
+            self.assertTrue(np.isfinite(output_rows[0, 0]))
+            self.assertTrue(np.isnan(output_rows[0, 1]))
+            self.assertEqual(source_fit_rmse.shape, (1,))
+            self.assertGreaterEqual(float(source_fit_rmse[0]), 0.0)
+
+    def test_map_reflectance_batch_arrays_matches_dense_output_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            dense = mapper.map_reflectance_batch_arrays(
+                source_sensor="sensor_a",
+                reflectance_rows=[{"blue": 0.80, "swir": 0.90}],
+                valid_mask_rows=[{"blue": True, "swir": False}],
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=1,
+            )
+            sample_ids, output_rows, source_fit_rmse, output_columns = mapper._map_reflectance_batch_output_arrays(
+                source_sensor="sensor_a",
+                reflectance_rows=[{"blue": 0.80, "swir": 0.90}],
+                valid_mask_rows=[{"blue": True, "swir": False}],
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=1,
+            )
+
+            self.assertIsInstance(dense, BatchMappingArrayResult)
+            self.assertEqual(dense.sample_ids, sample_ids)
+            self.assertTrue(np.allclose(dense.reflectance, output_rows, equal_nan=True))
+            self.assertTrue(np.allclose(dense.source_fit_rmse, source_fit_rmse))
+            self.assertEqual(dense.output_columns, output_columns)
+            self.assertIsNone(dense.wavelength_nm)
+            self.assertTrue(np.isnan(dense.reflectance[0, 1]))
+
+    def test_map_reflectance_batch_arrays_exposes_wavelength_axis_and_avoids_result_builders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_mapping_results_from_segment_retrievals_batch",
+                side_effect=AssertionError("rich batch result assembly should not be used"),
+            ), patch.object(
+                mapping_module.SpectralMapper,
+                "_build_mapping_result",
+                side_effect=AssertionError("single-sample result builder should not be used"),
+            ), patch.object(
+                mapping_module,
+                "_successful_segment_retrieval",
+                side_effect=AssertionError("dense array path should not materialize rich retrieval objects"),
+            ), patch.object(
+                mapping_module,
+                "_search_neighbor_rows",
+                side_effect=AssertionError("dense array path should not use per-sample Python neighbor search"),
+            ):
+                dense = mapper.map_reflectance_batch_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                    valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                    sample_ids=["alpha", "beta"],
+                    output_mode="full_spectrum",
+                    k=1,
+                )
+
+            assert dense.wavelength_nm is not None
+            self.assertEqual(dense.sample_ids, ("alpha", "beta"))
+            self.assertEqual(dense.reflectance.shape, (2, 2101))
+            self.assertEqual(dense.output_columns[0], "nm_400")
+            self.assertEqual(dense.output_columns[-1], "nm_2500")
+            self.assertEqual(int(dense.wavelength_nm[0]), 400)
+            self.assertEqual(int(dense.wavelength_nm[-1]), 2500)
+            self.assertEqual(dense.wavelength_nm.shape, (2101,))
+
+    def test_map_reflectance_batch_arrays_exact_ckdtree_skips_separate_batch_rerank(self) -> None:
+        class FakeKDTree:
+            def __init__(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float64)
+
+            def query(self, query: np.ndarray, k: int, eps: float = 0.0, workers: int = 1) -> tuple[np.ndarray, np.ndarray]:
+                del eps, workers
+                query_array = np.asarray(query, dtype=np.float64)
+                distances = np.linalg.norm(self.data[None, :, :] - query_array[:, None, :], axis=2)
+                ordered = np.argsort(distances, axis=1)[:, :k]
+                selected = np.take_along_axis(distances, ordered, axis=1)
+                return selected, ordered
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(mapping_module, "_load_ckdtree_class", return_value=FakeKDTree), patch.object(
+                mapping_module._rustaccel,
+                "refine_neighbor_rows_batch",
+                side_effect=AssertionError("exact dense cKDTree path should not call the separate rerank kernel"),
+            ):
+                dense = mapper.map_reflectance_batch_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                    valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                    sample_ids=["alpha", "beta"],
+                    output_mode="full_spectrum",
+                    k=1,
+                    knn_backend="scipy_ckdtree",
+                    knn_eps=0.0,
+                )
+
+            self.assertEqual(dense.reflectance.shape, (2, 2101))
+
+    def test_scipy_ckdtree_exact_masked_query_skips_python_rerank(self) -> None:
+        class FakeKDTree:
+            def __init__(self, data: np.ndarray) -> None:
+                self.data = np.asarray(data, dtype=np.float64)
+
+            def query(self, query: np.ndarray, k: int, eps: float = 0.0, workers: int = 1) -> tuple[np.ndarray, np.ndarray]:
+                del eps, workers
+                query_array = np.asarray(query, dtype=np.float64)
+                if query_array.ndim == 1:
+                    query_array = query_array.reshape(1, -1)
+                distances = np.linalg.norm(self.data[None, :, :] - query_array[:, None, :], axis=2)
+                ordered = np.argsort(distances, axis=1)[:, :k]
+                selected = np.take_along_axis(distances, ordered, axis=1)
+                return selected, ordered
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture = _build_fixture(root)
+            source_sensor = {
+                "sensor_id": "sensor_overlap",
+                "bands": [
+                    {
+                        "band_id": "blue",
+                        "segment": "vnir",
+                        "wavelength_nm": [445.0, 450.0, 455.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                    {
+                        "band_id": "nir",
+                        "segment": "vnir",
+                        "wavelength_nm": [845.0, 850.0, 855.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                    {
+                        "band_id": "swir",
+                        "segment": "swir",
+                        "wavelength_nm": [1595.0, 1600.0, 1605.0],
+                        "rsr": [0.2, 1.0, 0.2],
+                    },
+                ],
+            }
+            (fixture["srf_root"] / "sensor_overlap.json").write_text(
+                json.dumps(source_sensor, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            prepared_root = root / "prepared"
+            prepare_mapping_library(
+                fixture["siac_root"],
+                fixture["srf_root"],
+                prepared_root,
+                ["sensor_overlap"],
+            )
+
+            mapper = SpectralMapper(prepared_root)
+            with patch.object(mapping_module, "_load_ckdtree_class", return_value=FakeKDTree), patch.object(
+                mapping_module,
+                "_refine_neighbor_rows",
+                side_effect=AssertionError("exact scipy cKDTree distances should bypass Python reranking"),
+            ):
+                result = mapper.map_reflectance_debug(
+                    source_sensor="sensor_overlap",
+                    reflectance={"blue": 0.80, "nir": 0.40, "swir": 0.20},
+                    valid_mask={"blue": True, "nir": False, "swir": True},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                    knn_backend="scipy_ckdtree",
+                    knn_eps=0.0,
+                )
+
+            self.assertEqual(result.target_band_ids, ("target_vnir", "target_swir"))
+
+    def test_map_reflectance_batch_arrays_reuses_output_buffers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            reflectance_rows = np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64)
+            valid_mask_rows = np.array([[True, True], [True, True]], dtype=bool)
+            out = np.empty((2, 2101), dtype=np.float64)
+            source_fit_out = np.empty((2,), dtype=np.float64)
+
+            with patch.object(
+                mapping_module,
+                "_normalized_batch_rows",
+                side_effect=AssertionError("NumPy batch inputs should stay on the ndarray fast path"),
+            ), patch.object(
+                mapping_module.SpectralMapper,
+                "_coerced_batch_query_arrays",
+                side_effect=AssertionError("NumPy batch inputs should not use per-row coercion"),
+            ):
+                dense = mapper.map_reflectance_batch_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=reflectance_rows,
+                    valid_mask_rows=valid_mask_rows,
+                    sample_ids=["alpha", "beta"],
+                    output_mode="full_spectrum",
+                    k=1,
+                    out=out,
+                    source_fit_rmse_out=source_fit_out,
+                )
+
+            self.assertIs(dense.reflectance, out)
+            self.assertIs(dense.source_fit_rmse, source_fit_out)
+            self.assertEqual(dense.sample_ids, ("alpha", "beta"))
+
+    def test_map_reflectance_batch_arrays_ndarray_reuses_output_buffers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            reflectance_rows = np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64)
+            valid_mask_rows = np.array([[True, True], [True, True]], dtype=bool)
+            out = np.empty((2, 2101), dtype=np.float64)
+            source_fit_out = np.empty((2,), dtype=np.float64)
+
+            with patch.object(
+                mapping_module,
+                "_normalized_batch_rows",
+                side_effect=AssertionError("strict ndarray API should not normalize row iterables"),
+            ), patch.object(
+                mapping_module.SpectralMapper,
+                "_coerced_batch_query_arrays",
+                side_effect=AssertionError("strict ndarray API should not run per-row coercion"),
+            ):
+                dense = mapper.map_reflectance_batch_arrays_ndarray(
+                    source_sensor="sensor_a",
+                    reflectance_rows=reflectance_rows,
+                    valid_mask_rows=valid_mask_rows,
+                    sample_ids=["alpha", "beta"],
+                    output_mode="full_spectrum",
+                    k=1,
+                    out=out,
+                    source_fit_rmse_out=source_fit_out,
+                )
+
+            self.assertIs(dense.reflectance, out)
+            self.assertIs(dense.source_fit_rmse, source_fit_out)
+            self.assertEqual(dense.reflectance.shape, (2, 2101))
+            self.assertEqual(dense.sample_ids, ("alpha", "beta"))
+
+    def test_map_reflectance_batch_rich_path_avoids_per_sample_python_reranking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module,
+                "_search_neighbor_rows",
+                side_effect=AssertionError("rich batch path should not use per-sample Python neighbor search"),
+            ), patch.object(
+                mapping_module,
+                "_refine_neighbor_rows",
+                side_effect=AssertionError("rich batch path should not use per-sample Python reranking"),
+            ), patch.object(
+                mapping_module,
+                "_successful_segment_retrieval",
+                side_effect=AssertionError("rich batch path should not materialize single-sample retrieval objects"),
+            ), patch.object(
+                mapping_module.SpectralMapper,
+                "_dense_segment_output_batch",
+                side_effect=AssertionError("rich batch path should not rebuild dense outputs from rich retrievals"),
+            ), patch.object(
+                mapping_module,
+                "_segment_diagnostics_payload",
+                side_effect=AssertionError("rich batch path should not reserialize retrieval diagnostics"),
+            ):
+                result = mapper.map_reflectance_batch_debug(
+                    source_sensor="sensor_a",
+                    reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                    valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                    sample_ids=["alpha", "beta"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                )
+
+            self.assertEqual(result.sample_ids, ("alpha", "beta"))
+            self.assertEqual(len(result.results), 2)
+            self.assertTrue(all(mapped.target_reflectance is not None for mapped in result.results))
+
+    def test_map_reflectance_batch_arrays_target_sensor_matches_rich_batch_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            dense = mapper.map_reflectance_batch_arrays(
+                source_sensor="sensor_a",
+                reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                sample_ids=["alpha", "beta"],
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=1,
+            )
+            rich = mapper.map_reflectance_batch_debug(
+                source_sensor="sensor_a",
+                reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                sample_ids=["alpha", "beta"],
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=1,
+            )
+
+            expected_rows = np.vstack(
+                [
+                    np.asarray(rich.results[0].target_reflectance, dtype=np.float64),
+                    np.asarray(rich.results[1].target_reflectance, dtype=np.float64),
+                ]
+            )
+            self.assertTrue(np.allclose(dense.reflectance, expected_rows))
+
+    def test_map_reflectance_batch_arrays_target_sensor_bypasses_rust_finalizer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module,
+                "_finalize_target_sensor_batch_accel",
+                side_effect=AssertionError("direct target-space batch path should not call the Rust finalizer"),
+            ):
+                dense = mapper.map_reflectance_batch_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                    valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                    sample_ids=["alpha", "beta"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                )
+
+            self.assertEqual(dense.reflectance.shape, (2, 2))
+
+    def test_map_reflectance_batch_arrays_target_sensor_reuses_output_buffers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+            out = np.empty((2, 2), dtype=np.float64)
+            source_fit_out = np.empty((2,), dtype=np.float64)
+
+            with patch.object(
+                mapping_module,
+                "_finalize_target_sensor_batch_accel",
+                side_effect=AssertionError("direct target-space batch path should not call the Rust finalizer"),
+            ):
+                dense = mapper.map_reflectance_batch_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                    valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                    sample_ids=["alpha", "beta"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                    out=out,
+                    source_fit_rmse_out=source_fit_out,
+                )
+
+            self.assertIs(dense.reflectance, out)
+            self.assertIs(dense.source_fit_rmse, source_fit_out)
+            self.assertEqual(dense.reflectance.shape, (2, 2))
+
+    def test_map_reflectance_batch_arrays_validates_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with self.assertRaises(MappingInputError):
+                mapper.map_reflectance_batch_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=np.array([0.10, 0.20]),
+                    output_mode="vnir_spectrum",
+                )
+
+    def test_map_reflectance_batch_arrays_attaches_sample_context_on_output_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with self.assertRaises(MappingInputError) as raised:
+                mapper.map_reflectance_batch_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[{"blue": 0.80, "swir": 0.90}],
+                    valid_mask_rows=[{"blue": True, "swir": False}],
+                    sample_ids=["alpha"],
+                    output_mode="full_spectrum",
+                    k=1,
+                )
+
+            self.assertEqual(raised.exception.context["sample_id"], "alpha")
+            self.assertEqual(raised.exception.context["sample_index"], 0)
 
     def test_vnir_and_swir_output_modes_return_expected_wavelength_axes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1088,6 +2028,26 @@ class MappingWorkflowTests(unittest.TestCase):
                 {"fixture_source:base:base", "fixture_source:vnir_high:vnir_high"},
             )
 
+    def test_map_reflectance_default_omits_debug_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            result = mapper.map_reflectance(
+                source_sensor="sensor_a",
+                reflectance={"blue": 0.80, "swir": 0.20},
+                output_mode="target_sensor",
+                target_sensor="sensor_b",
+                k=1,
+            )
+
+            assert result.target_reflectance is not None
+            self.assertTrue(np.allclose(result.target_reflectance, np.array([0.80, 0.20])))
+            self.assertEqual(result.neighbor_ids_by_segment, {})
+            self.assertEqual(result.neighbor_distances_by_segment, {})
+            self.assertEqual(result.segment_outputs, {})
+            self.assertEqual(result.diagnostics, {})
+
     def test_map_reflectance_batch_returns_sample_aligned_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
@@ -1105,23 +2065,66 @@ class MappingWorkflowTests(unittest.TestCase):
                 k=1,
             )
 
-            self.assertIsInstance(result, BatchMappingResult)
+            self.assertIsInstance(result, BatchMappingArrayResult)
             self.assertEqual(result.sample_ids, ("alpha", "beta"))
-            self.assertEqual(result.results[0].neighbor_ids_by_segment["vnir"], ("fixture_source:vnir_high:vnir_high",))
-            self.assertEqual(result.results[0].neighbor_ids_by_segment["swir"], ("fixture_source:vnir_high:vnir_high",))
-            self.assertEqual(result.results[1].neighbor_ids_by_segment["vnir"], ("fixture_source:swir_high:swir_high",))
-            self.assertEqual(result.results[1].neighbor_ids_by_segment["swir"], ("fixture_source:swir_high:swir_high",))
-            assert result.results[0].target_reflectance is not None
-            assert result.results[1].target_reflectance is not None
-            self.assertTrue(np.allclose(result.results[0].target_reflectance, np.array([0.80, 0.20])))
-            self.assertTrue(np.allclose(result.results[1].target_reflectance, np.array([0.10, 0.90])))
+            self.assertEqual(result.output_columns, ("target_vnir", "target_swir"))
+            self.assertTrue(np.allclose(result.reflectance[0], np.array([0.80, 0.20])))
+            self.assertTrue(np.allclose(result.reflectance[1], np.array([0.10, 0.90])))
+
+    def test_map_reflectance_batch_uses_batched_target_materialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_simulate_target_sensor",
+                side_effect=AssertionError("per-sample target resampling should not be used"),
+            ):
+                result = mapper.map_reflectance_batch(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[
+                        {"blue": 0.80, "swir": 0.20},
+                        {"blue": 0.10, "swir": 0.90},
+                    ],
+                    sample_ids=["alpha", "beta"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                )
+
+            self.assertTrue(np.allclose(result.reflectance[0], np.array([0.80, 0.20])))
+            self.assertTrue(np.allclose(result.reflectance[1], np.array([0.10, 0.90])))
+
+    def test_map_reflectance_batch_uses_batched_full_spectrum_materialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module,
+                "_assemble_full_spectrum",
+                side_effect=AssertionError("per-sample full-spectrum assembly should not be used"),
+            ):
+                result = mapper.map_reflectance_batch(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[
+                        {"blue": 0.80, "swir": 0.20},
+                        {"blue": 0.10, "swir": 0.90},
+                    ],
+                    sample_ids=["alpha", "beta"],
+                    output_mode="full_spectrum",
+                    k=1,
+                )
+
+            self.assertEqual(result.reflectance.shape, (2, len(mapping_module.CANONICAL_WAVELENGTHS)))
 
     def test_map_reflectance_batch_supports_public_exclusion_controls(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, _ = _prepare_fixture(Path(tmpdir))
 
             mapper = SpectralMapper(fixture["prepared_root"])
-            result = mapper.map_reflectance_batch(
+            result = mapper.map_reflectance_batch_debug(
                 source_sensor="sensor_a",
                 reflectance_rows=[
                     {"blue": 0.80, "swir": 0.20},
@@ -1143,6 +2146,139 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertEqual(result.results[0].neighbor_ids_by_segment["swir"], ("fixture_source:base:base",))
             self.assertEqual(result.results[1].neighbor_ids_by_segment["vnir"], ("fixture_source:mid:mid",))
             self.assertEqual(result.results[1].neighbor_ids_by_segment["swir"], ("fixture_source:vnir_high:vnir_high",))
+
+    def test_map_reflectance_batch_avoids_single_sample_mapping_path_for_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_map_reflectance_internal",
+                side_effect=AssertionError("single-sample mapping path should not be used"),
+            ):
+                result = mapper.map_reflectance_batch(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[{"blue": 0.15, "swir": 0.25}],
+                    sample_ids=["base"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                    self_exclude_sample_id=True,
+                )
+
+            self.assertEqual(result.sample_ids, ("base",))
+            self.assertEqual(result.reflectance.shape, (1, 2))
+
+    def test_map_reflectance_batch_output_arrays_avoid_single_sample_retrieval_path_for_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_retrieve_segment",
+                side_effect=AssertionError("single-sample retrieval path should not be used"),
+            ):
+                sample_ids, output_rows, source_fit_rmse, output_columns = mapper._map_reflectance_batch_output_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[{"blue": 0.15, "swir": 0.25}],
+                    sample_ids=["base"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                    self_exclude_sample_id=True,
+                )
+
+            self.assertEqual(sample_ids, ("base",))
+            self.assertEqual(output_columns, ("target_vnir", "target_swir"))
+            self.assertEqual(output_rows.shape, (1, 2))
+            self.assertEqual(source_fit_rmse.shape, (1,))
+
+    @unittest.skipUnless(ZARR_AVAILABLE, "zarr is not installed")
+    def test_map_reflectance_batch_to_zarr_avoids_single_sample_result_path_for_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            mapper = SpectralMapper(fixture["prepared_root"])
+            output_path = root / "batch_exclusion.zarr"
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_map_reflectance_internal",
+                side_effect=AssertionError("single-sample result path should not be used"),
+            ):
+                summary = mapper.map_reflectance_batch_to_zarr(
+                    zarr_path=output_path,
+                    source_sensor="sensor_a",
+                    reflectance_rows=[{"blue": 0.15, "swir": 0.25}],
+                    sample_ids=["base"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                    self_exclude_sample_id=True,
+                )
+
+            self.assertEqual(summary["sample_count"], 1)
+            self.assertTrue(output_path.exists())
+
+    def test_map_reflectance_batch_output_arrays_exclusions_use_grouped_batch_retrieval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_retrieve_segment",
+                side_effect=AssertionError("single-sample retrieval path should not be used"),
+            ):
+                with patch.object(mapper, "_retrieve_segment_dense_batch", wraps=mapper._retrieve_segment_dense_batch) as batch_mock:
+                    sample_ids, output_rows, source_fit_rmse, output_columns = mapper._map_reflectance_batch_output_arrays(
+                        source_sensor="sensor_a",
+                        reflectance_rows=[
+                            {"blue": 0.80, "swir": 0.20},
+                            {"blue": 0.15, "swir": 0.25},
+                        ],
+                        sample_ids=["alpha", "beta"],
+                        output_mode="target_sensor",
+                        target_sensor="sensor_b",
+                        k=1,
+                        exclude_row_ids_per_sample=[
+                            "fixture_source:vnir_high:vnir_high",
+                            "fixture_source:vnir_high:vnir_high",
+                        ],
+                    )
+
+            self.assertEqual(sample_ids, ("alpha", "beta"))
+            self.assertEqual(output_columns, ("target_vnir", "target_swir"))
+            self.assertEqual(output_rows.shape, (2, 2))
+            self.assertEqual(source_fit_rmse.shape, (2,))
+            self.assertEqual(batch_mock.call_count, 2)
+
+    def test_map_reflectance_batch_output_arrays_avoid_single_sample_retrieval_for_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_retrieve_segment",
+                side_effect=AssertionError("single-sample segment retrieval should not be used"),
+            ):
+                sample_ids, output_rows, source_fit_rmse, output_columns = mapper._map_reflectance_batch_output_arrays(
+                    source_sensor="sensor_a",
+                    reflectance_rows=[{"blue": 0.15, "swir": 0.25}],
+                    sample_ids=["base"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                    self_exclude_sample_id=True,
+                )
+
+            self.assertEqual(sample_ids, ("base",))
+            self.assertEqual(output_columns, ("target_vnir", "target_swir"))
+            self.assertEqual(output_rows.shape, (1, 2))
+            self.assertEqual(source_fit_rmse.shape, (1,))
 
     def test_map_reflectance_batch_matches_single_sample_results_for_array_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1172,14 +2308,34 @@ class MappingWorkflowTests(unittest.TestCase):
                 k=1,
             )
 
-            self.assertEqual(batch.results[0].neighbor_ids_by_segment, single_alpha.neighbor_ids_by_segment)
-            self.assertEqual(batch.results[1].neighbor_ids_by_segment, single_beta.neighbor_ids_by_segment)
-            assert batch.results[0].reconstructed_full_spectrum is not None
-            assert batch.results[1].reconstructed_full_spectrum is not None
             assert single_alpha.reconstructed_full_spectrum is not None
             assert single_beta.reconstructed_full_spectrum is not None
-            self.assertTrue(np.allclose(batch.results[0].reconstructed_full_spectrum, single_alpha.reconstructed_full_spectrum))
-            self.assertTrue(np.allclose(batch.results[1].reconstructed_full_spectrum, single_beta.reconstructed_full_spectrum))
+            self.assertTrue(np.allclose(batch.reflectance[0], single_alpha.reconstructed_full_spectrum))
+            self.assertTrue(np.allclose(batch.reflectance[1], single_beta.reconstructed_full_spectrum))
+
+    def test_map_reflectance_batch_avoids_single_sample_result_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            mapper = SpectralMapper(fixture["prepared_root"])
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_build_mapping_result",
+                side_effect=AssertionError("single-sample result builder should not be used"),
+            ):
+                batch = mapper.map_reflectance_batch(
+                    source_sensor="sensor_a",
+                    reflectance_rows=np.array([[0.80, 0.20], [0.10, 0.90]], dtype=np.float64),
+                    valid_mask_rows=np.array([[True, True], [True, True]], dtype=bool),
+                    sample_ids=["alpha", "beta"],
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                    k=1,
+                )
+
+            self.assertEqual(batch.sample_ids, ("alpha", "beta"))
+            self.assertTrue(np.allclose(batch.reflectance[0], np.array([0.80, 0.20])))
+            self.assertTrue(np.allclose(batch.reflectance[1], np.array([0.10, 0.90])))
 
     def test_map_reflectance_batch_validates_shapes_and_attaches_sample_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2444,7 +3600,7 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(log_payloads[0]["context"]["neighbor_estimator"], "distance_weighted_mean")
             self.assertEqual(log_payloads[0]["level"], "info")
             self.assertEqual(log_payloads[1]["context"]["written_rows"], 2)
-            self.assertEqual(log_payloads[1]["context"]["segment_statuses"], {"swir": "ok", "vnir": "ok"})
+            self.assertEqual(log_payloads[1]["context"]["segment_statuses"], {})
             self.assertEqual(log_payloads[1]["level"], "info")
             self.assertIsInstance(log_payloads[1]["elapsed_ms"], int)
             self.assertGreaterEqual(log_payloads[1]["elapsed_ms"], 0)
@@ -2617,6 +3773,417 @@ class MappingCliTests(unittest.TestCase):
             diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
             self.assertEqual(diagnostics["sample_ids"], ["alpha", "beta"])
             self.assertEqual(diagnostics["results"][1]["sample_id"], "beta")
+
+    @unittest.skipUnless(ZARR_AVAILABLE, "zarr is not installed")
+    def test_map_reflectance_batch_command_can_write_zarr_output(self) -> None:
+        import zarr
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_wide.csv"
+            output_path = root / "batch_vnir.zarr"
+            output_path.mkdir(parents=True, exist_ok=True)
+            (output_path / "stale.txt").write_text("stale", encoding="utf-8")
+
+            _write_csv(
+                input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "alpha", "blue": 0.80, "swir": 0.20},
+                    {"sample_id": "beta", "blue": 0.15, "swir": 0.25},
+                ],
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = cli.main_with_args(
+                    [
+                        "map-reflectance-batch",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "vnir_spectrum",
+                        "--k",
+                        "1",
+                        "--output-format",
+                        "zarr",
+                        "--output-chunk-size",
+                        "1",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["output_format"], "zarr")
+            self.assertEqual(payload["output_columns"][0], "nm_400")
+            self.assertEqual(payload["output_columns"][-1], "nm_1000")
+            self.assertFalse((output_path / "stale.txt").exists())
+
+            store = zarr.open_group(str(output_path), mode="r")
+            self.assertEqual(store.attrs["output_mode"], "vnir_spectrum")
+            self.assertEqual(store.attrs["sample_count"], 2)
+            self.assertEqual(store.attrs["chunk_size"], 1)
+            self.assertEqual(store["reflectance"].shape, (2, len(mapping_module.VNIR_WAVELENGTHS)))
+            self.assertEqual(store["source_fit_rmse"].shape, (2,))
+            self.assertEqual(store["wavelength_nm"][0], 400)
+            self.assertEqual(store["wavelength_nm"][-1], 1000)
+            sample_ids = [
+                value if isinstance(value, str) else value.decode("utf-8").rstrip("\x00")
+                for value in store["sample_id"][:]
+            ]
+            self.assertEqual(sample_ids, ["alpha", "beta"])
+            self.assertTrue(np.isfinite(store["reflectance"][:]).all())
+            self.assertTrue(payload["streamed_output"])
+
+    @unittest.skipUnless(ZARR_AVAILABLE, "zarr is not installed")
+    def test_map_reflectance_batch_command_zarr_path_does_not_call_map_reflectance_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_wide.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "alpha", "blue": 0.80, "swir": 0.20},
+                    {"sample_id": "beta", "blue": 0.15, "swir": 0.25},
+                ],
+            )
+
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "map_reflectance_batch",
+                side_effect=AssertionError("zarr path should use dense array export"),
+            ):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = cli.main_with_args(
+                        [
+                            "map-reflectance-batch",
+                            "--prepared-root",
+                            str(fixture["prepared_root"]),
+                            "--source-sensor",
+                            "sensor_a",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "vnir_spectrum",
+                            "--output-format",
+                            "zarr",
+                            "--output",
+                            str(root / "batch_vnir.zarr"),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["streamed_output"])
+
+    @unittest.skipUnless(ZARR_AVAILABLE, "zarr is not installed")
+    def test_map_reflectance_batch_command_streams_wide_input_without_materializing_full_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_wide.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "alpha", "blue": 0.80, "swir": 0.20},
+                    {"sample_id": "beta", "blue": 0.15, "swir": 0.25},
+                ],
+            )
+
+            with patch.object(cli, "_load_batch_reflectance_input", side_effect=AssertionError("materialized loader should not be used")):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = cli.main_with_args(
+                        [
+                            "map-reflectance-batch",
+                            "--prepared-root",
+                            str(fixture["prepared_root"]),
+                            "--source-sensor",
+                            "sensor_a",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "vnir_spectrum",
+                            "--output-format",
+                            "zarr",
+                            "--output",
+                            str(root / "batch_vnir.zarr"),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["streamed_output"])
+
+    @unittest.skipUnless(ZARR_AVAILABLE, "zarr is not installed")
+    def test_map_reflectance_batch_command_streams_grouped_long_input_without_materializing_full_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_long.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "band_id", "reflectance"],
+                [
+                    {"sample_id": "alpha", "band_id": "blue", "reflectance": 0.80},
+                    {"sample_id": "alpha", "band_id": "swir", "reflectance": 0.20},
+                    {"sample_id": "beta", "band_id": "blue", "reflectance": 0.15},
+                    {"sample_id": "beta", "band_id": "swir", "reflectance": 0.25},
+                ],
+            )
+
+            with patch.object(cli, "_load_batch_reflectance_input", side_effect=AssertionError("materialized loader should not be used")):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = cli.main_with_args(
+                        [
+                            "map-reflectance-batch",
+                            "--prepared-root",
+                            str(fixture["prepared_root"]),
+                            "--source-sensor",
+                            "sensor_a",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "vnir_spectrum",
+                            "--output-format",
+                            "zarr",
+                            "--output",
+                            str(root / "batch_vnir.zarr"),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["streamed_output"])
+
+    @unittest.skipUnless(ZARR_AVAILABLE, "zarr is not installed")
+    def test_map_reflectance_batch_command_streams_interleaved_long_zarr_input_via_disk_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_long_interleaved.csv"
+            output_path = root / "batch_vnir_interleaved.zarr"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "band_id", "reflectance"],
+                [
+                    {"sample_id": "gamma", "band_id": "blue", "reflectance": 0.80},
+                    {"sample_id": "alpha", "band_id": "blue", "reflectance": 0.15},
+                    {"sample_id": "gamma", "band_id": "swir", "reflectance": 0.20},
+                    {"sample_id": "alpha", "band_id": "swir", "reflectance": 0.25},
+                ],
+            )
+
+            with patch.object(cli, "_load_batch_reflectance_input", side_effect=AssertionError("materialized loader should not be used")):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = cli.main_with_args(
+                        [
+                            "map-reflectance-batch",
+                            "--prepared-root",
+                            str(fixture["prepared_root"]),
+                            "--source-sensor",
+                            "sensor_a",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "vnir_spectrum",
+                            "--output-format",
+                            "zarr",
+                            "--output",
+                            str(output_path),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertTrue(payload["streamed_output"])
+
+            import zarr
+
+            store = zarr.open_group(str(output_path), mode="r")
+            sample_ids = [
+                value if isinstance(value, str) else value.decode("utf-8").rstrip("\x00")
+                for value in store["sample_id"][:]
+            ]
+            self.assertEqual(sample_ids, ["gamma", "alpha"])
+            self.assertEqual(store.attrs["sample_count"], 2)
+
+    @unittest.skipIf(ZARR_AVAILABLE, "dependency guard only applies when zarr is absent")
+    def test_map_reflectance_batch_command_reports_missing_zarr_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_wide.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "alpha", "blue": 0.80, "swir": 0.20},
+                ],
+            )
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = cli.main_with_args(
+                    [
+                        "--json-errors",
+                        "map-reflectance-batch",
+                        "--prepared-root",
+                        str(fixture["prepared_root"]),
+                        "--source-sensor",
+                        "sensor_a",
+                        "--input",
+                        str(input_path),
+                        "--output-mode",
+                        "vnir_spectrum",
+                        "--output-format",
+                        "zarr",
+                        "--output",
+                        str(root / "batch_vnir.zarr"),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 2)
+            payload = json.loads(stderr.getvalue())
+            self.assertEqual(payload["error_code"], "invalid_mapping_input")
+            self.assertEqual(payload["context"]["output_format"], "zarr")
+
+    @unittest.skipUnless(ZARR_AVAILABLE, "zarr is not installed")
+    def test_map_reflectance_batch_command_cleans_up_temp_zarr_store_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch_wide.csv"
+            output_path = root / "batch_vnir.zarr"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "alpha", "blue": 0.80, "swir": 0.20},
+                ],
+            )
+
+            stderr = io.StringIO()
+            with patch.object(
+                mapping_module.SpectralMapper,
+                "_map_reflectance_batch_output_arrays",
+                side_effect=MappingInputError("synthetic zarr failure"),
+            ):
+                with contextlib.redirect_stderr(stderr):
+                    exit_code = cli.main_with_args(
+                        [
+                            "--json-errors",
+                            "map-reflectance-batch",
+                            "--prepared-root",
+                            str(fixture["prepared_root"]),
+                            "--source-sensor",
+                            "sensor_a",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "vnir_spectrum",
+                            "--output-format",
+                            "zarr",
+                            "--output",
+                            str(output_path),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 2)
+            self.assertFalse(output_path.exists())
+            self.assertEqual(list(root.glob(f".{output_path.name}.tmp-*")), [])
+
+    @unittest.skipUnless(ZARR_AVAILABLE, "zarr is not installed")
+    def test_map_reflectance_batch_command_preserves_existing_zarr_store_when_finalization_fails(self) -> None:
+        import zarr
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            first_input_path = root / "batch_first.csv"
+            second_input_path = root / "batch_second.csv"
+            output_path = root / "batch_vnir.zarr"
+
+            _write_csv(
+                first_input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "alpha", "blue": 0.80, "swir": 0.20},
+                ],
+            )
+            _write_csv(
+                second_input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "beta", "blue": 0.15, "swir": 0.25},
+                ],
+            )
+
+            exit_code = cli.main_with_args(
+                [
+                    "map-reflectance-batch",
+                    "--prepared-root",
+                    str(fixture["prepared_root"]),
+                    "--source-sensor",
+                    "sensor_a",
+                    "--input",
+                    str(first_input_path),
+                    "--output-mode",
+                    "vnir_spectrum",
+                    "--output-format",
+                    "zarr",
+                    "--output",
+                    str(output_path),
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+
+            with patch.object(cli, "_finalize_output_path", side_effect=OSError("synthetic rename failure")):
+                with self.assertRaises(OSError):
+                    cli.main_with_args(
+                        [
+                            "map-reflectance-batch",
+                            "--prepared-root",
+                            str(fixture["prepared_root"]),
+                            "--source-sensor",
+                            "sensor_a",
+                            "--input",
+                            str(second_input_path),
+                            "--output-mode",
+                            "vnir_spectrum",
+                            "--output-format",
+                            "zarr",
+                            "--output",
+                            str(output_path),
+                        ]
+                    )
+
+            store = zarr.open_group(str(output_path), mode="r")
+            sample_ids = [
+                value if isinstance(value, str) else value.decode("utf-8").rstrip("\x00")
+                for value in store["sample_id"][:]
+            ]
+            self.assertEqual(sample_ids, ["alpha"])
+            self.assertEqual(list(root.glob(f".{output_path.name}.tmp-*")), [])
 
     def test_map_reflectance_batch_command_emits_json_logs_to_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3018,7 +4585,7 @@ class MappingCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
                 cli.main_with_args(["--version"])
             self.assertEqual(version_exit.exception.code, 0)
-            self.assertIn("0.2.1", version_stdout.getvalue())
+            self.assertIn("0.3.0", version_stdout.getvalue())
 
             _write_csv(
                 input_path,

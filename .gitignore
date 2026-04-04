@@ -9,7 +9,11 @@ tmp/
 build/
 dist/
 *.egg-info/
+*.so
+*.pyd
+*.dylib
 benchmarks/results/
+target/
 
 # Runtime outputs
 data/raw/

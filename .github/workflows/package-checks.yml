@@ -24,6 +24,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: true
 
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
       - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip
@@ -41,6 +43,8 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Build sdist and wheel
         run: |
@@ -71,7 +75,9 @@ jobs:
           import spectral_library
 
           expected = {
+              "BatchMappingArrayResult",
               "BatchMappingResult",
+              "LinearSpectralMapper",
               "MappingResult",
               "PreparedLibraryManifest",
               "SensorSRFSchema",
@@ -164,6 +170,8 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Install backend-specific dependencies
         run: |

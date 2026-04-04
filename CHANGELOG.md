@@ -5,6 +5,51 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.3.0] - 2026-04-04
+
+### Added
+
+- Rust-accelerated batch hot paths via PyO3/Rayon native extension
+  (`spectral_library._mapping_rust`) for spectrum reconstruction,
+  target-sensor projection, segment merging, and neighbor refinement
+- `LinearSpectralMapper` for fixed `input @ weights + bias` high-throughput
+  mapping of millions of pixels without per-sample KNN retrieval
+- `BatchMappingArrayResult` dense result type for array-oriented batch mapping
+- `map_reflectance_batch_arrays()` explicit dense batch path returning
+  `BatchMappingArrayResult`
+- `map_reflectance_debug()` and `map_reflectance_batch_debug()` for rich
+  per-sample diagnostics, splitting the slim default from the debug path
+- `compile_linear_mapper()` on `SpectralMapper` to compile a prepared runtime
+  into a reusable linear mapper
+- `map_reflectance_batch_to_zarr()` for streaming large batch results to
+  Zarr stores
+- `map_reflectance_batch_ndarray()` for direct ndarray input batch mapping
+- cKDTree caching across batch calls for `scipy_ckdtree` backend
+- Dense batch vectorization for segment retrieval, reconstruction, and
+  target-sensor projection
+- Cross-platform wheel builds (manylinux x86_64/aarch64, macOS x86_64/arm64,
+  Windows AMD64) via cibuildwheel in GitHub Actions
+- CLI `--output-format zarr` and `--output-chunk-size` for streaming batch
+  output
+
+### Changed
+
+- `map_reflectance()` now returns slim results by default (no neighbor ids,
+  no diagnostics); use `map_reflectance_debug()` for the full payload
+- `map_reflectance_batch()` now returns `BatchMappingArrayResult` by default;
+  use `map_reflectance_batch_debug()` for per-sample `MappingResult` objects
+- Batch segment retrieval is fully vectorized instead of per-sample iteration
+- Release workflow now builds platform-specific wheels with compiled Rust
+  extension instead of pure-Python wheels
+
+### Fixed
+
+- Double `np.ascontiguousarray(np.asarray(...))` in `LinearSpectralMapper`
+  init reduced to single call
+- `assert` in persisted KNN index query path replaced with proper
+  `MappingInputError` raise
+- Redundant `.copy()` on wavelength array construction removed
+
 ## [0.2.1] - 2026-04-03
 
 ### Added
