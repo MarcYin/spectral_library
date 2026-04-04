@@ -37,12 +37,12 @@ jobs:
 
       - name: Set up QEMU for aarch64
         if: matrix.cibw_archs == 'aarch64'
-        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v3
         with:
           platforms: arm64
 
       - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@faf86a6ed7efa889faf6996aa23820831055001a # v2.23.3
+        uses: pypa/cibuildwheel@8d2b08b68458a16aeb24b64e68a09ab1c8e82084 # v3.4.1
         env:
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
 
@@ -271,7 +271,7 @@ jobs:
           path: dist
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: dist/*
 
