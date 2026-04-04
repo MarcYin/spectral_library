@@ -18,7 +18,7 @@ jobs:
         include:
           - os: ubuntu-latest
             cibw_archs: x86_64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             cibw_archs: aarch64
           - os: macos-latest
             cibw_archs: arm64
@@ -32,12 +32,6 @@ jobs:
           python-version: "3.11"
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - name: Set up QEMU for aarch64
-        if: matrix.cibw_archs == 'aarch64'
-        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3
-        with:
-          platforms: arm64
 
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@faf86a6ed7efa889faf6996aa23820831055001a # v2.23.3
