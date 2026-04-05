@@ -5,6 +5,26 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.3.1] - 2026-04-05
+
+### Changed
+
+- aligned built-in spectral-mapping sensor ids with canonical `rsrf` names such
+  as `sentinel-2a_msi`, `landsat-8_oli`, `landsat-9_oli2`, `terra_modis`, and
+  platform-specific VIIRS ids
+- resolved built-in mapping sensor schemas from `rsrf` instead of the repo's
+  committed default SRF snapshots while keeping `--srf-root` available for
+  custom local sensor JSON definitions
+- allowed prepared runtimes to synthesize missing `source_<sensor>_{vnir,swir}`
+  matrices on demand for supported canonical `rsrf` sensors
+
+### Fixed
+
+- release workflow smoke installs now consume the built wheel artifact directly
+  instead of a hardcoded package version string
+- official example assets, docs, manifests, and tests now use canonical `rsrf`
+  sensor ids consistently
+
 ## [0.3.0] - 2026-04-04
 
 ### Added
