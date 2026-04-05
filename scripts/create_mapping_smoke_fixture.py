@@ -32,6 +32,23 @@ def _spectrum_values(vnir: float, overlap: float, swir: float) -> dict[str, floa
     return row
 
 
+def _band_payload(
+    *,
+    band_id: str,
+    segment: str,
+    wavelength_nm: list[float],
+    response: list[float],
+) -> dict[str, object]:
+    return {
+        "band_id": band_id,
+        "segment": segment,
+        "response_definition": {
+            "wavelength_nm": wavelength_nm,
+            "response": response,
+        },
+    }
+
+
 def create_smoke_fixture(output_root: Path) -> dict[str, str]:
     output_root = Path(output_root)
     siac_root = output_root / "siac"
@@ -96,35 +113,35 @@ def create_smoke_fixture(output_root: Path) -> dict[str, str]:
     sensor_a = {
         "sensor_id": "sensor_a",
         "bands": [
-            {
-                "band_id": "blue",
-                "segment": "vnir",
-                "wavelength_nm": [445.0, 450.0, 455.0],
-                "rsr": [0.2, 1.0, 0.2],
-            },
-            {
-                "band_id": "swir",
-                "segment": "swir",
-                "wavelength_nm": [1595.0, 1600.0, 1605.0],
-                "rsr": [0.2, 1.0, 0.2],
-            },
+            _band_payload(
+                band_id="blue",
+                segment="vnir",
+                wavelength_nm=[445.0, 450.0, 455.0],
+                response=[0.2, 1.0, 0.2],
+            ),
+            _band_payload(
+                band_id="swir",
+                segment="swir",
+                wavelength_nm=[1595.0, 1600.0, 1605.0],
+                response=[0.2, 1.0, 0.2],
+            ),
         ],
     }
     sensor_b = {
         "sensor_id": "sensor_b",
         "bands": [
-            {
-                "band_id": "target_vnir",
-                "segment": "vnir",
-                "wavelength_nm": [495.0, 500.0, 505.0],
-                "rsr": [0.2, 1.0, 0.2],
-            },
-            {
-                "band_id": "target_swir",
-                "segment": "swir",
-                "wavelength_nm": [1695.0, 1700.0, 1705.0],
-                "rsr": [0.2, 1.0, 0.2],
-            },
+            _band_payload(
+                band_id="target_vnir",
+                segment="vnir",
+                wavelength_nm=[495.0, 500.0, 505.0],
+                response=[0.2, 1.0, 0.2],
+            ),
+            _band_payload(
+                band_id="target_swir",
+                segment="swir",
+                wavelength_nm=[1695.0, 1700.0, 1705.0],
+                response=[0.2, 1.0, 0.2],
+            ),
         ],
     }
     srf_root.mkdir(parents=True, exist_ok=True)

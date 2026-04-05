@@ -469,30 +469,41 @@ class PreparedRuntimeContractTests(unittest.TestCase):
                     "interpolation_summary",
                 },
             )
-            self.assertEqual(manifest_payload["schema_version"], "1.2.0")
+            self.assertEqual(manifest_payload["schema_version"], "2.0.0")
             self.assertEqual(set(manifest_payload["file_checksums"]), set(manifest.file_checksums))
             self.assertEqual(manifest_payload["knn_index_artifacts"], manifest.knn_index_artifacts)
             self.assertEqual(set(manifest_payload["interpolation_summary"]), set(manifest.interpolation_summary))
 
             checksums_payload = json.loads((fixture["prepared_root"] / "checksums.json").read_text(encoding="utf-8"))
             self.assertEqual(set(checksums_payload), {"files", "schema_version"})
-            self.assertEqual(checksums_payload["schema_version"], "1.2.0")
+            self.assertEqual(checksums_payload["schema_version"], "2.0.0")
             self.assertIn("manifest.json", checksums_payload["files"])
             self.assertIn("mapping_metadata.parquet", checksums_payload["files"])
             self.assertIn("sensor_schema.json", checksums_payload["files"])
             self.assertIn("hyperspectral_vnir.npy", checksums_payload["files"])
             self.assertIn("hyperspectral_swir.npy", checksums_payload["files"])
 
-    def test_prepared_runtime_compatibility_error_is_public_and_stable(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            fixture, _ = _prepare_fixture(Path(tmpdir))
-            manifest_path = fixture["prepared_root"] / "manifest.json"
-            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-            payload["schema_version"] = "2.0.0"
-            manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            sensor_schema_payload = json.loads((fixture["prepared_root"] / "sensor_schema.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(sensor_schema_payload), {"schema_version", "canonical_wavelength_grid", "sensors"})
+            self.assertEqual(sensor_schema_payload["schema_version"], "2.0.0")
+            self.assertEqual(
+                sensor_schema_payload["canonical_wavelength_grid"],
+                {"start_nm": 400, "end_nm": 2500, "step_nm": 1},
+            )
+            self.assertIn("response_definition", sensor_schema_payload["sensors"][0]["bands"][0])
 
-            with self.assertRaises(PreparedLibraryCompatibilityError):
-                SpectralMapper(fixture["prepared_root"])
+    def test_prepared_runtime_compatibility_error_is_public_and_stable(self) -> None:
+        for schema_version in ("1.2.0", "3.0.0"):
+            with self.subTest(schema_version=schema_version):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    fixture, _ = _prepare_fixture(Path(tmpdir))
+                    manifest_path = fixture["prepared_root"] / "manifest.json"
+                    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    payload["schema_version"] = schema_version
+                    manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+                    with self.assertRaises(PreparedLibraryCompatibilityError):
+                        SpectralMapper(fixture["prepared_root"])
 
     def test_validate_prepared_library_round_trips_public_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

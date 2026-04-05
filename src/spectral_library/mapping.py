@@ -35,7 +35,8 @@ from . import _rustaccel
 from ._version import __version__
 
 
-PREPARED_SCHEMA_VERSION = "1.2.0"
+PREPARED_SCHEMA_VERSION = "2.0.0"
+SUPPORTED_PREPARED_SCHEMA_MAJOR_VERSIONS = ("2",)
 SUPPORTED_OUTPUT_MODES = (
     "target_sensor",
     "vnir_spectrum",
@@ -100,7 +101,7 @@ SEGMENT_FILE_NAMES = {
 FULL_WAVELENGTH_COUNT = int(CANONICAL_WAVELENGTHS.size)
 RSRF_ROOT_ENV_VAR = "RSRF_ROOT"
 RSRF_REGISTRY_RELATIVE_PATH = Path("data") / "registry" / "sensors.parquet"
-RSRF_INSTALL_HINT = 'pip install "rsrf>=0.1.0"'
+RSRF_INSTALL_HINT = 'pip install "rsrf>=0.2.0"'
 RSRF_REPRESENTATION_VARIANT = "band_average"
 
 
@@ -313,44 +314,34 @@ class SensorBandDefinition:
             raise SensorSchemaError("Sensor band definition is missing band_id.")
         if "segment" not in payload:
             raise SensorSchemaError("Sensor band definition is missing segment.", context={"band_id": payload.get("band_id")})
-        if "wavelength_nm" not in payload or "rsr" not in payload:
+        if "response_definition" not in payload:
             raise SensorSchemaError(
-                "Sensor band definition must include wavelength_nm and rsr arrays.",
+                "Sensor band definition must include an rsrf-compatible response definition.",
                 context={"band_id": payload.get("band_id")},
             )
-
-        wavelengths = tuple(float(value) for value in payload["wavelength_nm"])  # type: ignore[index]
-        rsr = tuple(float(value) for value in payload["rsr"])  # type: ignore[index]
-        ordered_pairs = tuple(sorted(zip(wavelengths, rsr), key=lambda item: item[0]))
-        ordered_wavelengths = tuple(pair[0] for pair in ordered_pairs)
-        ordered_rsr = tuple(pair[1] for pair in ordered_pairs)
-        positive_support = [wavelength for wavelength, weight in ordered_pairs if weight > 0]
+        ordered_wavelengths, ordered_rsr, center_nm, fwhm_nm, support_min_nm, support_max_nm = (
+            _coerce_sensor_band_response_definition(payload)
+        )
 
         return cls(
             band_id=str(payload["band_id"]),
             segment=str(payload["segment"]),
             wavelength_nm=ordered_wavelengths,
             rsr=ordered_rsr,
-            center_nm=_optional_float(payload.get("center_nm")),
-            fwhm_nm=_optional_float(payload.get("fwhm_nm")),
-            support_min_nm=(
-                _optional_float(payload.get("support_min_nm"))
-                if _optional_float(payload.get("support_min_nm")) is not None
-                else (min(positive_support) if positive_support else None)
-            ),
-            support_max_nm=(
-                _optional_float(payload.get("support_max_nm"))
-                if _optional_float(payload.get("support_max_nm")) is not None
-                else (max(positive_support) if positive_support else None)
-            ),
+            center_nm=center_nm,
+            fwhm_nm=fwhm_nm,
+            support_min_nm=support_min_nm,
+            support_max_nm=support_max_nm,
         )
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
             "band_id": self.band_id,
             "segment": self.segment,
-            "wavelength_nm": list(self.wavelength_nm),
-            "rsr": list(self.rsr),
+            "response_definition": {
+                "wavelength_nm": list(self.wavelength_nm),
+                "response": list(self.rsr),
+            },
         }
         if self.center_nm is not None:
             payload["center_nm"] = self.center_nm
@@ -832,6 +823,88 @@ def _optional_float(value: object) -> float | None:
     return float(value)
 
 
+def _coerce_sensor_band_response_definition(
+    payload: Mapping[str, object],
+) -> tuple[tuple[float, ...], tuple[float, ...], float | None, float | None, float | None, float | None]:
+    rsrf_module = _load_rsrf_module()
+    missing_api = [
+        name
+        for name in ("coerce_response_definition", "realize_curve")
+        if not hasattr(rsrf_module, name)
+    ]
+    if missing_api:
+        raise SensorSchemaError(
+            "rsrf does not expose the custom response-definition API required for sensor schema loading.",
+            context={"missing_attributes": missing_api},
+        )
+    response_definition = _response_definition_input_from_payload(payload)
+
+    try:
+        resolved_definition = rsrf_module.coerce_response_definition(
+            response_definition,
+            band_id=str(payload["band_id"]),
+            source_variant=_optional_string(payload.get("source_variant")) or "custom",
+        )
+    except (TypeError, ValueError) as exc:
+        raise SensorSchemaError(
+            "Sensor band definition could not be normalized through rsrf.",
+            context={"band_id": payload.get("band_id")},
+        ) from exc
+
+    if hasattr(resolved_definition, "wavelength_nm") and hasattr(resolved_definition, "response"):
+        wavelengths = np.asarray(resolved_definition.wavelength_nm, dtype=np.float64)
+        response = np.asarray(resolved_definition.response, dtype=np.float64)
+        center_nm = _optional_float(payload.get("center_nm")) or _optional_float(payload.get("center_wavelength_nm"))
+        fwhm_nm = _optional_float(payload.get("fwhm_nm"))
+    else:
+        try:
+            realized_curve = rsrf_module.realize_curve(resolved_definition)
+        except (TypeError, ValueError, NotImplementedError) as exc:
+            raise SensorSchemaError(
+                "Sensor band definition could not be realized through rsrf.",
+                context={"band_id": payload.get("band_id")},
+            ) from exc
+        wavelengths = np.asarray(realized_curve.wavelength_nm, dtype=np.float64)
+        response = np.asarray(realized_curve.response, dtype=np.float64)
+        center_nm = _optional_float(payload.get("center_nm"))
+        if center_nm is None:
+            center_nm = float(resolved_definition.center_wavelength_nm)
+        fwhm_nm = _optional_float(payload.get("fwhm_nm"))
+        if fwhm_nm is None:
+            fwhm_nm = float(resolved_definition.fwhm_nm)
+
+    ordered_pairs = sorted(zip(wavelengths.tolist(), response.tolist()), key=lambda item: item[0])
+    ordered_wavelengths = tuple(float(wavelength) for wavelength, _ in ordered_pairs)
+    ordered_rsr = tuple(float(weight) for _, weight in ordered_pairs)
+    positive_support = [wavelength for wavelength, weight in ordered_pairs if weight > 0]
+
+    support_min_nm = _optional_float(payload.get("support_min_nm"))
+    if support_min_nm is None and positive_support:
+        support_min_nm = float(min(positive_support))
+
+    support_max_nm = _optional_float(payload.get("support_max_nm"))
+    if support_max_nm is None and positive_support:
+        support_max_nm = float(max(positive_support))
+
+    return ordered_wavelengths, ordered_rsr, center_nm, fwhm_nm, support_min_nm, support_max_nm
+
+
+def _response_definition_input_from_payload(payload: Mapping[str, object]) -> object:
+    response_definition = payload["response_definition"]
+    if isinstance(response_definition, Mapping):
+        return dict(response_definition)
+    return response_definition
+
+
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
+
+
 def _default_sample_id(index: int) -> str:
     return f"sample_{index + 1:06d}"
 
@@ -1041,7 +1114,8 @@ def _load_rsrf_module() -> Any:
         import rsrf  # type: ignore[import-not-found]
     except ModuleNotFoundError as exc:
         raise SensorSchemaError(
-            f'rsrf is required to resolve built-in sensor schemas. Install it with `{RSRF_INSTALL_HINT}`.',
+            "rsrf is required to resolve built-in sensor schemas and normalize custom sensor definitions. "
+            f"Install it with `{RSRF_INSTALL_HINT}`.",
         ) from exc
     return rsrf
 
@@ -2406,6 +2480,130 @@ def _load_sensor_payloads(path: Path) -> list[Mapping[str, object]]:
     raise SensorSchemaError("Sensor schema JSON must be an object.", context={"path": str(path)})
 
 
+def _load_prepared_sensor_schema_payload(
+    path: Path,
+    *,
+    expected_schema_version: str,
+) -> tuple[Mapping[str, object], list[Mapping[str, object]]]:
+    payload = _read_json_document(
+        path,
+        error_factory=PreparedLibraryValidationError,
+        document_name=path.name,
+    )
+    if not isinstance(payload, dict):
+        raise PreparedLibraryValidationError(
+            "sensor_schema.json must be a JSON object.",
+            context={"path": str(path)},
+        )
+
+    schema_version = _optional_string(payload.get("schema_version"))
+    if not schema_version:
+        raise PreparedLibraryValidationError(
+            "sensor_schema.json is missing schema_version.",
+            context={"path": str(path)},
+        )
+    if schema_version != expected_schema_version:
+        raise PreparedLibraryValidationError(
+            "sensor_schema.json schema_version does not match manifest.json.",
+            context={
+                "path": str(path),
+                "sensor_schema_version": schema_version,
+                "manifest_schema_version": expected_schema_version,
+            },
+        )
+
+    canonical_grid = payload.get("canonical_wavelength_grid")
+    if not isinstance(canonical_grid, Mapping):
+        raise PreparedLibraryValidationError(
+            "sensor_schema.json is missing canonical_wavelength_grid.",
+            context={"path": str(path)},
+        )
+    expected_grid = {
+        "start_nm": CANONICAL_START_NM,
+        "end_nm": CANONICAL_END_NM,
+        "step_nm": 1,
+    }
+    actual_grid = {
+        "start_nm": canonical_grid.get("start_nm"),
+        "end_nm": canonical_grid.get("end_nm"),
+        "step_nm": canonical_grid.get("step_nm"),
+    }
+    if actual_grid != expected_grid:
+        raise PreparedLibraryValidationError(
+            "sensor_schema.json canonical_wavelength_grid is incompatible with this package.",
+            context={
+                "path": str(path),
+                "expected_canonical_wavelength_grid": expected_grid,
+                "actual_canonical_wavelength_grid": actual_grid,
+            },
+        )
+
+    sensors = payload.get("sensors")
+    if not isinstance(sensors, list):
+        raise PreparedLibraryValidationError(
+            "sensor_schema.json sensors entry must be a list.",
+            context={"path": str(path)},
+        )
+    if not all(isinstance(sensor_payload, dict) for sensor_payload in sensors):
+        raise PreparedLibraryValidationError(
+            "sensor_schema.json sensors entries must be JSON objects.",
+            context={"path": str(path)},
+        )
+    sensor_payloads = [sensor_payload for sensor_payload in sensors if isinstance(sensor_payload, dict)]
+    return payload, sensor_payloads
+
+
+def _validate_custom_sensor_payload(path: Path, payload: Mapping[str, object]) -> None:
+    sensor_id = _optional_string(payload.get("sensor_id"))
+    if not sensor_id or sensor_id in RSRF_SENSOR_BAND_SELECTIONS:
+        return
+
+    bands = payload.get("bands")
+    if not isinstance(bands, Sequence) or isinstance(bands, (str, bytes, bytearray)):
+        return
+
+    for band_payload in bands:
+        if not isinstance(band_payload, Mapping):
+            continue
+        if "response_definition" in band_payload:
+            continue
+        raise SensorSchemaError(
+            "Custom sensor SRF JSON bands must provide `response_definition`; legacy top-level sampled-band payloads are no longer supported.",
+            context={
+                "path": str(path),
+                "sensor_id": sensor_id,
+                "band_id": band_payload.get("band_id"),
+            },
+        )
+
+
+def _prepared_runtime_band_payload(band: SensorBandDefinition) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "band_id": band.band_id,
+        "segment": band.segment,
+        "response_definition": {
+            "wavelength_nm": list(band.wavelength_nm),
+            "response": list(band.rsr),
+        },
+    }
+    if band.center_nm is not None:
+        payload["center_nm"] = band.center_nm
+    if band.fwhm_nm is not None:
+        payload["fwhm_nm"] = band.fwhm_nm
+    if band.support_min_nm is not None:
+        payload["support_min_nm"] = band.support_min_nm
+    if band.support_max_nm is not None:
+        payload["support_max_nm"] = band.support_max_nm
+    return payload
+
+
+def _prepared_runtime_sensor_payload(schema: SensorSRFSchema) -> dict[str, object]:
+    return {
+        "sensor_id": schema.sensor_id,
+        "bands": [_prepared_runtime_band_payload(band) for band in schema.bands],
+    }
+
+
 def load_sensor_schemas(
     srf_root: Path | None,
     *,
@@ -2424,6 +2622,7 @@ def load_sensor_schemas(
 
     for path in json_paths:
         for payload in _load_sensor_payloads(path):
+            _validate_custom_sensor_payload(path, payload)
             schema = SensorSRFSchema.from_dict(payload)
             if schema.sensor_id in RSRF_SENSOR_BAND_SELECTIONS:
                 continue
@@ -2709,14 +2908,14 @@ def _required_runtime_file_names(manifest: PreparedLibraryManifest) -> tuple[str
 
 
 def _validate_manifest_compatibility(manifest: PreparedLibraryManifest) -> None:
-    current_major = PREPARED_SCHEMA_VERSION.split(".", 1)[0]
     prepared_major = manifest.schema_version.split(".", 1)[0]
-    if current_major != prepared_major:
+    if prepared_major not in SUPPORTED_PREPARED_SCHEMA_MAJOR_VERSIONS:
         raise PreparedLibraryCompatibilityError(
             "Prepared mapping runtime schema major version is incompatible with this package.",
             context={
                 "prepared_schema_version": manifest.schema_version,
                 "expected_schema_version": PREPARED_SCHEMA_VERSION,
+                "supported_schema_major_versions": list(SUPPORTED_PREPARED_SCHEMA_MAJOR_VERSIONS),
             },
         )
 
@@ -2939,7 +3138,7 @@ def prepare_mapping_library(
                 "end_nm": CANONICAL_END_NM,
                 "step_nm": 1,
             },
-            "sensors": [schema.to_dict() for _, schema in sorted(sensors.items())],
+            "sensors": [_prepared_runtime_sensor_payload(schema) for _, schema in sorted(sensors.items())],
         },
     )
 
@@ -3361,8 +3560,23 @@ class SpectralMapper:
     def _load_prepared_sensor_schemas(self) -> dict[str, SensorSRFSchema]:
         sensor_schema_path = self.prepared_root / "sensor_schema.json"
         schemas: dict[str, SensorSRFSchema] = {}
-        for payload in _load_sensor_payloads(sensor_schema_path):
-            schema = SensorSRFSchema.from_dict(payload)
+        _, sensor_payloads = _load_prepared_sensor_schema_payload(
+            sensor_schema_path,
+            expected_schema_version=self.manifest.schema_version,
+        )
+        for payload in sensor_payloads:
+            try:
+                schema = SensorSRFSchema.from_dict(payload)
+            except SensorSchemaError as exc:
+                raise PreparedLibraryValidationError(
+                    "sensor_schema.json contains an invalid sensor definition.",
+                    context={
+                        "prepared_root": str(self.prepared_root),
+                        "sensor_id": payload.get("sensor_id"),
+                        "error_code": exc.code,
+                        "message": exc.message,
+                    },
+                ) from exc
             if schema.sensor_id in schemas:
                 raise PreparedLibraryValidationError(
                     "sensor_schema.json contains duplicate sensor_id values.",

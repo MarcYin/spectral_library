@@ -33,7 +33,7 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--dtype` | floating-point output dtype, default `float32` |
-| `--srf-root` | when provided, load extra local SRF JSON definitions alongside built-in `rsrf` sensors |
+| `--srf-root` | when provided, load extra local SRF JSON definitions alongside built-in `rsrf` sensors; each custom band must provide an `rsrf` `response_definition`, and legacy top-level sampled-band payloads are rejected |
 | `--knn-index-backend` | optionally persist ANN indexes for `faiss`, `pynndescent`, or `scann` during prepare |
 
 When you rely on built-in `rsrf` sensors instead of local JSON definitions, the
@@ -56,7 +56,7 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--url` | direct URL to a `.tar.gz` runtime archive (skips GitHub Release lookup) |
-| `--tag` | GitHub Release tag to download from (e.g. `v0.2.0`); defaults to latest |
+| `--tag` | GitHub Release tag to download from (e.g. `v0.4.0`); defaults to latest |
 | `--sha256` | expected SHA-256 hex digest for the archive |
 | `--no-verify` | skip runtime validation after extraction |
 

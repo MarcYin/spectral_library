@@ -501,13 +501,24 @@ def _band_payload(band_id: str, segment: str, wavelengths_nm: np.ndarray, rsr: n
     return {
         "band_id": band_id,
         "segment": segment,
-        "wavelength_nm": [round(float(value), 4) for value in wavelengths_nm.tolist()],
-        "rsr": [round(float(value), 8) for value in rsr.tolist()],
+        "response_definition": {
+            "wavelength_nm": [round(float(value), 4) for value in wavelengths_nm.tolist()],
+            "response": [round(float(value), 8) for value in rsr.tolist()],
+        },
         "center_nm": round(_weighted_center(wavelengths_nm, rsr), 4),
         "fwhm_nm": round(_fwhm_nm(wavelengths_nm, rsr), 4),
         "support_min_nm": round(float(wavelengths_nm[support][0]), 4),
         "support_max_nm": round(float(wavelengths_nm[support][-1]), 4),
     }
+
+
+def _band_curve_arrays(band: dict[str, object]) -> tuple[np.ndarray, np.ndarray]:
+    response_definition = band["response_definition"]  # type: ignore[index]
+    assert isinstance(response_definition, dict)
+    return (
+        np.asarray(response_definition["wavelength_nm"], dtype=np.float64),
+        np.asarray(response_definition["response"], dtype=np.float64),
+    )
 
 
 def _selected_band_plot_window(
@@ -521,7 +532,7 @@ def _selected_band_plot_window(
         for band in payload["bands"]:  # type: ignore[index]
             if str(band["band_id"]) != band_id:
                 continue
-            wavelengths = np.asarray(band["wavelength_nm"], dtype=np.float64)
+            wavelengths, _ = _band_curve_arrays(band)
             support_mins.append(float(wavelengths.min()))
             support_maxs.append(float(wavelengths.max()))
     if not support_mins:
@@ -611,8 +622,7 @@ def _parse_landsat_sensor(selection: SensorSelection) -> tuple[dict[str, object]
 def _simulate_sensor(sensor_schema: dict[str, object], spectrum: np.ndarray) -> dict[str, float]:
     values: dict[str, float] = {}
     for band in sensor_schema["bands"]:  # type: ignore[index]
-        wavelengths = np.asarray(band["wavelength_nm"], dtype=np.float64)  # type: ignore[index]
-        response = np.asarray(band["rsr"], dtype=np.float64)  # type: ignore[index]
+        wavelengths, response = _band_curve_arrays(band)
         sampled = np.interp(wavelengths, CANONICAL_WAVELENGTHS, spectrum)
         values[str(band["band_id"])] = float(np.dot(sampled, response) / response.sum())
     return values
@@ -836,7 +846,7 @@ def _write_pairwise_metrics(
         for target_sensor in SENSOR_BY_ID:
             if source_sensor == target_sensor:
                 continue
-            batch_result = mapper.map_reflectance_batch(
+            batch_result = mapper.map_reflectance_batch_debug(
                 source_sensor=source_sensor,
                 reflectance_rows=[truth_rows_by_sensor[source_sensor][sample_id] for sample_id in holdout_sample_ids],
                 sample_ids=holdout_sample_ids,
@@ -1020,9 +1030,10 @@ def _plot_selected_bands(sensor_payloads: dict[str, dict[str, object]]) -> None:
                 continue
             has_any = True
             band = matching[0]
+            wavelengths, response = _band_curve_arrays(band)
             axis.plot(
-                np.asarray(band["wavelength_nm"], dtype=np.float64),
-                np.asarray(band["rsr"], dtype=np.float64),
+                wavelengths,
+                response,
                 label=sensor.short_label,
                 linewidth=2.0,
                 color=PLOT_COLORS[sensor.sensor_id],

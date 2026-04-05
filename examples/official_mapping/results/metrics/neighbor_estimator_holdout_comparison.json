@@ -15,34 +15,34 @@
   "estimators": [
     {
       "neighbor_estimator": "mean",
-      "aggregate_mean_abs_error": 0.002665039664390377,
-      "aggregate_rmse": 0.003444505300829034,
+      "aggregate_mean_abs_error": 0.0026806260846977746,
+      "aggregate_rmse": 0.0034316830764066484,
       "selected_pair_source_sensor": "landsat-8_oli",
       "selected_pair_target_sensor": "sentinel-2a_msi",
-      "selected_pair_mean_abs_error": 0.0027682783305574546,
-      "selected_pair_rmse": 0.0033746016142778058,
+      "selected_pair_mean_abs_error": 0.002768364490543469,
+      "selected_pair_rmse": 0.0033746334800230796,
       "pair_count": 12,
       "sample_count_per_pair": 4
     },
     {
       "neighbor_estimator": "distance_weighted_mean",
-      "aggregate_mean_abs_error": 0.002579631468110183,
-      "aggregate_rmse": 0.003367756517382812,
+      "aggregate_mean_abs_error": 0.002597275936010179,
+      "aggregate_rmse": 0.003355218082122033,
       "selected_pair_source_sensor": "landsat-8_oli",
       "selected_pair_target_sensor": "sentinel-2a_msi",
-      "selected_pair_mean_abs_error": 0.0026567593069046214,
-      "selected_pair_rmse": 0.0033037441302266332,
+      "selected_pair_mean_abs_error": 0.0026568473686183706,
+      "selected_pair_rmse": 0.0033037861990504167,
       "pair_count": 12,
       "sample_count_per_pair": 4
     },
     {
       "neighbor_estimator": "simplex_mixture",
-      "aggregate_mean_abs_error": 0.002026606519719343,
-      "aggregate_rmse": 0.0028055734889019294,
+      "aggregate_mean_abs_error": 0.002081616862869511,
+      "aggregate_rmse": 0.0028198187948412176,
       "selected_pair_source_sensor": "landsat-8_oli",
       "selected_pair_target_sensor": "sentinel-2a_msi",
-      "selected_pair_mean_abs_error": 0.0018861238759485027,
-      "selected_pair_rmse": 0.0024593685000267084,
+      "selected_pair_mean_abs_error": 0.001886209977777832,
+      "selected_pair_rmse": 0.0024594043816051946,
       "pair_count": 12,
       "sample_count_per_pair": 4
     }

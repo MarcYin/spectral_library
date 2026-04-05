@@ -51,11 +51,13 @@ required-field changes require a major version change.
 
 The packaged sensor schema document contains:
 
-- `schema_version`
-- `canonical_wavelength_grid`
+- `schema_version` matching `manifest.json`
+- `canonical_wavelength_grid` equal to `start_nm=400`, `end_nm=2500`,
+  `step_nm=1`
 - `sensors`
 
-Each sensor entry follows the public `SensorSRFSchema` JSON shape:
+Each sensor entry stores an `rsrf`-compatible `response_definition` for every
+band:
 
 ```json
 {
@@ -64,8 +66,10 @@ Each sensor entry follows the public `SensorSRFSchema` JSON shape:
     {
       "band_id": "blue",
       "segment": "vnir",
-      "wavelength_nm": [456.0, 457.0, 458.0],
-      "rsr": [0.001, 0.01, 0.05]
+      "response_definition": {
+        "wavelength_nm": [456.0, 457.0, 458.0],
+        "response": [0.001, 0.01, 0.05]
+      }
     }
   ]
 }
@@ -77,8 +81,9 @@ Band rules:
 | --- | --- |
 | unique `band_id` | no duplicates within one sensor |
 | valid `segment` | must be `vnir` or `swir` |
-| increasing `wavelength_nm` | wavelengths must be strictly increasing |
-| positive SRF support | at least one positive SRF sample |
+| valid `response_definition` | must be accepted by `rsrf` |
+| increasing sampled wavelengths | realized sampled wavelengths must be strictly increasing |
+| positive SRF support | realized SRF must contain at least one positive sample |
 | segment-bounded support | positive support must stay within the declared segment |
 
 Segment bounds:

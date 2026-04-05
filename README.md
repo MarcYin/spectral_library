@@ -164,4 +164,4 @@ Internal build and source-ingest material is intentionally separated from the pu
 
 - internal overview: [docs/internal_overview.md](docs/internal_overview.md)
 - internal build pipeline: [docs/internal_build_pipeline.md](docs/internal_build_pipeline.md)
-- release notes: [docs/releases/0.2.0.md](docs/releases/0.2.0.md)
+- release notes: [docs/releases/0.4.0.md](docs/releases/0.4.0.md)

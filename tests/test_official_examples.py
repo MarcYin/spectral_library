@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import importlib.util
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ QUERIES_ROOT = EXAMPLES_ROOT / "queries"
 METRICS_ROOT = EXAMPLES_ROOT / "results" / "metrics"
 DOC_PATH = REPO_ROOT / "docs" / "official_sensor_examples.md"
 COMMON_METRIC_BANDS = ("blue", "green", "red", "nir", "swir1", "swir2")
+OFFICIAL_SENSOR_IDS = ("terra_modis", "sentinel-2a_msi", "landsat-8_oli", "landsat-9_oli2")
 
 
 def _load_example_builder_module():
@@ -29,6 +31,10 @@ def _load_example_builder_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _official_srf_paths() -> tuple[Path, ...]:
+    return tuple(SRF_ROOT / f"{sensor_id}.json" for sensor_id in OFFICIAL_SENSOR_IDS)
 
 
 class OfficialExamplesTests(unittest.TestCase):
@@ -84,6 +90,9 @@ class OfficialExamplesTests(unittest.TestCase):
             schema = SensorSRFSchema.from_dict(payload)
             self.assertEqual(schema.sensor_id, sensor_id)
             self.assertEqual(schema.band_ids(), band_ids)
+            self.assertIn("response_definition", payload["bands"][0])
+            self.assertNotIn("wavelength_nm", payload["bands"][0])
+            self.assertNotIn("rsr", payload["bands"][0])
 
         manifest_payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
         sentinel_payload = next(
@@ -96,6 +105,7 @@ class OfficialExamplesTests(unittest.TestCase):
         sensor_payloads = {
             path.stem: json.loads(path.read_text(encoding="utf-8"))
             for path in sorted(SRF_ROOT.glob("*.json"))
+            if not path.name.endswith(" 2.json")
         }
 
         for band_id in self.builder_module.SEMANTIC_BANDS:
@@ -104,8 +114,9 @@ class OfficialExamplesTests(unittest.TestCase):
                 for band in payload["bands"]:
                     if band["band_id"] != band_id:
                         continue
-                    self.assertLessEqual(x_min, min(band["wavelength_nm"]), msg=f"{band_id} left edge clipped")
-                    self.assertGreaterEqual(x_max, max(band["wavelength_nm"]), msg=f"{band_id} right edge clipped")
+                    wavelengths, _ = self.builder_module._band_curve_arrays(band)
+                    self.assertLessEqual(x_min, float(wavelengths.min()), msg=f"{band_id} left edge clipped")
+                    self.assertGreaterEqual(x_max, float(wavelengths.max()), msg=f"{band_id} right edge clipped")
 
     def test_official_example_full_library_prepares_and_maps_when_available(self) -> None:
         payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
@@ -115,9 +126,13 @@ class OfficialExamplesTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             prepared_root = Path(tmpdir) / "prepared"
+            test_srf_root = Path(tmpdir) / "srfs"
+            test_srf_root.mkdir()
+            for path in _official_srf_paths():
+                shutil.copy2(path, test_srf_root / path.name)
             prepare_mapping_library(
                 siac_root=siac_root,
-                srf_root=SRF_ROOT,
+                srf_root=test_srf_root,
                 output_root=prepared_root,
                 source_sensors=["landsat-8_oli"],
             )

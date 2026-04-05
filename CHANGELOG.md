@@ -5,6 +5,33 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.4.0] - 2026-04-05
+
+### Changed
+
+- prepared-runtime `sensor_schema.json` is now strictly `rsrf`-normalized,
+  validates its own `schema_version` and `canonical_wavelength_grid`, and
+  stores band responses only as `response_definition`
+- custom SRF JSON bands loaded from `--srf-root` now require
+  `response_definition`; legacy top-level `wavelength_nm` / `rsr` payloads are
+  rejected
+- official MODIS, Sentinel-2A, Landsat 8, and Landsat 9 SRF example JSONs and
+  generation scripts now emit `response_definition` payloads to match the
+  runtime contract
+
+### Fixed
+
+- invalid prepared `sensor_schema.json` payloads now fail as prepared-runtime
+  validation errors instead of surfacing as generic sensor-schema errors
+- migration, troubleshooting, CLI, and Python API docs now describe the real
+  `0.2.x` to `0.4.0` rebuild requirement and `rsrf`-only runtime contract
+
+### Removed
+
+- compatibility with prepared runtimes using schema `1.2.0`
+- fallback handling for legacy sampled-band payloads in custom sensor JSON and
+  prepared-runtime `sensor_schema.json`
+
 ## [0.3.1] - 2026-04-05
 
 ### Changed

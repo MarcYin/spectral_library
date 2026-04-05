@@ -41,6 +41,7 @@ version is stored in `manifest.json` under `schema_version`.
 | --- | --- |
 | 0.1.x | `1.0.0` |
 | 0.2.x | `1.2.0` |
+| 0.3.x and newer | `2.0.0` |
 
 ## Mapping Errors
 
@@ -77,7 +78,7 @@ version is stored in `manifest.json` under `schema_version`.
 **Common causes:**
 
 - Missing required fields (`sensor_id`, `bands`, `band_id`, `segment`,
-  `wavelength_nm`, `rsr`)
+  `response_definition`)
 - Duplicate `band_id` within one sensor
 - `wavelength_nm` not strictly increasing
 - No positive RSR values

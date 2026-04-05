@@ -1,13 +1,19 @@
 # Migration Guide
 
-## Upgrading from 0.1.x to 0.2.x
+## Current prepared-runtime version
+
+Prepared runtimes written by the current package use schema version `2.0.0`.
+This package only loads prepared runtimes with schema major version `2`, so
+older `1.2.0` runtimes must be rebuilt before use with `0.3.x` and newer.
+
+## Upgrading from 0.2.x to 0.3.x
 
 ### Prepared runtimes must be rebuilt
 
-The prepared-runtime schema version changed from `1.0.0` to `1.2.0`. Runtimes
-built with 0.1.x are **not** loadable by 0.2.x.
+The prepared-runtime schema version changed from `1.2.0` to `2.0.0`. Runtimes
+built with `0.2.x` are **not** loadable by `0.3.x` and newer.
 
-**Action:** Re-run `prepare-mapping-library` with the 0.2.x package to rebuild
+**Action:** Re-run `prepare-mapping-library` with the current package to rebuild
 your runtimes.
 
 ```bash
@@ -18,66 +24,31 @@ spectral-library prepare-mapping-library \
   --output-root build/mapping_runtime
 ```
 
-### New features (no breaking changes)
+### Prepared sensor schemas now use `rsrf` response definitions
 
-These are additive features. Existing code continues to work without
-modification.
+Prepared `sensor_schema.json` files now store each band as an `rsrf`-compatible
+`response_definition`. The runtime loader hands those definitions back to
+`rsrf`, rather than accepting legacy top-level sampled arrays such as
+`wavelength_nm` and `rsr`.
 
-#### KNN backend selection
-
-Mapping commands and the Python API now accept an optional `knn_backend`
-parameter. The default remains `numpy`, so existing calls are unchanged.
-
-```python
-# Before (still works)
-result = mapper.map_reflectance(source_sensor="s", reflectance={...}, output_mode="target_sensor")
-
-# New option
-result = mapper.map_reflectance(source_sensor="s", reflectance={...}, output_mode="target_sensor",
-                                knn_backend="scipy_ckdtree", knn_eps=0.05)
-```
-
-#### Persisted ANN indexes
-
-You can now persist ANN indexes at prepare time for faster first-query
-performance:
-
-```bash
-spectral-library prepare-mapping-library \
-  --siac-root build/siac_library \
-  --srf-root path/to/srfs \
-  --source-sensor SENSOR_A \
-  --knn-index-backend faiss \
-  --output-root build/mapping_runtime
-```
-
-#### Confidence diagnostics
-
-Mapping results now include `confidence_score` and `confidence_components` in
-the diagnostics payload. These are new additive fields.
-
-#### Benchmark `max_test_rows`
-
-`benchmark_mapping(...)` now accepts `max_test_rows` to cap the held-out test
-split size.
+**Action:** If you distribute prepared runtimes, regenerate and republish them
+with the current package so downstream users receive `schema_version:
+2.0.0` and `response_definition`-based sensor schemas.
 
 ### Summary of changes
 
-| Area | 0.1.x | 0.2.x |
+| Area | 0.2.x | 0.3.x and newer |
 | --- | --- | --- |
-| Schema version | `1.0.0` | `1.2.0` |
-| KNN backends | `numpy` only | `numpy`, `scipy_ckdtree`, `faiss`, `pynndescent`, `scann` |
-| Persisted indexes | Not available | `faiss`, `pynndescent`, `scann` |
-| Confidence score | Not available | Heuristic score in diagnostics |
-| Neighbor review | Not available | CSV export of shortlisted neighbors |
+| Schema version | `1.2.0` | `2.0.0` |
+| Prepared sensor schema bands | top-level sampled arrays | `rsrf` `response_definition` |
+| Runtime compatibility | `0.2.x` runtimes only | `2.x` prepared runtimes only |
 
 ### Checklist
 
-- [ ] Install `spectral-library` 0.2.x
+- [ ] Install `spectral-library` 0.3.x or newer
 - [ ] Rebuild all prepared runtimes with `prepare-mapping-library`
-- [ ] Optionally install KNN backend extras (`.[knn]`, `.[knn-faiss]`, etc.)
-- [ ] Optionally add `--knn-index-backend` to your prepare step
 - [ ] Verify runtimes with `validate-prepared-library`
+- [ ] Republish any distributed runtimes that were built with `0.2.x`
 
 ## Related Docs
 

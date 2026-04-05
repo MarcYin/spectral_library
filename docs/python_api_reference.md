@@ -35,7 +35,7 @@ from spectral_library.runtime_download import download_prepared_library
 
 output = download_prepared_library(
     Path("build/mapping_runtime"),
-    # tag="v0.2.0",       # optional: pin to a specific release
+    # tag="v0.4.0",       # optional: pin to a specific release
     # url="https://...",   # optional: direct tarball URL
     # sha256="abc123...",  # optional: expected digest
 )
@@ -71,9 +71,12 @@ Built-in sensors now use canonical `rsrf` ids directly, such as
 `sentinel-2a_msi`, `sentinel-2b_msi`, `sentinel-2c_msi`, `landsat-8_oli`,
 `landsat-9_oli2`, `terra_modis`, `snpp_viirs`, `noaa-20_viirs`, and
 `noaa-21_viirs`. Pass `srf_root=Path(...)` only when you need extra local
-sensor JSON definitions. If your `rsrf` install does not include its registry
-data, set `RSRF_ROOT` to an `rsrf` checkout before using the built-in sensor
-catalog.
+sensor JSON definitions. Those local bands must provide an
+`rsrf`-compatible `response_definition`, which may describe either sampled
+responses or a `center_wavelength_nm` plus `fwhm_nm` band spec. Legacy
+top-level sampled-band payloads are not accepted for custom sensors. If your
+`rsrf` install does not include its registry data, set `RSRF_ROOT` to an
+`rsrf` checkout before using the built-in sensor catalog.
 
 Returns:
 
@@ -396,6 +399,10 @@ test split.
 ### `SensorSRFSchema`
 
 Represents one public sensor JSON schema in memory.
+
+Custom `bands` entries must provide an `rsrf`-compatible
+`response_definition` payload, which is realized into sampled points before
+matrix preparation.
 
 The runtime format itself is documented in
 [Prepared Runtime Contract](prepared_runtime_contract.md).

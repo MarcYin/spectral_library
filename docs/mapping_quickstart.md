@@ -67,7 +67,7 @@ spectral-library download-prepared-library \
 ```
 
 This fetches the latest release, verifies the SHA-256 digest, extracts the
-runtime, and validates it.  You can pin a specific release with `--tag v0.2.0`
+runtime, and validates it. You can pin a specific release with `--tag v0.4.0`
 or point at any hosted tarball with `--url <URL>`.
 
 ### Option B: Build your own runtime
@@ -85,7 +85,10 @@ spectral-library prepare-mapping-library \
 ```
 
 If you have custom sensor definitions that are not available from `rsrf`, add
-them with `--srf-root path/to/srfs`.
+them with `--srf-root path/to/srfs`. Each custom band must provide an
+`rsrf`-compatible `response_definition`, which can describe either sampled
+response arrays or a `center_wavelength_nm` plus `fwhm_nm` band spec. Legacy
+top-level sampled-band payloads are not accepted for custom sensors.
 
 What this does:
 
@@ -367,7 +370,8 @@ For the stable imports and result objects, see
 ## Sensor SRF JSON Shape
 
 Use this only for custom sensors that are not already provided by `rsrf`. Each
-file in `--srf-root` defines one sensor:
+file in `--srf-root` defines one sensor, and each band must provide an
+`rsrf`-compatible `response_definition`:
 
 ```json
 {
@@ -376,8 +380,18 @@ file in `--srf-root` defines one sensor:
     {
       "band_id": "blue",
       "segment": "vnir",
-      "wavelength_nm": [445.0, 450.0, 455.0],
-      "rsr": [0.2, 1.0, 0.2]
+      "response_definition": {
+        "wavelength_nm": [445.0, 450.0, 455.0],
+        "response": [0.2, 1.0, 0.2]
+      }
+    },
+    {
+      "band_id": "green",
+      "segment": "vnir",
+      "response_definition": {
+        "center_wavelength_nm": 560.0,
+        "fwhm_nm": 20.0
+      }
     }
   ]
 }

@@ -95,6 +95,8 @@ model well enough to trust the outputs.
 - [Security and Provenance](security_provenance.md)
 - [Release Process](release_process.md)
 - [Migration Guide](migration.md)
+- [Release Notes 0.4.0](releases/0.4.0.md)
+- [Release Notes 0.3.1](releases/0.3.1.md)
 - [Release Notes 0.2.0](releases/0.2.0.md)
 - [Release Notes 0.1.0](releases/0.1.0.md)
 

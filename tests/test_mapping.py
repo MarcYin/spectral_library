@@ -63,6 +63,23 @@ def _spectrum_values(vnir: float, overlap: float, swir: float) -> dict[str, floa
     return row
 
 
+def _custom_band_payload(
+    *,
+    band_id: str,
+    segment: str,
+    wavelength_nm: list[float],
+    response: list[float],
+) -> dict[str, object]:
+    return {
+        "band_id": band_id,
+        "segment": segment,
+        "response_definition": {
+            "wavelength_nm": wavelength_nm,
+            "response": response,
+        },
+    }
+
+
 def _build_fixture(root: Path) -> dict[str, Path]:
     siac_root = root / "siac"
     srf_root = root / "srfs"
@@ -139,35 +156,35 @@ def _build_fixture(root: Path) -> dict[str, Path]:
     source_sensor = {
         "sensor_id": "sensor_a",
         "bands": [
-            {
-                "band_id": "blue",
-                "segment": "vnir",
-                "wavelength_nm": [445.0, 450.0, 455.0],
-                "rsr": [0.2, 1.0, 0.2],
-            },
-            {
-                "band_id": "swir",
-                "segment": "swir",
-                "wavelength_nm": [1595.0, 1600.0, 1605.0],
-                "rsr": [0.2, 1.0, 0.2],
-            },
+            _custom_band_payload(
+                band_id="blue",
+                segment="vnir",
+                wavelength_nm=[445.0, 450.0, 455.0],
+                response=[0.2, 1.0, 0.2],
+            ),
+            _custom_band_payload(
+                band_id="swir",
+                segment="swir",
+                wavelength_nm=[1595.0, 1600.0, 1605.0],
+                response=[0.2, 1.0, 0.2],
+            ),
         ],
     }
     target_sensor = {
         "sensor_id": "sensor_b",
         "bands": [
-            {
-                "band_id": "target_vnir",
-                "segment": "vnir",
-                "wavelength_nm": [495.0, 500.0, 505.0],
-                "rsr": [0.2, 1.0, 0.2],
-            },
-            {
-                "band_id": "target_swir",
-                "segment": "swir",
-                "wavelength_nm": [1695.0, 1700.0, 1705.0],
-                "rsr": [0.2, 1.0, 0.2],
-            },
+            _custom_band_payload(
+                band_id="target_vnir",
+                segment="vnir",
+                wavelength_nm=[495.0, 500.0, 505.0],
+                response=[0.2, 1.0, 0.2],
+            ),
+            _custom_band_payload(
+                band_id="target_swir",
+                segment="swir",
+                wavelength_nm=[1695.0, 1700.0, 1705.0],
+                response=[0.2, 1.0, 0.2],
+            ),
         ],
     }
     srf_root.mkdir(parents=True, exist_ok=True)
@@ -222,7 +239,7 @@ class MappingWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, manifest = _prepare_fixture(Path(tmpdir))
 
-            self.assertEqual(manifest.schema_version, "1.2.0")
+            self.assertEqual(manifest.schema_version, "2.0.0")
             self.assertEqual(manifest.source_sensors, ("sensor_a",))
             self.assertEqual(manifest.row_count, 4)
             self.assertEqual(manifest.supported_output_modes, ("target_sensor", "vnir_spectrum", "swir_spectrum", "full_spectrum"))
@@ -245,6 +262,13 @@ class MappingWorkflowTests(unittest.TestCase):
             self.assertTrue((fixture["prepared_root"] / "mapping_metadata.parquet").exists())
             self.assertTrue((fixture["prepared_root"] / "sensor_schema.json").exists())
             self.assertTrue((fixture["prepared_root"] / "checksums.json").exists())
+
+            sensor_schema_payload = json.loads((fixture["prepared_root"] / "sensor_schema.json").read_text(encoding="utf-8"))
+            first_band = sensor_schema_payload["sensors"][0]["bands"][0]
+            self.assertEqual(sensor_schema_payload["schema_version"], "2.0.0")
+            self.assertIn("response_definition", first_band)
+            self.assertNotIn("wavelength_nm", first_band)
+            self.assertNotIn("rsr", first_band)
 
             self.assertEqual(np.load(fixture["prepared_root"] / "hyperspectral_vnir.npy").shape, (4, 601))
             self.assertEqual(np.load(fixture["prepared_root"] / "hyperspectral_swir.npy").shape, (4, 1701))
@@ -510,24 +534,24 @@ class MappingWorkflowTests(unittest.TestCase):
             source_sensor = {
                 "sensor_id": "sensor_overlap",
                 "bands": [
-                    {
-                        "band_id": "blue",
-                        "segment": "vnir",
-                        "wavelength_nm": [445.0, 450.0, 455.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
-                    {
-                        "band_id": "nir",
-                        "segment": "vnir",
-                        "wavelength_nm": [845.0, 850.0, 855.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
-                    {
-                        "band_id": "swir",
-                        "segment": "swir",
-                        "wavelength_nm": [1595.0, 1600.0, 1605.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
+                    _custom_band_payload(
+                        band_id="blue",
+                        segment="vnir",
+                        wavelength_nm=[445.0, 450.0, 455.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
+                    _custom_band_payload(
+                        band_id="nir",
+                        segment="vnir",
+                        wavelength_nm=[845.0, 850.0, 855.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
+                    _custom_band_payload(
+                        band_id="swir",
+                        segment="swir",
+                        wavelength_nm=[1595.0, 1600.0, 1605.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
                 ],
             }
             (fixture["srf_root"] / "sensor_overlap.json").write_text(
@@ -1431,35 +1455,35 @@ class MappingWorkflowTests(unittest.TestCase):
             source_sensor = {
                 "sensor_id": "sensor_a",
                 "bands": [
-                    {
-                        "band_id": "swir",
-                        "segment": "swir",
-                        "wavelength_nm": [1595.0, 1600.0, 1605.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
-                    {
-                        "band_id": "blue",
-                        "segment": "vnir",
-                        "wavelength_nm": [445.0, 450.0, 455.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
+                    _custom_band_payload(
+                        band_id="swir",
+                        segment="swir",
+                        wavelength_nm=[1595.0, 1600.0, 1605.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
+                    _custom_band_payload(
+                        band_id="blue",
+                        segment="vnir",
+                        wavelength_nm=[445.0, 450.0, 455.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
                 ],
             }
             target_sensor = {
                 "sensor_id": "sensor_b",
                 "bands": [
-                    {
-                        "band_id": "target_swir",
-                        "segment": "swir",
-                        "wavelength_nm": [1695.0, 1700.0, 1705.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
-                    {
-                        "band_id": "target_vnir",
-                        "segment": "vnir",
-                        "wavelength_nm": [495.0, 500.0, 505.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
+                    _custom_band_payload(
+                        band_id="target_swir",
+                        segment="swir",
+                        wavelength_nm=[1695.0, 1700.0, 1705.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
+                    _custom_band_payload(
+                        band_id="target_vnir",
+                        segment="vnir",
+                        wavelength_nm=[495.0, 500.0, 505.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
                 ],
             }
             (fixture["srf_root"] / "sensor_a.json").write_text(json.dumps(source_sensor, indent=2) + "\n", encoding="utf-8")
@@ -1707,24 +1731,24 @@ class MappingWorkflowTests(unittest.TestCase):
             source_sensor = {
                 "sensor_id": "sensor_overlap",
                 "bands": [
-                    {
-                        "band_id": "blue",
-                        "segment": "vnir",
-                        "wavelength_nm": [445.0, 450.0, 455.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
-                    {
-                        "band_id": "nir",
-                        "segment": "vnir",
-                        "wavelength_nm": [845.0, 850.0, 855.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
-                    {
-                        "band_id": "swir",
-                        "segment": "swir",
-                        "wavelength_nm": [1595.0, 1600.0, 1605.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    },
+                    _custom_band_payload(
+                        band_id="blue",
+                        segment="vnir",
+                        wavelength_nm=[445.0, 450.0, 455.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
+                    _custom_band_payload(
+                        band_id="nir",
+                        segment="vnir",
+                        wavelength_nm=[845.0, 850.0, 855.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
+                    _custom_band_payload(
+                        band_id="swir",
+                        segment="swir",
+                        wavelength_nm=[1595.0, 1600.0, 1605.0],
+                        response=[0.2, 1.0, 0.2],
+                    ),
                 ],
             }
             (fixture["srf_root"] / "sensor_overlap.json").write_text(
@@ -2580,8 +2604,10 @@ class MappingValidationTests(unittest.TestCase):
                     {
                         "band_id": "b1",
                         "segment": "vnir",
-                        "wavelength_nm": [455.0, 445.0, 450.0],
-                        "rsr": [0.1, 0.2, 1.0],
+                        "response_definition": {
+                            "wavelength_nm": [445.0, 450.0, 455.0],
+                            "response": [0.2, 1.0, 0.1],
+                        },
                     }
                 ],
             }
@@ -2590,6 +2616,67 @@ class MappingValidationTests(unittest.TestCase):
         self.assertEqual(schema.band_ids(), ("b1",))
         self.assertEqual(schema.bands[0].wavelength_nm, (445.0, 450.0, 455.0))
         self.assertEqual(schema.to_dict()["sensor_id"], "sorted_sensor")
+
+    def test_sensor_band_definition_accepts_rsrf_custom_response_definitions(self) -> None:
+        sampled_band = mapping_module.SensorBandDefinition.from_dict(
+            {
+                "band_id": "b_curve",
+                "segment": "vnir",
+                "response_definition": {
+                    "wavelength_nm": [445.0, 450.0, 455.0],
+                    "response": [0.2, 1.0, 0.1],
+                },
+            }
+        )
+        self.assertEqual(sampled_band.wavelength_nm, (445.0, 450.0, 455.0))
+        self.assertEqual(sampled_band.rsr, (0.2, 1.0, 0.1))
+
+        realized_band = mapping_module.SensorBandDefinition.from_dict(
+            {
+                "band_id": "b_spec",
+                "segment": "vnir",
+                "response_definition": {
+                    "center_wavelength_nm": 550.0,
+                    "fwhm_nm": 20.0,
+                },
+            }
+        )
+        self.assertAlmostEqual(realized_band.center_nm or 0.0, 550.0)
+        self.assertAlmostEqual(realized_band.fwhm_nm or 0.0, 20.0)
+        self.assertGreater(len(realized_band.wavelength_nm), 2)
+        self.assertGreater(realized_band.support_max_nm or 0.0, realized_band.support_min_nm or 0.0)
+
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition.from_dict(
+                {
+                    "band_id": "b_curve_unsorted",
+                    "segment": "vnir",
+                    "response_definition": {
+                        "wavelength_nm": [455.0, 445.0, 450.0],
+                        "response": [0.1, 0.2, 1.0],
+                    },
+                }
+            )
+
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition.from_dict(
+                {
+                    "band_id": "b_alias",
+                    "segment": "vnir",
+                    "center_nm": 650.0,
+                    "fwhm": 30.0,
+                }
+            )
+
+        with self.assertRaises(SensorSchemaError):
+            mapping_module.SensorBandDefinition.from_dict(
+                {
+                    "band_id": "b_spec_missing_wrapper",
+                    "segment": "vnir",
+                    "center_wavelength_nm": 650.0,
+                    "fwhm_nm": 30.0,
+                }
+            )
 
     def test_sensor_schema_validation_is_detailed(self) -> None:
         with self.assertRaises(SensorSchemaError):
@@ -2659,8 +2746,10 @@ class MappingValidationTests(unittest.TestCase):
             {
                 "band_id": "b1",
                 "segment": "vnir",
-                "wavelength_nm": [445.0, 450.0],
-                "rsr": [0.2, 1.0],
+                "response_definition": {
+                    "wavelength_nm": [445.0, 450.0],
+                    "response": [0.2, 1.0],
+                },
                 "center_nm": 450.0,
                 "fwhm_nm": 10.0,
                 "support_min_nm": "",
@@ -2717,8 +2806,10 @@ class MappingValidationTests(unittest.TestCase):
                             {
                                 "band_id": "blue",
                                 "segment": "vnir",
-                                "wavelength_nm": [1200.0, 1205.0],
-                                "rsr": [1.0, 0.5],
+                                "response_definition": {
+                                    "wavelength_nm": [1200.0, 1205.0],
+                                    "response": [1.0, 0.5],
+                                },
                             }
                         ],
                     },
@@ -2762,6 +2853,24 @@ class MappingValidationTests(unittest.TestCase):
             payload = {
                 "sensor_id": "dup_sensor",
                 "bands": [
+                    _custom_band_payload(
+                        band_id="b1",
+                        segment="vnir",
+                        wavelength_nm=[445.0, 450.0],
+                        response=[0.2, 1.0],
+                    )
+                ],
+            }
+            (dup_root / "a.json").write_text(json.dumps(payload), encoding="utf-8")
+            (dup_root / "b.json").write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(SensorSchemaError):
+                mapping_module.load_sensor_schemas(dup_root)
+
+            legacy_root = root / "legacy"
+            legacy_root.mkdir()
+            legacy_payload = {
+                "sensor_id": "legacy_sensor",
+                "bands": [
                     {
                         "band_id": "b1",
                         "segment": "vnir",
@@ -2770,22 +2879,21 @@ class MappingValidationTests(unittest.TestCase):
                     }
                 ],
             }
-            (dup_root / "a.json").write_text(json.dumps(payload), encoding="utf-8")
-            (dup_root / "b.json").write_text(json.dumps(payload), encoding="utf-8")
+            (legacy_root / "legacy_sensor.json").write_text(json.dumps(legacy_payload), encoding="utf-8")
             with self.assertRaises(SensorSchemaError):
-                mapping_module.load_sensor_schemas(dup_root)
+                mapping_module.load_sensor_schemas(legacy_root)
 
     def test_load_sensor_schemas_resolves_required_rsrf_sensor(self) -> None:
         schema = SensorSRFSchema.from_dict(
             {
                 "sensor_id": "sentinel-2b_msi",
                 "bands": [
-                    {
-                        "band_id": "blue",
-                        "segment": "vnir",
-                        "wavelength_nm": [450.0, 460.0, 470.0],
-                        "rsr": [0.1, 1.0, 0.1],
-                    }
+                    _custom_band_payload(
+                        band_id="blue",
+                        segment="vnir",
+                        wavelength_nm=[450.0, 460.0, 470.0],
+                        response=[0.1, 1.0, 0.1],
+                    )
                 ],
             }
         )
@@ -2806,24 +2914,24 @@ class MappingValidationTests(unittest.TestCase):
                 {
                     "sensor_id": "sentinel-2b_msi",
                     "bands": [
-                        {
-                            "band_id": "blue",
-                            "segment": "vnir",
-                            "wavelength_nm": [450.0, 460.0, 470.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
-                        {
-                            "band_id": "nir",
-                            "segment": "vnir",
-                            "wavelength_nm": [840.0, 850.0, 860.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
-                        {
-                            "band_id": "swir1",
-                            "segment": "swir",
-                            "wavelength_nm": [1600.0, 1610.0, 1620.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
+                        _custom_band_payload(
+                            band_id="blue",
+                            segment="vnir",
+                            wavelength_nm=[450.0, 460.0, 470.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
+                        _custom_band_payload(
+                            band_id="nir",
+                            segment="vnir",
+                            wavelength_nm=[840.0, 850.0, 860.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
+                        _custom_band_payload(
+                            band_id="swir1",
+                            segment="swir",
+                            wavelength_nm=[1600.0, 1610.0, 1620.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
                     ],
                 }
             )
@@ -2847,30 +2955,30 @@ class MappingValidationTests(unittest.TestCase):
                 {
                     "sensor_id": "snpp_viirs",
                     "bands": [
-                        {
-                            "band_id": "blue",
-                            "segment": "vnir",
-                            "wavelength_nm": [450.0, 460.0, 470.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
-                        {
-                            "band_id": "nir",
-                            "segment": "vnir",
-                            "wavelength_nm": [840.0, 850.0, 860.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
-                        {
-                            "band_id": "swir1",
-                            "segment": "swir",
-                            "wavelength_nm": [1600.0, 1610.0, 1620.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
-                        {
-                            "band_id": "swir2",
-                            "segment": "swir",
-                            "wavelength_nm": [2200.0, 2210.0, 2220.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
+                        _custom_band_payload(
+                            band_id="blue",
+                            segment="vnir",
+                            wavelength_nm=[450.0, 460.0, 470.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
+                        _custom_band_payload(
+                            band_id="nir",
+                            segment="vnir",
+                            wavelength_nm=[840.0, 850.0, 860.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
+                        _custom_band_payload(
+                            band_id="swir1",
+                            segment="swir",
+                            wavelength_nm=[1600.0, 1610.0, 1620.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
+                        _custom_band_payload(
+                            band_id="swir2",
+                            segment="swir",
+                            wavelength_nm=[2200.0, 2210.0, 2220.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
                     ],
                 }
             )
@@ -3049,7 +3157,15 @@ class MappingValidationTests(unittest.TestCase):
             manifest_path = fixture["prepared_root"] / "manifest.json"
             manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-            manifest_payload["schema_version"] = "2.0.0"
+            manifest_payload["schema_version"] = "1.2.0"
+            manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryCompatibilityError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            manifest_path = fixture["prepared_root"] / "manifest.json"
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_payload["schema_version"] = "3.0.0"
             manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
             with self.assertRaises(PreparedLibraryCompatibilityError):
                 SpectralMapper(fixture["prepared_root"])
@@ -3168,8 +3284,55 @@ class MappingValidationTests(unittest.TestCase):
 
             sensor_schema_path = fixture["prepared_root"] / "sensor_schema.json"
             sensor_payload = json.loads(sensor_schema_path.read_text(encoding="utf-8"))
-            duplicated_payload = {"sensors": [sensor_payload["sensors"][0], sensor_payload["sensors"][0]]}
+
+            mismatched_schema_version = dict(sensor_payload)
+            mismatched_schema_version["schema_version"] = "1.2.0"
+            sensor_schema_path.write_text(json.dumps(mismatched_schema_version, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            sensor_schema_path = fixture["prepared_root"] / "sensor_schema.json"
+            sensor_payload = json.loads(sensor_schema_path.read_text(encoding="utf-8"))
+            bad_canonical_grid = dict(sensor_payload)
+            bad_canonical_grid["canonical_wavelength_grid"] = {"start_nm": 401, "end_nm": 2500, "step_nm": 1}
+            sensor_schema_path.write_text(json.dumps(bad_canonical_grid, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            sensor_schema_path = fixture["prepared_root"] / "sensor_schema.json"
+            sensor_payload = json.loads(sensor_schema_path.read_text(encoding="utf-8"))
+            del sensor_payload["schema_version"]
+            sensor_schema_path.write_text(json.dumps(sensor_payload, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            sensor_schema_path = fixture["prepared_root"] / "sensor_schema.json"
+            sensor_payload = json.loads(sensor_schema_path.read_text(encoding="utf-8"))
+            del sensor_payload["canonical_wavelength_grid"]
+            sensor_schema_path.write_text(json.dumps(sensor_payload, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            sensor_schema_path = fixture["prepared_root"] / "sensor_schema.json"
+            sensor_payload = json.loads(sensor_schema_path.read_text(encoding="utf-8"))
+            duplicated_payload = dict(sensor_payload)
+            duplicated_payload["sensors"] = [sensor_payload["sensors"][0], sensor_payload["sensors"][0]]
             sensor_schema_path.write_text(json.dumps(duplicated_payload, indent=2) + "\n", encoding="utf-8")
+            with self.assertRaises(PreparedLibraryValidationError):
+                SpectralMapper(fixture["prepared_root"])
+
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            sensor_schema_path = fixture["prepared_root"] / "sensor_schema.json"
+            sensor_payload = json.loads(sensor_schema_path.read_text(encoding="utf-8"))
+            band_payload = sensor_payload["sensors"][0]["bands"][0]
+            band_payload["wavelength_nm"] = band_payload["response_definition"]["wavelength_nm"]
+            band_payload["rsr"] = band_payload["response_definition"]["response"]
+            del band_payload["response_definition"]
+            sensor_schema_path.write_text(json.dumps(sensor_payload, indent=2) + "\n", encoding="utf-8")
             with self.assertRaises(PreparedLibraryValidationError):
                 SpectralMapper(fixture["prepared_root"])
 
@@ -3316,12 +3479,12 @@ class MappingValidationTests(unittest.TestCase):
             sensor_c = {
                 "sensor_id": "sensor_c",
                 "bands": [
-                    {
-                        "band_id": "only_swir",
-                        "segment": "swir",
-                        "wavelength_nm": [1695.0, 1700.0, 1705.0],
-                        "rsr": [0.2, 1.0, 0.2],
-                    }
+                    _custom_band_payload(
+                        band_id="only_swir",
+                        segment="swir",
+                        wavelength_nm=[1695.0, 1700.0, 1705.0],
+                        response=[0.2, 1.0, 0.2],
+                    )
                 ],
             }
             (fixture["srf_root"] / "sensor_c.json").write_text(json.dumps(sensor_c, indent=2) + "\n", encoding="utf-8")
@@ -3501,24 +3664,24 @@ class MappingCliTests(unittest.TestCase):
                 {
                     "sensor_id": "sentinel-2c_msi",
                     "bands": [
-                        {
-                            "band_id": "blue",
-                            "segment": "vnir",
-                            "wavelength_nm": [450.0, 460.0, 470.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
-                        {
-                            "band_id": "nir",
-                            "segment": "vnir",
-                            "wavelength_nm": [840.0, 850.0, 860.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
-                        {
-                            "band_id": "swir1",
-                            "segment": "swir",
-                            "wavelength_nm": [1600.0, 1610.0, 1620.0],
-                            "rsr": [0.1, 1.0, 0.1],
-                        },
+                        _custom_band_payload(
+                            band_id="blue",
+                            segment="vnir",
+                            wavelength_nm=[450.0, 460.0, 470.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
+                        _custom_band_payload(
+                            band_id="nir",
+                            segment="vnir",
+                            wavelength_nm=[840.0, 850.0, 860.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
+                        _custom_band_payload(
+                            band_id="swir1",
+                            segment="swir",
+                            wavelength_nm=[1600.0, 1610.0, 1620.0],
+                            response=[0.1, 1.0, 0.1],
+                        ),
                     ],
                 }
             )
@@ -4741,7 +4904,7 @@ class MappingCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
                 cli.main_with_args(["--version"])
             self.assertEqual(version_exit.exception.code, 0)
-            self.assertIn("0.3.1", version_stdout.getvalue())
+            self.assertIn("0.4.0", version_stdout.getvalue())
 
             _write_csv(
                 input_path,

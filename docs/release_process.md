@@ -42,8 +42,8 @@ python3 scripts/build_distribution.py
 Create and push a version tag:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 ## CI Responsibilities
