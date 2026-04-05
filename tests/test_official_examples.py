@@ -136,7 +136,7 @@ class OfficialExamplesTests(unittest.TestCase):
                 for sample in payload["example_design"]["held_out_samples"]
                 if sample["sample_id"] == "asphalt_road"
             )
-            result = mapper.map_reflectance(
+            result = mapper.map_reflectance_debug(
                 source_sensor="landsat-8_oli",
                 reflectance=reflectance,
                 output_mode="target_sensor",
