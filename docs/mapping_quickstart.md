@@ -19,7 +19,7 @@ You need:
 - a SIAC-style spectral export with:
   - `tabular/siac_spectra_metadata.csv`
   - `tabular/siac_normalized_spectra.csv`
-- one or more sensor SRF JSON definitions
+- canonical `rsrf` sensor ids for the sensors you want to precompute
 
 If you want a complete repository example, use the official-source bundle
 documented in [Official Sensor Examples](official_sensor_examples.md).
@@ -31,6 +31,11 @@ Install the package from the repository:
 ```bash
 python3 -m pip install .
 ```
+
+Built-in canonical sensors resolved through `rsrf` currently require access to
+the `rsrf` registry data. If your `rsrf` install does not ship
+`data/registry/sensors.parquet`, point `RSRF_ROOT` at an `rsrf` checkout before
+running `prepare-mapping-library` without custom JSON files.
 
 Optional extras:
 
@@ -73,15 +78,18 @@ prepared runtime from a SIAC-style export:
 ```bash
 spectral-library prepare-mapping-library \
   --siac-root build/siac_library \
-  --srf-root path/to/srfs \
-  --source-sensor SENSOR_A \
+  --source-sensor sentinel-2b_msi \
+  --source-sensor snpp_viirs \
   --knn-index-backend faiss \
   --output-root build/mapping_runtime
 ```
 
+If you have custom sensor definitions that are not available from `rsrf`, add
+them with `--srf-root path/to/srfs`.
+
 What this does:
 
-- loads and validates the sensor SRF definitions
+- resolves requested built-in sensors from `rsrf` and validates any extra local SRF JSON definitions
 - precomputes source-sensor simulation matrices
 - optionally persists full-feature ANN indexes for supported backends
 - writes row-aligned hyperspectral arrays and metadata
@@ -358,7 +366,8 @@ For the stable imports and result objects, see
 
 ## Sensor SRF JSON Shape
 
-Each file in `--srf-root` defines one sensor:
+Use this only for custom sensors that are not already provided by `rsrf`. Each
+file in `--srf-root` defines one sensor:
 
 ```json
 {

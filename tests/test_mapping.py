@@ -2775,6 +2775,115 @@ class MappingValidationTests(unittest.TestCase):
             with self.assertRaises(SensorSchemaError):
                 mapping_module.load_sensor_schemas(dup_root)
 
+    def test_load_sensor_schemas_resolves_required_rsrf_sensor(self) -> None:
+        schema = SensorSRFSchema.from_dict(
+            {
+                "sensor_id": "sentinel-2b_msi",
+                "bands": [
+                    {
+                        "band_id": "blue",
+                        "segment": "vnir",
+                        "wavelength_nm": [450.0, 460.0, 470.0],
+                        "rsr": [0.1, 1.0, 0.1],
+                    }
+                ],
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(mapping_module, "_load_rsrf_sensor_schema", return_value=schema) as mocked_loader:
+                resolved = mapping_module.load_sensor_schemas(
+                    Path(tmpdir) / "missing",
+                    required_sensor_ids=["sentinel-2b_msi"],
+                )
+        self.assertEqual(tuple(resolved), ("sentinel-2b_msi",))
+        self.assertEqual(resolved["sentinel-2b_msi"].band_ids(), ("blue",))
+        mocked_loader.assert_called_once_with("sentinel-2b_msi")
+
+    def test_prepare_mapping_library_resolves_required_rsrf_sensor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = _build_fixture(Path(tmpdir))
+            schema = SensorSRFSchema.from_dict(
+                {
+                    "sensor_id": "sentinel-2b_msi",
+                    "bands": [
+                        {
+                            "band_id": "blue",
+                            "segment": "vnir",
+                            "wavelength_nm": [450.0, 460.0, 470.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                        {
+                            "band_id": "nir",
+                            "segment": "vnir",
+                            "wavelength_nm": [840.0, 850.0, 860.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                        {
+                            "band_id": "swir1",
+                            "segment": "swir",
+                            "wavelength_nm": [1600.0, 1610.0, 1620.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                    ],
+                }
+            )
+            with patch.object(mapping_module, "_load_rsrf_sensor_schema", return_value=schema) as mocked_loader:
+                manifest = prepare_mapping_library(
+                    fixture["siac_root"],
+                    fixture["srf_root"] / "missing",
+                    fixture["prepared_root"],
+                    ["sentinel-2b_msi"],
+                )
+
+            self.assertEqual(manifest.source_sensors, ("sentinel-2b_msi",))
+            self.assertTrue((fixture["prepared_root"] / "source_sentinel-2b_msi_vnir.npy").exists())
+            self.assertTrue((fixture["prepared_root"] / "source_sentinel-2b_msi_swir.npy").exists())
+            mocked_loader.assert_called_once_with("sentinel-2b_msi")
+
+    def test_spectral_mapper_loads_rsrf_sensor_schema_and_generates_missing_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture, _ = _prepare_fixture(Path(tmpdir))
+            schema = SensorSRFSchema.from_dict(
+                {
+                    "sensor_id": "snpp_viirs",
+                    "bands": [
+                        {
+                            "band_id": "blue",
+                            "segment": "vnir",
+                            "wavelength_nm": [450.0, 460.0, 470.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                        {
+                            "band_id": "nir",
+                            "segment": "vnir",
+                            "wavelength_nm": [840.0, 850.0, 860.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                        {
+                            "band_id": "swir1",
+                            "segment": "swir",
+                            "wavelength_nm": [1600.0, 1610.0, 1620.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                        {
+                            "band_id": "swir2",
+                            "segment": "swir",
+                            "wavelength_nm": [2200.0, 2210.0, 2220.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                    ],
+                }
+            )
+            with patch.object(mapping_module, "_load_rsrf_sensor_schema", return_value=schema) as mocked_loader:
+                mapper = SpectralMapper(fixture["prepared_root"])
+                resolved = mapper.get_sensor_schema("snpp_viirs")
+                matrix = mapper._load_source_matrix("snpp_viirs", "swir")
+
+            self.assertEqual(resolved.band_ids(), ("blue", "nir", "swir1", "swir2"))
+            self.assertEqual(matrix.shape, (4, 3))
+            self.assertTrue((fixture["prepared_root"] / "source_snpp_viirs_swir.npy").exists())
+            mocked_loader.assert_called_once_with("snpp_viirs")
+
     def test_prepare_mapping_library_rejects_missing_and_extra_siac_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture = _build_fixture(Path(tmpdir))
@@ -3383,6 +3492,53 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(report["neighbor_estimator"], "distance_weighted_mean")
             self.assertEqual(report["target_sensor_id"], "sensor_b")
             self.assertEqual(report["target_sensor"]["band_ids"], ["target_vnir", "target_swir"])
+
+    def test_prepare_command_accepts_rsrf_sensor_without_srf_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture = _build_fixture(root)
+            schema = SensorSRFSchema.from_dict(
+                {
+                    "sensor_id": "sentinel-2c_msi",
+                    "bands": [
+                        {
+                            "band_id": "blue",
+                            "segment": "vnir",
+                            "wavelength_nm": [450.0, 460.0, 470.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                        {
+                            "band_id": "nir",
+                            "segment": "vnir",
+                            "wavelength_nm": [840.0, 850.0, 860.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                        {
+                            "band_id": "swir1",
+                            "segment": "swir",
+                            "wavelength_nm": [1600.0, 1610.0, 1620.0],
+                            "rsr": [0.1, 1.0, 0.1],
+                        },
+                    ],
+                }
+            )
+
+            stdout = io.StringIO()
+            with patch.object(mapping_module, "_load_rsrf_sensor_schema", return_value=schema):
+                with contextlib.redirect_stdout(stdout):
+                    prepare_exit = cli.main_with_args(
+                        [
+                            "prepare-mapping-library",
+                            "--siac-root",
+                            str(fixture["siac_root"]),
+                            "--source-sensor",
+                            "sentinel-2c_msi",
+                            "--output-root",
+                            str(fixture["prepared_root"]),
+                        ]
+                    )
+            self.assertEqual(prepare_exit, 0)
+            self.assertTrue((fixture["prepared_root"] / "source_sentinel-2c_msi_vnir.npy").exists())
 
     def test_map_reflectance_command_accepts_wide_input_csv(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

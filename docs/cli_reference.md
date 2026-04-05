@@ -25,7 +25,6 @@ Required arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--siac-root` | SIAC-style export root containing metadata and normalized spectra tables |
-| `--srf-root` | directory containing sensor SRF JSON files |
 | `--source-sensor` | one or more source sensor ids to precompute |
 | `--output-root` | output directory for the prepared runtime |
 
@@ -34,7 +33,13 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--dtype` | floating-point output dtype, default `float32` |
+| `--srf-root` | when provided, load extra local SRF JSON definitions alongside built-in `rsrf` sensors |
 | `--knn-index-backend` | optionally persist ANN indexes for `faiss`, `pynndescent`, or `scann` during prepare |
+
+When you rely on built-in `rsrf` sensors instead of local JSON definitions, the
+runtime environment must also expose the `rsrf` registry data. If your `rsrf`
+install does not ship it, set `RSRF_ROOT` to an `rsrf` checkout before running
+`prepare-mapping-library`.
 
 ### `download-prepared-library`
 
@@ -270,7 +275,7 @@ Each structured error carries an `error_code` field for programmatic handling:
 
 | `error_code` | Raised by | Meaning |
 | --- | --- | --- |
-| `invalid_sensor_schema` | `prepare-mapping-library` | SRF JSON is malformed or violates band rules |
+| `invalid_sensor_schema` | `prepare-mapping-library` | Sensor schema data from `rsrf` or local JSON is malformed, unsupported, or violates band rules |
 | `prepare_failed` | `prepare-mapping-library` | Runtime build failed (missing SIAC files, array errors) |
 | `invalid_prepared_library` | `validate-prepared-library`, `map-reflectance` | Runtime layout or checksums are invalid |
 | `prepared_library_incompatible` | `validate-prepared-library`, `map-reflectance` | Runtime schema version is not supported by this package version |

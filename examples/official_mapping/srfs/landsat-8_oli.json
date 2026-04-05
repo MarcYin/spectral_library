@@ -1,5 +1,5 @@
 {
-  "sensor_id": "landsat8_oli",
+  "sensor_id": "landsat-8_oli",
   "bands": [
     {
       "band_id": "ultra_blue",

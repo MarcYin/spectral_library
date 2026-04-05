@@ -59,7 +59,7 @@ Each sensor entry follows the public `SensorSRFSchema` JSON shape:
 
 ```json
 {
-  "sensor_id": "sentinel2a_msi",
+  "sensor_id": "sentinel-2a_msi",
   "bands": [
     {
       "band_id": "blue",

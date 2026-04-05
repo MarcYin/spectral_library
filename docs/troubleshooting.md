@@ -14,7 +14,7 @@ missing files or inconsistent metadata.
 | Cause | Fix |
 | --- | --- |
 | Incomplete prepare run | Re-run `prepare-mapping-library` from scratch |
-| Missing `.npy` file for a declared source sensor | Ensure `--source-sensor` flags match the SRF JSON files in `--srf-root` |
+| Missing `.npy` file for a declared source sensor | Re-run mapping or prepare; the runtime can synthesize missing matrices for supported canonical `rsrf` sensors |
 | Checksum mismatch after manual file edits | Re-prepare the runtime; never edit runtime files by hand |
 | Corrupt download or copy | Re-copy the runtime directory and validate again |
 
@@ -51,8 +51,9 @@ version is stored in `manifest.json` under `schema_version`.
 **Common causes:**
 
 - **Unknown sensor id:** The `--source-sensor` or `--target-sensor` value does
-  not match any sensor defined in the prepared runtime's `sensor_schema.json`.
-  Check spelling and case.
+  not match any sensor defined in the prepared runtime's `sensor_schema.json`
+  and cannot be resolved from `rsrf`. Check spelling and use canonical `rsrf`
+  ids such as `sentinel-2b_msi`, `landsat-9_oli2`, or `snpp_viirs`.
 - **Empty reflectance:** The input CSV has no valid reflectance values, or all
   bands are marked invalid.
 - **No valid segment:** Both VNIR and SWIR segments have fewer valid bands than
@@ -71,7 +72,7 @@ version is stored in `manifest.json` under `schema_version`.
 
 ### `invalid_sensor_schema`
 
-**Symptom:** `prepare-mapping-library` fails while loading SRF JSON files.
+**Symptom:** `prepare-mapping-library` fails while resolving a sensor schema.
 
 **Common causes:**
 
@@ -82,6 +83,8 @@ version is stored in `manifest.json` under `schema_version`.
 - No positive RSR values
 - Positive RSR support outside the declared segment bounds
   (`vnir: 400-1000 nm`, `swir: 800-2500 nm`)
+- `rsrf` is installed without accessible registry data; set `RSRF_ROOT` to an
+  `rsrf` checkout that contains `data/registry/sensors.parquet`
 
 ## Confidence Score Interpretation
 

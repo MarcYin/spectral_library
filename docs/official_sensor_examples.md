@@ -31,10 +31,10 @@ Related pages:
 
 | Sensor | Official source | Repository subset |
 | --- | --- | --- |
-| Terra MODIS | NASA MCST [Terra_RSR_in-band.xlsx](https://mcst.gsfc.nasa.gov/sites/default/files/file_attachments/Terra_RSR_in-band.xlsx) | [`examples/official_mapping/srfs/modis_terra.json`](../examples/official_mapping/srfs/modis_terra.json) |
-| Sentinel-2A MSI | ESA Copernicus [COPE-GSEG-EOPG-TN-15-0007 - Sentinel-2 Spectral Response Functions 2024 - 4.0.xlsx](https://sentiwiki.copernicus.eu/__attachments/1692737/COPE-GSEG-EOPG-TN-15-0007%20-%20Sentinel-2%20Spectral%20Response%20Functions%202024%20-%204.0.xlsx) | [`examples/official_mapping/srfs/sentinel2a_msi.json`](../examples/official_mapping/srfs/sentinel2a_msi.json) |
-| Landsat 8 OLI | USGS [Spectral Characteristics Viewer band JSON](https://landsat.usgs.gov/spectral-characteristics-viewer) | [`examples/official_mapping/srfs/landsat8_oli.json`](../examples/official_mapping/srfs/landsat8_oli.json) |
-| Landsat 9 OLI | USGS [Spectral Characteristics Viewer band JSON](https://landsat.usgs.gov/spectral-characteristics-viewer) | [`examples/official_mapping/srfs/landsat9_oli.json`](../examples/official_mapping/srfs/landsat9_oli.json) |
+| Terra MODIS | NASA MCST [Terra_RSR_in-band.xlsx](https://mcst.gsfc.nasa.gov/sites/default/files/file_attachments/Terra_RSR_in-band.xlsx) | [`examples/official_mapping/srfs/terra_modis.json`](../examples/official_mapping/srfs/terra_modis.json) |
+| Sentinel-2A MSI | ESA Copernicus [COPE-GSEG-EOPG-TN-15-0007 - Sentinel-2 Spectral Response Functions 2024 - 4.0.xlsx](https://sentiwiki.copernicus.eu/__attachments/1692737/COPE-GSEG-EOPG-TN-15-0007%20-%20Sentinel-2%20Spectral%20Response%20Functions%202024%20-%204.0.xlsx) | [`examples/official_mapping/srfs/sentinel-2a_msi.json`](../examples/official_mapping/srfs/sentinel-2a_msi.json) |
+| Landsat 8 OLI | USGS [Spectral Characteristics Viewer band JSON](https://landsat.usgs.gov/spectral-characteristics-viewer) | [`examples/official_mapping/srfs/landsat-8_oli.json`](../examples/official_mapping/srfs/landsat-8_oli.json) |
+| Landsat 9 OLI | USGS [Spectral Characteristics Viewer band JSON](https://landsat.usgs.gov/spectral-characteristics-viewer) | [`examples/official_mapping/srfs/landsat-9_oli2.json`](../examples/official_mapping/srfs/landsat-9_oli2.json) |
 
 The reduced JSON files and derived figures were regenerated from the official
 upstream assets on `2026-03-18` UTC. Provenance, download timestamps,
@@ -131,10 +131,10 @@ Use the previously composed full SIAC library and the official-source SRF JSONs:
 spectral-library prepare-mapping-library \
   --siac-root build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37 \
   --srf-root examples/official_mapping/srfs \
-  --source-sensor modis_terra \
-  --source-sensor sentinel2a_msi \
-  --source-sensor landsat8_oli \
-  --source-sensor landsat9_oli \
+  --source-sensor terra_modis \
+  --source-sensor sentinel-2a_msi \
+  --source-sensor landsat-8_oli \
+  --source-sensor landsat-9_oli2 \
   --output-root build/official_mapping_runtime
 ```
 
@@ -263,9 +263,9 @@ MODIS Terra to Sentinel-2A on the vegetation holdout:
 ```bash
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
-  --source-sensor modis_terra \
-  --target-sensor sentinel2a_msi \
-  --input examples/official_mapping/queries/single/blue_spruce_needles_modis_terra.csv \
+  --source-sensor terra_modis \
+  --target-sensor sentinel-2a_msi \
+  --input examples/official_mapping/queries/single/blue_spruce_needles_terra_modis.csv \
   --output-mode target_sensor \
   --neighbor-estimator simplex_mixture \
   --exclude-row-id 'usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles    BECKa AREF' \
@@ -295,9 +295,9 @@ Sentinel-2A to Landsat 9 on the soil holdout:
 ```bash
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
-  --source-sensor sentinel2a_msi \
-  --target-sensor landsat9_oli \
-  --input examples/official_mapping/queries/single/pale_brown_silty_loam_sentinel2a_msi.csv \
+  --source-sensor sentinel-2a_msi \
+  --target-sensor landsat-9_oli2 \
+  --input examples/official_mapping/queries/single/pale_brown_silty_loam_sentinel-2a_msi.csv \
   --output-mode target_sensor \
   --neighbor-estimator simplex_mixture \
   --exclude-row-id 'ecostress_v1:ecostress_v1_002334:Pale brown silty loam' \
@@ -312,9 +312,9 @@ Landsat 8 to MODIS on the urban holdout:
 ```bash
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
-  --source-sensor landsat8_oli \
-  --target-sensor modis_terra \
-  --input examples/official_mapping/queries/single/asphalt_road_landsat8_oli.csv \
+  --source-sensor landsat-8_oli \
+  --target-sensor terra_modis \
+  --input examples/official_mapping/queries/single/asphalt_road_landsat-8_oli.csv \
   --output-mode target_sensor \
   --neighbor-estimator simplex_mixture \
   --exclude-row-id 'usgs_v7:usgs_v7_000004:Asphalt GDS376 Blck_Road old ASDFRa AREF' \
@@ -332,8 +332,8 @@ targets:
 ```bash
 spectral-library map-reflectance-batch \
   --prepared-root build/official_mapping_runtime \
-  --source-sensor landsat8_oli \
-  --target-sensor sentinel2a_msi \
+  --source-sensor landsat-8_oli \
+  --target-sensor sentinel-2a_msi \
   --input examples/official_mapping/queries/batch/landsat8_holdout_batch.csv \
   --output-mode target_sensor \
   --neighbor-estimator simplex_mixture \
@@ -363,8 +363,8 @@ Reconstruct the full `400-2500 nm` spectrum from the water holdout:
 ```bash
 spectral-library map-reflectance \
   --prepared-root build/official_mapping_runtime \
-  --source-sensor sentinel2a_msi \
-  --input examples/official_mapping/queries/single/tap_water_sentinel2a_msi.csv \
+  --source-sensor sentinel-2a_msi \
+  --input examples/official_mapping/queries/single/tap_water_sentinel-2a_msi.csv \
   --output-mode full_spectrum \
   --neighbor-estimator simplex_mixture \
   --exclude-row-id 'ecostress_v1:ecostress_v1_003451:Tap water' \

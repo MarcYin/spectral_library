@@ -98,6 +98,98 @@ SEGMENT_FILE_NAMES = {
     "swir": "hyperspectral_swir.npy",
 }
 FULL_WAVELENGTH_COUNT = int(CANONICAL_WAVELENGTHS.size)
+RSRF_ROOT_ENV_VAR = "RSRF_ROOT"
+RSRF_REGISTRY_RELATIVE_PATH = Path("data") / "registry" / "sensors.parquet"
+RSRF_INSTALL_HINT = 'pip install "rsrf>=0.1.0"'
+RSRF_REPRESENTATION_VARIANT = "band_average"
+
+
+@dataclass(frozen=True)
+class _RsrfBandSelection:
+    band_id: str
+    rsrf_band_id: str
+    segment: str
+
+
+RSRF_SENSOR_BAND_SELECTIONS: dict[str, tuple[_RsrfBandSelection, ...]] = {
+    "sentinel-2a_msi": (
+        _RsrfBandSelection("ultra_blue", "B01", "vnir"),
+        _RsrfBandSelection("blue", "B02", "vnir"),
+        _RsrfBandSelection("green", "B03", "vnir"),
+        _RsrfBandSelection("red", "B04", "vnir"),
+        _RsrfBandSelection("nir", "B8A", "vnir"),
+        _RsrfBandSelection("swir1", "B11", "swir"),
+        _RsrfBandSelection("swir2", "B12", "swir"),
+    ),
+    "sentinel-2b_msi": (
+        _RsrfBandSelection("ultra_blue", "B01", "vnir"),
+        _RsrfBandSelection("blue", "B02", "vnir"),
+        _RsrfBandSelection("green", "B03", "vnir"),
+        _RsrfBandSelection("red", "B04", "vnir"),
+        _RsrfBandSelection("nir", "B8A", "vnir"),
+        _RsrfBandSelection("swir1", "B11", "swir"),
+        _RsrfBandSelection("swir2", "B12", "swir"),
+    ),
+    "sentinel-2c_msi": (
+        _RsrfBandSelection("ultra_blue", "B01", "vnir"),
+        _RsrfBandSelection("blue", "B02", "vnir"),
+        _RsrfBandSelection("green", "B03", "vnir"),
+        _RsrfBandSelection("red", "B04", "vnir"),
+        _RsrfBandSelection("nir", "B8A", "vnir"),
+        _RsrfBandSelection("swir1", "B11", "swir"),
+        _RsrfBandSelection("swir2", "B12", "swir"),
+    ),
+    "landsat-8_oli": (
+        _RsrfBandSelection("ultra_blue", "B1", "vnir"),
+        _RsrfBandSelection("blue", "B2", "vnir"),
+        _RsrfBandSelection("green", "B3", "vnir"),
+        _RsrfBandSelection("red", "B4", "vnir"),
+        _RsrfBandSelection("nir", "B5", "vnir"),
+        _RsrfBandSelection("swir1", "B6", "swir"),
+        _RsrfBandSelection("swir2", "B7", "swir"),
+    ),
+    "landsat-9_oli2": (
+        _RsrfBandSelection("ultra_blue", "B1", "vnir"),
+        _RsrfBandSelection("blue", "B2", "vnir"),
+        _RsrfBandSelection("green", "B3", "vnir"),
+        _RsrfBandSelection("red", "B4", "vnir"),
+        _RsrfBandSelection("nir", "B5", "vnir"),
+        _RsrfBandSelection("swir1", "B6", "swir"),
+        _RsrfBandSelection("swir2", "B7", "swir"),
+    ),
+    "terra_modis": (
+        _RsrfBandSelection("blue", "B3", "vnir"),
+        _RsrfBandSelection("green", "B4", "vnir"),
+        _RsrfBandSelection("red", "B1", "vnir"),
+        _RsrfBandSelection("nir", "B2", "vnir"),
+        _RsrfBandSelection("swir1", "B6", "swir"),
+        _RsrfBandSelection("swir2", "B7", "swir"),
+    ),
+    "snpp_viirs": (
+        _RsrfBandSelection("blue", "M2", "vnir"),
+        _RsrfBandSelection("green", "M4", "vnir"),
+        _RsrfBandSelection("red", "M5", "vnir"),
+        _RsrfBandSelection("nir", "M7", "vnir"),
+        _RsrfBandSelection("swir1", "M10", "swir"),
+        _RsrfBandSelection("swir2", "M11", "swir"),
+    ),
+    "noaa-20_viirs": (
+        _RsrfBandSelection("blue", "M2", "vnir"),
+        _RsrfBandSelection("green", "M4", "vnir"),
+        _RsrfBandSelection("red", "M5", "vnir"),
+        _RsrfBandSelection("nir", "M7", "vnir"),
+        _RsrfBandSelection("swir1", "M10", "swir"),
+        _RsrfBandSelection("swir2", "M11", "swir"),
+    ),
+    "noaa-21_viirs": (
+        _RsrfBandSelection("blue", "M2", "vnir"),
+        _RsrfBandSelection("green", "M4", "vnir"),
+        _RsrfBandSelection("red", "M5", "vnir"),
+        _RsrfBandSelection("nir", "M7", "vnir"),
+        _RsrfBandSelection("swir1", "M10", "swir"),
+        _RsrfBandSelection("swir2", "M11", "swir"),
+    ),
+}
 
 
 class SpectralLibraryError(Exception):
@@ -942,6 +1034,141 @@ def _normalized_source_sensors(source_sensors: Sequence[str]) -> list[str]:
     if not normalized:
         raise PreparedLibraryBuildError("At least one source sensor must be provided.")
     return normalized
+
+
+def _load_rsrf_module() -> Any:
+    try:
+        import rsrf  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise SensorSchemaError(
+            f'rsrf is required to resolve built-in sensor schemas. Install it with `{RSRF_INSTALL_HINT}`.',
+        ) from exc
+    return rsrf
+
+
+def _candidate_rsrf_roots(rsrf_module: Any) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    env_value = (os.environ.get(RSRF_ROOT_ENV_VAR) or "").strip()
+    if env_value:
+        candidates.append(Path(env_value).expanduser())
+
+    package_root = Path(getattr(rsrf_module, "PACKAGE_ROOT", Path(rsrf_module.__file__).resolve().parent)).resolve()
+    candidates.extend((package_root.parent.parent, package_root.parent))
+
+    unique_candidates: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved not in unique_candidates:
+            unique_candidates.append(resolved)
+    return tuple(unique_candidates)
+
+
+def _resolve_rsrf_root() -> Path:
+    rsrf_module = _load_rsrf_module()
+    for candidate in _candidate_rsrf_roots(rsrf_module):
+        if (candidate / RSRF_REGISTRY_RELATIVE_PATH).exists():
+            return candidate
+    raise SensorSchemaError(
+        "rsrf is installed but its registry data could not be located.",
+        context={
+            "searched_roots": [str(candidate) for candidate in _candidate_rsrf_roots(rsrf_module)],
+            "env_var": RSRF_ROOT_ENV_VAR,
+        },
+    )
+
+
+def _rsrf_supported_sensor_ids() -> tuple[str, ...]:
+    return tuple(sorted(RSRF_SENSOR_BAND_SELECTIONS))
+
+
+def _rsrf_band_support_bounds(
+    curve_wavelengths: np.ndarray,
+    curve_response: np.ndarray,
+    *,
+    native_support_min_nm: float | None,
+    native_support_max_nm: float | None,
+    segment: str,
+) -> tuple[float, float]:
+    positive_mask = np.asarray(curve_response, dtype=np.float64) > 0
+    if not np.any(positive_mask):
+        raise SensorSchemaError("rsrf curve has no positive support.")
+
+    support_min = float(curve_wavelengths[positive_mask].min()) if native_support_min_nm is None else float(native_support_min_nm)
+    support_max = float(curve_wavelengths[positive_mask].max()) if native_support_max_nm is None else float(native_support_max_nm)
+    segment_min, segment_max = SEGMENT_RANGES[segment]
+    clipped_min = max(float(CANONICAL_START_NM), float(segment_min), support_min)
+    clipped_max = min(float(CANONICAL_END_NM), float(segment_max), support_max)
+    if clipped_min > clipped_max:
+        raise SensorSchemaError(
+            "rsrf curve support does not overlap the canonical segment range.",
+            context={
+                "segment": segment,
+                "support_min_nm": support_min,
+                "support_max_nm": support_max,
+            },
+        )
+    return clipped_min, clipped_max
+
+
+def _sensor_band_definition_from_rsrf(
+    rsrf_module: Any,
+    rsrf_root: Path,
+    sensor_id: str,
+    selection: _RsrfBandSelection,
+) -> SensorBandDefinition:
+    band_rows = rsrf_module.list_bands(
+        sensor_id,
+        representation_variant=RSRF_REPRESENTATION_VARIANT,
+        root=rsrf_root,
+    )
+    band_row = next((row for row in band_rows if str(row["band_id"]) == selection.rsrf_band_id), None)
+    if band_row is None:
+        raise SensorSchemaError(
+            "rsrf does not provide the requested band for the selected sensor.",
+            context={"sensor_id": sensor_id, "band_id": selection.rsrf_band_id},
+        )
+
+    curve = rsrf_module.load_curve(
+        sensor_id,
+        selection.rsrf_band_id,
+        representation_variant=RSRF_REPRESENTATION_VARIANT,
+        root=rsrf_root,
+    )
+    wavelengths = np.asarray(curve.wavelength_nm, dtype=np.float64)
+    response = np.asarray(curve.response, dtype=np.float64)
+    support_min_nm, support_max_nm = _rsrf_band_support_bounds(
+        wavelengths,
+        response,
+        native_support_min_nm=_optional_float(band_row.get("native_support_min_nm")),
+        native_support_max_nm=_optional_float(band_row.get("native_support_max_nm")),
+        segment=selection.segment,
+    )
+    mask = (wavelengths >= support_min_nm) & (wavelengths <= support_max_nm)
+    return SensorBandDefinition(
+        band_id=selection.band_id,
+        segment=selection.segment,
+        wavelength_nm=tuple(float(value) for value in wavelengths[mask]),
+        rsr=tuple(float(value) for value in response[mask]),
+        center_nm=_optional_float(band_row.get("center_wavelength_nm")),
+        fwhm_nm=_optional_float(band_row.get("fwhm_nm")),
+        support_min_nm=float(support_min_nm),
+        support_max_nm=float(support_max_nm),
+    )
+
+
+def _load_rsrf_sensor_schema(sensor_id: str) -> SensorSRFSchema:
+    if sensor_id not in RSRF_SENSOR_BAND_SELECTIONS:
+        raise SensorSchemaError(
+            "sensor_id is not supported by the built-in rsrf mapping catalog.",
+            context={"sensor_id": sensor_id, "supported_sensor_ids": list(_rsrf_supported_sensor_ids())},
+        )
+    rsrf_module = _load_rsrf_module()
+    rsrf_root = _resolve_rsrf_root()
+    bands = tuple(
+        _sensor_band_definition_from_rsrf(rsrf_module, rsrf_root, sensor_id, selection)
+        for selection in RSRF_SENSOR_BAND_SELECTIONS[sensor_id]
+    )
+    return SensorSRFSchema(sensor_id=sensor_id, bands=bands)
 
 
 def _normalized_knn_index_backends(knn_index_backends: Sequence[str] | None) -> list[str]:
@@ -2136,6 +2363,33 @@ def _simulate_source_retrieval_matrix(
     )
 
 
+def _simulate_source_retrieval_matrix_from_segments(
+    hyperspectral_vnir: np.ndarray,
+    hyperspectral_swir: np.ndarray,
+    bands: Sequence[SensorBandDefinition],
+    *,
+    dtype: np.dtype[Any],
+) -> np.ndarray:
+    """Simulate source retrieval inputs from prepared VNIR/SWIR arrays."""
+
+    matrix = np.empty((hyperspectral_vnir.shape[0], len(bands)), dtype=dtype)
+    for index, band in enumerate(bands):
+        if band.segment == "vnir":
+            source_rows = hyperspectral_vnir
+        elif band.segment == "swir":
+            source_rows = hyperspectral_swir
+        else:
+            raise SensorSchemaError("Unknown sensor segment.", context={"segment": band.segment, "band_id": band.band_id})
+        response = _resample_band_response(band, segment_only=True)
+        matrix[:, index] = _response_weighted_average(
+            source_rows,
+            response,
+            error_message="Resampled SRF support must remain positive.",
+            error_context={"band_id": band.band_id, "segment": band.segment},
+        ).astype(dtype, copy=False)
+    return matrix
+
+
 def _load_sensor_payloads(path: Path) -> list[Mapping[str, object]]:
     payload = _read_json_document(
         path,
@@ -2152,26 +2406,57 @@ def _load_sensor_payloads(path: Path) -> list[Mapping[str, object]]:
     raise SensorSchemaError("Sensor schema JSON must be an object.", context={"path": str(path)})
 
 
-def load_sensor_schemas(srf_root: Path) -> dict[str, SensorSRFSchema]:
-    """Load every sensor SRF schema found under ``srf_root``."""
-
-    if not srf_root.exists():
-        raise SensorSchemaError("SRF root does not exist.", context={"srf_root": str(srf_root)})
+def load_sensor_schemas(
+    srf_root: Path | None,
+    *,
+    required_sensor_ids: Sequence[str] | None = None,
+) -> dict[str, SensorSRFSchema]:
+    """Load sensor schemas from local JSON files and rsrf-backed built-ins."""
 
     schemas: dict[str, SensorSRFSchema] = {}
-    json_paths = sorted(path for path in srf_root.glob("*.json") if path.is_file())
-    if not json_paths:
-        raise SensorSchemaError("No sensor schema JSON files were found.", context={"srf_root": str(srf_root)})
+    resolved_srf_root = None if srf_root is None else Path(srf_root)
+    json_paths: list[Path] = []
+    if resolved_srf_root is not None:
+        if resolved_srf_root.exists():
+            json_paths = sorted(path for path in resolved_srf_root.glob("*.json") if path.is_file())
+        elif required_sensor_ids is None:
+            raise SensorSchemaError("SRF root does not exist.", context={"srf_root": str(resolved_srf_root)})
 
     for path in json_paths:
         for payload in _load_sensor_payloads(path):
             schema = SensorSRFSchema.from_dict(payload)
+            if schema.sensor_id in RSRF_SENSOR_BAND_SELECTIONS:
+                continue
             if schema.sensor_id in schemas:
                 raise SensorSchemaError(
                     "Duplicate sensor_id encountered while loading SRF definitions.",
                     context={"sensor_id": schema.sensor_id, "path": str(path)},
                 )
             schemas[schema.sensor_id] = schema
+
+    if required_sensor_ids is None:
+        if not schemas:
+            raise SensorSchemaError(
+                "No sensor schema JSON files were found.",
+                context={"srf_root": str(resolved_srf_root) if resolved_srf_root is not None else None},
+            )
+        return schemas
+
+    for sensor_id in required_sensor_ids:
+        if sensor_id in RSRF_SENSOR_BAND_SELECTIONS:
+            schemas[sensor_id] = _load_rsrf_sensor_schema(sensor_id)
+            continue
+        if sensor_id not in schemas:
+            raise SensorSchemaError(
+                "Requested source sensors could not be resolved.",
+                context={
+                    "missing_source_sensors": [sensor_id],
+                    "srf_root": str(resolved_srf_root) if resolved_srf_root is not None else None,
+                },
+            )
+
+    if not schemas:
+        raise SensorSchemaError("No sensor schemas could be resolved.")
     return schemas
 
 
@@ -2575,7 +2860,7 @@ def _expected_runtime_checksums(manifest: PreparedLibraryManifest, manifest_path
 
 def prepare_mapping_library(
     siac_root: Path,
-    srf_root: Path,
+    srf_root: Path | None,
     output_root: Path,
     source_sensors: Sequence[str],
     *,
@@ -2601,12 +2886,12 @@ def prepare_mapping_library(
         dtype=dtype_np,
     )
 
-    sensors = load_sensor_schemas(Path(srf_root))
+    sensors = load_sensor_schemas(srf_root, required_sensor_ids=source_sensor_ids)
     missing_source_sensors = [sensor_id for sensor_id in source_sensor_ids if sensor_id not in sensors]
     if missing_source_sensors:
         raise SensorSchemaError(
-            "Requested source sensors are missing from the SRF root.",
-            context={"missing_source_sensors": missing_source_sensors, "srf_root": str(srf_root)},
+            "Requested source sensors could not be resolved.",
+            context={"missing_source_sensors": missing_source_sensors, "srf_root": str(srf_root) if srf_root is not None else None},
         )
 
     hyperspectral_vnir = hyperspectral[:, _segment_slice("vnir")]
@@ -2618,8 +2903,9 @@ def prepare_mapping_library(
         schema = sensors[sensor_id]
         for segment in SEGMENTS:
             bands = _source_retrieval_bands(schema, segment)
-            segment_matrix = _simulate_source_retrieval_matrix(
-                hyperspectral,
+            segment_matrix = _simulate_source_retrieval_matrix_from_segments(
+                hyperspectral_vnir,
+                hyperspectral_swir,
                 bands,
                 dtype=dtype_np,
             )
@@ -3168,10 +3454,7 @@ class SpectralMapper:
         """Return the prepared sensor schema for ``sensor_id``."""
 
         if sensor_id not in self._sensor_schemas:
-            raise SensorSchemaError(
-                "Requested sensor_id is not present in the prepared sensor schema.",
-                context={"sensor_id": sensor_id},
-            )
+            self._sensor_schemas[sensor_id] = _load_rsrf_sensor_schema(sensor_id)
         return self._sensor_schemas[sensor_id]
 
     def _load_hyperspectral(self, segment: str) -> np.ndarray:
@@ -3190,13 +3473,27 @@ class SpectralMapper:
         key = (source_sensor, segment)
         if key not in self._source_matrix_cache:
             path = self.prepared_root / f"source_{source_sensor}_{segment}.npy"
-            try:
-                self._source_matrix_cache[key] = np.load(path, mmap_mode="r")
-            except (OSError, ValueError) as exc:
-                raise PreparedLibraryValidationError(
-                    "Prepared source retrieval matrix could not be loaded.",
-                    context={"path": str(path), "source_sensor": source_sensor, "segment": segment},
-                ) from exc
+            if path.exists():
+                try:
+                    self._source_matrix_cache[key] = np.load(path, mmap_mode="r")
+                except (OSError, ValueError) as exc:
+                    raise PreparedLibraryValidationError(
+                        "Prepared source retrieval matrix could not be loaded.",
+                        context={"path": str(path), "source_sensor": source_sensor, "segment": segment},
+                    ) from exc
+            else:
+                schema = self.get_sensor_schema(source_sensor)
+                generated = _simulate_source_retrieval_matrix_from_segments(
+                    self._load_hyperspectral("vnir"),
+                    self._load_hyperspectral("swir"),
+                    _source_retrieval_bands(schema, segment),
+                    dtype=np.dtype(self.manifest.array_dtype),
+                )
+                try:
+                    np.save(path, generated)
+                    self._source_matrix_cache[key] = np.load(path, mmap_mode="r")
+                except OSError:
+                    self._source_matrix_cache[key] = np.asarray(generated, dtype=np.dtype(self.manifest.array_dtype))
         return self._source_matrix_cache[key]
 
     def _persisted_knn_index_path(self, backend: str, source_sensor: str, segment: str) -> Path | None:

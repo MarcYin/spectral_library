@@ -133,10 +133,10 @@ class SelectedExampleRun:
 
 OFFICIAL_SENSORS = (
     SensorSelection(
-        sensor_id="modis_terra",
+        sensor_id="terra_modis",
         display_name="Terra MODIS",
         short_label="MODIS Terra",
-        filename="modis_terra.json",
+        filename="terra_modis.json",
         source_agency="NASA MCST",
         source_document="Terra_RSR_in-band.xlsx",
         source_url="https://mcst.gsfc.nasa.gov/sites/default/files/file_attachments/Terra_RSR_in-band.xlsx",
@@ -151,10 +151,10 @@ OFFICIAL_SENSORS = (
         ),
     ),
     SensorSelection(
-        sensor_id="sentinel2a_msi",
+        sensor_id="sentinel-2a_msi",
         display_name="Sentinel-2A MSI",
         short_label="Sentinel-2A",
-        filename="sentinel2a_msi.json",
+        filename="sentinel-2a_msi.json",
         source_agency="ESA Copernicus",
         source_document="COPE-GSEG-EOPG-TN-15-0007 - Sentinel-2 Spectral Response Functions 2024 - 4.0.xlsx",
         source_url="https://sentiwiki.copernicus.eu/__attachments/1692737/COPE-GSEG-EOPG-TN-15-0007%20-%20Sentinel-2%20Spectral%20Response%20Functions%202024%20-%204.0.xlsx",
@@ -170,10 +170,10 @@ OFFICIAL_SENSORS = (
         ),
     ),
     SensorSelection(
-        sensor_id="landsat8_oli",
+        sensor_id="landsat-8_oli",
         display_name="Landsat 8 OLI",
         short_label="Landsat 8",
-        filename="landsat8_oli.json",
+        filename="landsat-8_oli.json",
         source_agency="USGS",
         source_document="Spectral Characteristics Viewer band JSON",
         source_url="https://landsat.usgs.gov/spectral-characteristics-viewer",
@@ -189,10 +189,10 @@ OFFICIAL_SENSORS = (
         ),
     ),
     SensorSelection(
-        sensor_id="landsat9_oli",
+        sensor_id="landsat-9_oli2",
         display_name="Landsat 9 OLI",
         short_label="Landsat 9",
-        filename="landsat9_oli.json",
+        filename="landsat-9_oli2.json",
         source_agency="USGS",
         source_document="Spectral Characteristics Viewer band JSON",
         source_url="https://landsat.usgs.gov/spectral-characteristics-viewer",
@@ -211,10 +211,10 @@ OFFICIAL_SENSORS = (
 
 SENSOR_BY_ID = {sensor.sensor_id: sensor for sensor in OFFICIAL_SENSORS}
 PLOT_COLORS = {
-    "modis_terra": "#0b5d8b",
-    "sentinel2a_msi": "#e76f51",
-    "landsat8_oli": "#2a9d8f",
-    "landsat9_oli": "#6d597a",
+    "terra_modis": "#0b5d8b",
+    "sentinel-2a_msi": "#e76f51",
+    "landsat-8_oli": "#2a9d8f",
+    "landsat-9_oli2": "#6d597a",
 }
 DEFAULT_PLOT_WINDOWS = {
     "ultra_blue": (410, 470),
@@ -265,20 +265,20 @@ HELD_OUT_TARGETS = (
 )
 HELD_OUT_TARGETS_BY_ID = {target.sample_id: target for target in HELD_OUT_TARGETS}
 SENSOR_FILE_LABELS = {
-    "modis_terra": "modis",
-    "sentinel2a_msi": "sentinel2a",
-    "landsat8_oli": "landsat8",
-    "landsat9_oli": "landsat9",
+    "terra_modis": "modis",
+    "sentinel-2a_msi": "sentinel2a",
+    "landsat-8_oli": "landsat8",
+    "landsat-9_oli2": "landsat9",
 }
 SELECTED_TARGET_SENSOR_RUNS = (
-    SelectedExampleRun("blue_spruce_needles", "modis_terra", "sentinel2a_msi"),
-    SelectedExampleRun("pale_brown_silty_loam", "sentinel2a_msi", "landsat9_oli"),
-    SelectedExampleRun("asphalt_road", "landsat8_oli", "modis_terra"),
+    SelectedExampleRun("blue_spruce_needles", "terra_modis", "sentinel-2a_msi"),
+    SelectedExampleRun("pale_brown_silty_loam", "sentinel-2a_msi", "landsat-9_oli2"),
+    SelectedExampleRun("asphalt_road", "landsat-8_oli", "terra_modis"),
 )
 FULL_SPECTRUM_SAMPLE_ID = "tap_water"
-FULL_SPECTRUM_SOURCE_SENSOR = "sentinel2a_msi"
-HOLDOUT_BATCH_SOURCE_SENSOR = "landsat8_oli"
-HOLDOUT_BATCH_TARGET_SENSOR = "sentinel2a_msi"
+FULL_SPECTRUM_SOURCE_SENSOR = "sentinel-2a_msi"
+HOLDOUT_BATCH_SOURCE_SENSOR = "landsat-8_oli"
+HOLDOUT_BATCH_TARGET_SENSOR = "sentinel-2a_msi"
 
 
 def _single_query_path(sample_id: str, sensor_id: str) -> Path:
@@ -694,13 +694,13 @@ def _prepare_example_runtime(prepared_root: Path, siac_root: Path) -> None:
         "--srf-root",
         str(SRF_ROOT),
         "--source-sensor",
-        "modis_terra",
+        "terra_modis",
         "--source-sensor",
-        "sentinel2a_msi",
+        "sentinel-2a_msi",
         "--source-sensor",
-        "landsat8_oli",
+        "landsat-8_oli",
         "--source-sensor",
-        "landsat9_oli",
+        "landsat-9_oli2",
         "--output-root",
         str(prepared_root),
     )
@@ -1413,10 +1413,10 @@ def _render_official_sensor_examples_doc(
         "spectral-library prepare-mapping-library",
         f"  --siac-root {_shell_quote(full_library_root)}",
         "  --srf-root examples/official_mapping/srfs",
-        "  --source-sensor modis_terra",
-        "  --source-sensor sentinel2a_msi",
-        "  --source-sensor landsat8_oli",
-        "  --source-sensor landsat9_oli",
+        "  --source-sensor terra_modis",
+        "  --source-sensor sentinel-2a_msi",
+        "  --source-sensor landsat-8_oli",
+        "  --source-sensor landsat-9_oli2",
         "  --output-root build/official_mapping_runtime",
     )
     validate_runtime_block = _shell_block(
@@ -1865,26 +1865,26 @@ def build_official_mapping_examples(*, siac_root: Path | None = None) -> None:
 
     with tempfile.TemporaryDirectory(prefix="official_sensor_sources_", dir=str(REPO_ROOT / "tmp")) as tmpdir:
         tmp_root = Path(tmpdir)
-        modis_artifact = _download(SENSOR_BY_ID["modis_terra"].source_url, tmp_root / "Terra_RSR_in-band.xlsx")
+        modis_artifact = _download(SENSOR_BY_ID["terra_modis"].source_url, tmp_root / "Terra_RSR_in-band.xlsx")
         sentinel_artifact = _download(
-            SENSOR_BY_ID["sentinel2a_msi"].source_url,
+            SENSOR_BY_ID["sentinel-2a_msi"].source_url,
             tmp_root / "Sentinel-2_Spectral_Response_Functions_2024_4.0.xlsx",
         )
         modis_path = tmp_root / "Terra_RSR_in-band.xlsx"
         sentinel_path = tmp_root / "Sentinel-2_Spectral_Response_Functions_2024_4.0.xlsx"
 
         sensor_payloads = {
-            "modis_terra": _parse_modis_sensor(SENSOR_BY_ID["modis_terra"], modis_path),
-            "sentinel2a_msi": _parse_sentinel_sensor(SENSOR_BY_ID["sentinel2a_msi"], sentinel_path),
+            "terra_modis": _parse_modis_sensor(SENSOR_BY_ID["terra_modis"], modis_path),
+            "sentinel-2a_msi": _parse_sentinel_sensor(SENSOR_BY_ID["sentinel-2a_msi"], sentinel_path),
         }
-        landsat8_payload, landsat8_artifacts = _parse_landsat_sensor(SENSOR_BY_ID["landsat8_oli"])
-        landsat9_payload, landsat9_artifacts = _parse_landsat_sensor(SENSOR_BY_ID["landsat9_oli"])
-        sensor_payloads["landsat8_oli"] = landsat8_payload
-        sensor_payloads["landsat9_oli"] = landsat9_payload
-        source_artifacts_by_sensor["modis_terra"] = [modis_artifact.to_dict()]
-        source_artifacts_by_sensor["sentinel2a_msi"] = [sentinel_artifact.to_dict()]
-        source_artifacts_by_sensor["landsat8_oli"] = landsat8_artifacts
-        source_artifacts_by_sensor["landsat9_oli"] = landsat9_artifacts
+        landsat8_payload, landsat8_artifacts = _parse_landsat_sensor(SENSOR_BY_ID["landsat-8_oli"])
+        landsat9_payload, landsat9_artifacts = _parse_landsat_sensor(SENSOR_BY_ID["landsat-9_oli2"])
+        sensor_payloads["landsat-8_oli"] = landsat8_payload
+        sensor_payloads["landsat-9_oli2"] = landsat9_payload
+        source_artifacts_by_sensor["terra_modis"] = [modis_artifact.to_dict()]
+        source_artifacts_by_sensor["sentinel-2a_msi"] = [sentinel_artifact.to_dict()]
+        source_artifacts_by_sensor["landsat-8_oli"] = landsat8_artifacts
+        source_artifacts_by_sensor["landsat-9_oli2"] = landsat9_artifacts
 
     for sensor in OFFICIAL_SENSORS:
         _json_write(SRF_ROOT / sensor.filename, sensor_payloads[sensor.sensor_id])

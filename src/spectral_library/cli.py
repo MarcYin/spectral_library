@@ -1252,12 +1252,12 @@ def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
             "output_root": str(Path(args.output_root)),
             "siac_root": str(Path(args.siac_root)),
             "source_sensors": _split_repeated_csv_arg(args.source_sensor),
-            "srf_root": str(Path(args.srf_root)),
+            "srf_root": str(Path(args.srf_root)) if args.srf_root else None,
         },
     )
     manifest = prepare_mapping_library(
         Path(args.siac_root),
-        Path(args.srf_root),
+        Path(args.srf_root) if args.srf_root else None,
         Path(args.output_root),
         _split_repeated_csv_arg(args.source_sensor),
         dtype=args.dtype,
@@ -1708,7 +1708,7 @@ def _add_public_subparsers(subparsers: argparse._SubParsersAction[argparse.Argum
         help="Build a prepared runtime layer for retrieval-based spectral mapping.",
     )
     prepare_mapping_parser.add_argument("--siac-root", required=True)
-    prepare_mapping_parser.add_argument("--srf-root", required=True)
+    prepare_mapping_parser.add_argument("--srf-root", default="")
     prepare_mapping_parser.add_argument("--source-sensor", action="append", required=True)
     prepare_mapping_parser.add_argument("--output-root", required=True)
     prepare_mapping_parser.add_argument("--dtype", default="float32")

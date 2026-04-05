@@ -1,5 +1,5 @@
 {
-  "sensor_id": "modis_terra",
+  "sensor_id": "terra_modis",
   "bands": [
     {
       "band_id": "blue",

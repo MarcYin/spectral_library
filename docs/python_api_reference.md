@@ -60,12 +60,20 @@ from spectral_library import prepare_mapping_library
 
 manifest = prepare_mapping_library(
     siac_root=Path("build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37"),
-    srf_root=Path("examples/official_mapping/srfs"),
+    srf_root=None,
     output_root=Path("build/official_mapping_runtime"),
-    source_sensors=["modis_terra", "sentinel2a_msi", "landsat8_oli", "landsat9_oli"],
+    source_sensors=["terra_modis", "sentinel-2a_msi", "landsat-8_oli", "landsat-9_oli2"],
     knn_index_backends=["faiss"],
 )
 ```
+
+Built-in sensors now use canonical `rsrf` ids directly, such as
+`sentinel-2a_msi`, `sentinel-2b_msi`, `sentinel-2c_msi`, `landsat-8_oli`,
+`landsat-9_oli2`, `terra_modis`, `snpp_viirs`, `noaa-20_viirs`, and
+`noaa-21_viirs`. Pass `srf_root=Path(...)` only when you need extra local
+sensor JSON definitions. If your `rsrf` install does not include its registry
+data, set `RSRF_ROOT` to an `rsrf` checkout before using the built-in sensor
+catalog.
 
 Returns:
 
@@ -132,7 +140,7 @@ import csv
 
 from spectral_library import SpectralMapper
 
-query_path = Path("examples/official_mapping/queries/single/blue_spruce_needles_modis_terra.csv")
+query_path = Path("examples/official_mapping/queries/single/blue_spruce_needles_terra_modis.csv")
 reflectance = {}
 with query_path.open("r", encoding="utf-8", newline="") as handle:
     for row in csv.DictReader(handle):
@@ -140,10 +148,10 @@ with query_path.open("r", encoding="utf-8", newline="") as handle:
 
 mapper = SpectralMapper(Path("build/official_mapping_runtime"))
 result = mapper.map_reflectance(
-    source_sensor="modis_terra",
+    source_sensor="terra_modis",
     reflectance=reflectance,
     output_mode="target_sensor",
-    target_sensor="sentinel2a_msi",
+    target_sensor="sentinel-2a_msi",
     neighbor_estimator="simplex_mixture",
     knn_backend="scipy_ckdtree",
     knn_eps=0.05,
@@ -164,7 +172,7 @@ from spectral_library import SpectralMapper
 
 mapper = SpectralMapper(Path("build/official_mapping_runtime"))
 batch = mapper.map_reflectance_batch(
-    source_sensor="landsat8_oli",
+    source_sensor="landsat-8_oli",
     sample_ids=["blue_spruce_needles", "pale_brown_silty_loam", "tap_water", "asphalt_road"],
     reflectance_rows=[
         {"ultra_blue": 0.08565344, "blue": 0.08364366, "green": 0.10364797, "red": 0.06556322, "nir": 0.39777808, "swir1": 0.09562342, "swir2": 0.03500909},
@@ -173,7 +181,7 @@ batch = mapper.map_reflectance_batch(
         {"ultra_blue": 0.06766724, "blue": 0.07308879, "green": 0.08826971, "red": 0.10323628, "nir": 0.12662063, "swir1": 0.19511989, "swir2": 0.21389012},
     ],
     output_mode="target_sensor",
-    target_sensor="sentinel2a_msi",
+    target_sensor="sentinel-2a_msi",
     neighbor_estimator="simplex_mixture",
     knn_backend="scipy_ckdtree",
     exclude_row_ids_per_sample=[
@@ -223,8 +231,8 @@ from spectral_library import SpectralMapper
 
 mapper = SpectralMapper(Path("build/official_mapping_runtime"))
 linear_mapper = mapper.compile_linear_mapper(
-    source_sensor="landsat8_oli",
-    target_sensor="sentinel2a_msi",
+    source_sensor="landsat-8_oli",
+    target_sensor="sentinel-2a_msi",
     output_mode="target_sensor",
     dtype="float32",
 )
@@ -327,10 +335,10 @@ except SpectralLibraryError as exc:
 mapper = SpectralMapper(Path("build/mapping_runtime"))
 try:
     result = mapper.map_reflectance(
-        source_sensor="modis_terra",
+        source_sensor="terra_modis",
         reflectance={"blue": 0.08, "nir": 0.34},
         output_mode="target_sensor",
-        target_sensor="sentinel2a_msi",
+        target_sensor="sentinel-2a_msi",
     )
 except MappingInputError as exc:
     # Structured error for logging or API responses
@@ -344,7 +352,7 @@ except MappingInputError as exc:
 | Class | `error_code` | Raised when |
 | --- | --- | --- |
 | `SpectralLibraryError` | *(varies)* | Base class for all package errors |
-| `SensorSchemaError` | `invalid_sensor_schema` | SRF JSON is malformed |
+| `SensorSchemaError` | `invalid_sensor_schema` | Sensor schema data from `rsrf` or local JSON is malformed or unavailable |
 | `PreparedLibraryBuildError` | `prepare_failed` | Runtime build fails |
 | `PreparedLibraryValidationError` | `invalid_prepared_library` | Runtime layout or checksums are invalid |
 | `PreparedLibraryCompatibilityError` | `prepared_library_incompatible` | Schema version mismatch |

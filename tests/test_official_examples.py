@@ -72,10 +72,10 @@ class OfficialExamplesTests(unittest.TestCase):
 
     def test_official_sensor_json_examples_load(self) -> None:
         expected_band_ids = {
-            "modis_terra": ("blue", "green", "red", "nir", "swir1", "swir2"),
-            "sentinel2a_msi": ("ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2"),
-            "landsat8_oli": ("ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2"),
-            "landsat9_oli": ("ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2"),
+            "terra_modis": ("blue", "green", "red", "nir", "swir1", "swir2"),
+            "sentinel-2a_msi": ("ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2"),
+            "landsat-8_oli": ("ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2"),
+            "landsat-9_oli2": ("ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2"),
         }
 
         for sensor_id, band_ids in expected_band_ids.items():
@@ -87,7 +87,7 @@ class OfficialExamplesTests(unittest.TestCase):
 
         manifest_payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
         sentinel_payload = next(
-            sensor for sensor in manifest_payload["sensors"] if sensor["sensor_id"] == "sentinel2a_msi"
+            sensor for sensor in manifest_payload["sensors"] if sensor["sensor_id"] == "sentinel-2a_msi"
         )
         sentinel_nir = next(band for band in sentinel_payload["selected_bands"] if band["band_id"] == "nir")
         self.assertEqual(sentinel_nir["official_band"], "B8A")
@@ -119,12 +119,12 @@ class OfficialExamplesTests(unittest.TestCase):
                 siac_root=siac_root,
                 srf_root=SRF_ROOT,
                 output_root=prepared_root,
-                source_sensors=["landsat8_oli"],
+                source_sensors=["landsat-8_oli"],
             )
             manifest = validate_prepared_library(prepared_root)
             self.assertEqual(manifest.row_count, payload["example_design"]["library_reference"]["row_count"])
 
-            query_path = QUERIES_ROOT / "single" / "asphalt_road_landsat8_oli.csv"
+            query_path = QUERIES_ROOT / "single" / "asphalt_road_landsat-8_oli.csv"
             reflectance: dict[str, float] = {}
             with query_path.open("r", encoding="utf-8", newline="") as handle:
                 for row in csv.DictReader(handle):
@@ -137,10 +137,10 @@ class OfficialExamplesTests(unittest.TestCase):
                 if sample["sample_id"] == "asphalt_road"
             )
             result = mapper.map_reflectance(
-                source_sensor="landsat8_oli",
+                source_sensor="landsat-8_oli",
                 reflectance=reflectance,
                 output_mode="target_sensor",
-                target_sensor="sentinel2a_msi",
+                target_sensor="sentinel-2a_msi",
                 k=10,
                 min_valid_bands=1,
                 exclude_row_ids=[target_row_id],

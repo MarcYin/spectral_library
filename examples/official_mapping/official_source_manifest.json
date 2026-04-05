@@ -93,7 +93,7 @@
   },
   "sensors": [
     {
-      "sensor_id": "modis_terra",
+      "sensor_id": "terra_modis",
       "display_name": "Terra MODIS",
       "source_agency": "NASA MCST",
       "source_document": "Terra_RSR_in-band.xlsx",
@@ -150,7 +150,7 @@
       ]
     },
     {
-      "sensor_id": "sentinel2a_msi",
+      "sensor_id": "sentinel-2a_msi",
       "display_name": "Sentinel-2A MSI",
       "source_agency": "ESA Copernicus",
       "source_document": "COPE-GSEG-EOPG-TN-15-0007 - Sentinel-2 Spectral Response Functions 2024 - 4.0.xlsx",
@@ -212,7 +212,7 @@
       ]
     },
     {
-      "sensor_id": "landsat8_oli",
+      "sensor_id": "landsat-8_oli",
       "display_name": "Landsat 8 OLI",
       "source_agency": "USGS",
       "source_document": "Spectral Characteristics Viewer band JSON",
@@ -343,7 +343,7 @@
       ]
     },
     {
-      "sensor_id": "landsat9_oli",
+      "sensor_id": "landsat-9_oli2",
       "display_name": "Landsat 9 OLI",
       "source_agency": "USGS",
       "source_document": "Spectral Characteristics Viewer band JSON",

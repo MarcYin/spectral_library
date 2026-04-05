@@ -43,6 +43,7 @@ dependencies = [
   "duckdb>=1.1.0",
   "numpy>=1.24.0",
   "pandas>=2.0.0",
+  "rsrf>=0.1.0",
 ]
 
 [project.urls]

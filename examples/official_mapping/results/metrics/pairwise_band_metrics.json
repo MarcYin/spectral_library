@@ -10,8 +10,8 @@
   "neighbor_estimator": "simplex_mixture",
   "pairs": [
     {
-      "source_sensor": "modis_terra",
-      "target_sensor": "sentinel2a_msi",
+      "source_sensor": "terra_modis",
+      "target_sensor": "sentinel-2a_msi",
       "source_label": "MODIS Terra",
       "target_label": "Sentinel-2A",
       "neighbor_estimator": "simplex_mixture",
@@ -29,8 +29,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "modis_terra",
-      "target_sensor": "landsat8_oli",
+      "source_sensor": "terra_modis",
+      "target_sensor": "landsat-8_oli",
       "source_label": "MODIS Terra",
       "target_label": "Landsat 8",
       "neighbor_estimator": "simplex_mixture",
@@ -48,8 +48,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "modis_terra",
-      "target_sensor": "landsat9_oli",
+      "source_sensor": "terra_modis",
+      "target_sensor": "landsat-9_oli2",
       "source_label": "MODIS Terra",
       "target_label": "Landsat 9",
       "neighbor_estimator": "simplex_mixture",
@@ -67,8 +67,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "sentinel2a_msi",
-      "target_sensor": "modis_terra",
+      "source_sensor": "sentinel-2a_msi",
+      "target_sensor": "terra_modis",
       "source_label": "Sentinel-2A",
       "target_label": "MODIS Terra",
       "neighbor_estimator": "simplex_mixture",
@@ -86,8 +86,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "sentinel2a_msi",
-      "target_sensor": "landsat8_oli",
+      "source_sensor": "sentinel-2a_msi",
+      "target_sensor": "landsat-8_oli",
       "source_label": "Sentinel-2A",
       "target_label": "Landsat 8",
       "neighbor_estimator": "simplex_mixture",
@@ -105,8 +105,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "sentinel2a_msi",
-      "target_sensor": "landsat9_oli",
+      "source_sensor": "sentinel-2a_msi",
+      "target_sensor": "landsat-9_oli2",
       "source_label": "Sentinel-2A",
       "target_label": "Landsat 9",
       "neighbor_estimator": "simplex_mixture",
@@ -124,8 +124,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "landsat8_oli",
-      "target_sensor": "modis_terra",
+      "source_sensor": "landsat-8_oli",
+      "target_sensor": "terra_modis",
       "source_label": "Landsat 8",
       "target_label": "MODIS Terra",
       "neighbor_estimator": "simplex_mixture",
@@ -143,8 +143,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "landsat8_oli",
-      "target_sensor": "sentinel2a_msi",
+      "source_sensor": "landsat-8_oli",
+      "target_sensor": "sentinel-2a_msi",
       "source_label": "Landsat 8",
       "target_label": "Sentinel-2A",
       "neighbor_estimator": "simplex_mixture",
@@ -162,8 +162,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "landsat8_oli",
-      "target_sensor": "landsat9_oli",
+      "source_sensor": "landsat-8_oli",
+      "target_sensor": "landsat-9_oli2",
       "source_label": "Landsat 8",
       "target_label": "Landsat 9",
       "neighbor_estimator": "simplex_mixture",
@@ -181,8 +181,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "landsat9_oli",
-      "target_sensor": "modis_terra",
+      "source_sensor": "landsat-9_oli2",
+      "target_sensor": "terra_modis",
       "source_label": "Landsat 9",
       "target_label": "MODIS Terra",
       "neighbor_estimator": "simplex_mixture",
@@ -200,8 +200,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "landsat9_oli",
-      "target_sensor": "sentinel2a_msi",
+      "source_sensor": "landsat-9_oli2",
+      "target_sensor": "sentinel-2a_msi",
       "source_label": "Landsat 9",
       "target_label": "Sentinel-2A",
       "neighbor_estimator": "simplex_mixture",
@@ -219,8 +219,8 @@
       "sample_count": 4
     },
     {
-      "source_sensor": "landsat9_oli",
-      "target_sensor": "landsat8_oli",
+      "source_sensor": "landsat-9_oli2",
+      "target_sensor": "landsat-8_oli",
       "source_label": "Landsat 9",
       "target_label": "Landsat 8",
       "neighbor_estimator": "simplex_mixture",

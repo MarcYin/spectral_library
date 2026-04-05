@@ -287,8 +287,8 @@
             "valid_band_count": 5
           }
         },
-        "source_sensor": "landsat8_oli",
-        "target_sensor": "sentinel2a_msi"
+        "source_sensor": "landsat-8_oli",
+        "target_sensor": "sentinel-2a_msi"
       },
       "neighbor_distances_by_segment": {
         "swir": [
@@ -644,8 +644,8 @@
             "valid_band_count": 5
           }
         },
-        "source_sensor": "landsat8_oli",
-        "target_sensor": "sentinel2a_msi"
+        "source_sensor": "landsat-8_oli",
+        "target_sensor": "sentinel-2a_msi"
       },
       "neighbor_distances_by_segment": {
         "swir": [
@@ -1001,8 +1001,8 @@
             "valid_band_count": 5
           }
         },
-        "source_sensor": "landsat8_oli",
-        "target_sensor": "sentinel2a_msi"
+        "source_sensor": "landsat-8_oli",
+        "target_sensor": "sentinel-2a_msi"
       },
       "neighbor_distances_by_segment": {
         "swir": [
@@ -1358,8 +1358,8 @@
             "valid_band_count": 5
           }
         },
-        "source_sensor": "landsat8_oli",
-        "target_sensor": "sentinel2a_msi"
+        "source_sensor": "landsat-8_oli",
+        "target_sensor": "sentinel-2a_msi"
       },
       "neighbor_distances_by_segment": {
         "swir": [

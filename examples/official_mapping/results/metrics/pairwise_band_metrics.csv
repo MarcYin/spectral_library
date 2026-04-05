@@ -1,13 +1,13 @@
 source_sensor,target_sensor,source_label,target_label,neighbor_estimator,evaluated_band_ids,evaluated_band_count,mean_abs_error,rmse,sample_count
-modis_terra,sentinel2a_msi,MODIS Terra,Sentinel-2A,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.002600405399937073,0.0035952099400702155,4
-modis_terra,landsat8_oli,MODIS Terra,Landsat 8,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0023888728326382203,0.0034060396071655336,4
-modis_terra,landsat9_oli,MODIS Terra,Landsat 9,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.002397302273508902,0.003410885558272012,4
-sentinel2a_msi,modis_terra,Sentinel-2A,MODIS Terra,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.002319832580845358,0.003413545165872708,4
-sentinel2a_msi,landsat8_oli,Sentinel-2A,Landsat 8,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0016716123929463081,0.00215386469273987,4
-sentinel2a_msi,landsat9_oli,Sentinel-2A,Landsat 9,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0016856987139443615,0.0021665923887762882,4
-landsat8_oli,modis_terra,Landsat 8,MODIS Terra,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.002159180808794927,0.0032675240960837633,4
-landsat8_oli,sentinel2a_msi,Landsat 8,Sentinel-2A,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0018861238759485027,0.0024593685000267084,4
-landsat8_oli,landsat9_oli,Landsat 8,Landsat 9,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0017255534159006168,0.002204135539783878,4
-landsat9_oli,modis_terra,Landsat 9,MODIS Terra,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0020974664914254725,0.0031816737426756804,4
-landsat9_oli,sentinel2a_msi,Landsat 9,Sentinel-2A,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0017949274217029323,0.0023628687056833223,4
-landsat9_oli,landsat8_oli,Landsat 9,Landsat 8,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0015923020290394415,0.002045173929673168,4
+terra_modis,sentinel-2a_msi,MODIS Terra,Sentinel-2A,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.002600405399937073,0.0035952099400702155,4
+terra_modis,landsat-8_oli,MODIS Terra,Landsat 8,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0023888728326382203,0.0034060396071655336,4
+terra_modis,landsat-9_oli2,MODIS Terra,Landsat 9,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.002397302273508902,0.003410885558272012,4
+sentinel-2a_msi,terra_modis,Sentinel-2A,MODIS Terra,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.002319832580845358,0.003413545165872708,4
+sentinel-2a_msi,landsat-8_oli,Sentinel-2A,Landsat 8,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0016716123929463081,0.00215386469273987,4
+sentinel-2a_msi,landsat-9_oli2,Sentinel-2A,Landsat 9,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0016856987139443615,0.0021665923887762882,4
+landsat-8_oli,terra_modis,Landsat 8,MODIS Terra,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.002159180808794927,0.0032675240960837633,4
+landsat-8_oli,sentinel-2a_msi,Landsat 8,Sentinel-2A,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0018861238759485027,0.0024593685000267084,4
+landsat-8_oli,landsat-9_oli2,Landsat 8,Landsat 9,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0017255534159006168,0.002204135539783878,4
+landsat-9_oli2,terra_modis,Landsat 9,MODIS Terra,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0020974664914254725,0.0031816737426756804,4
+landsat-9_oli2,sentinel-2a_msi,Landsat 9,Sentinel-2A,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0017949274217029323,0.0023628687056833223,4
+landsat-9_oli2,landsat-8_oli,Landsat 9,Landsat 8,simplex_mixture,blue|green|red|nir|swir1|swir2,6,0.0015923020290394415,0.002045173929673168,4
