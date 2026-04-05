@@ -111,16 +111,16 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact-type: wheel
-            install_glob: "*manylinux*x86_64.whl"
+            install_glob: "*cp311*manylinux*x86_64.whl"
           - os: ubuntu-latest
             artifact-type: sdist
             install_glob: "*.tar.gz"
           - os: macos-latest
             artifact-type: wheel
-            install_glob: "*macosx*arm64.whl"
+            install_glob: "*cp311*macosx*arm64.whl"
           - os: windows-latest
             artifact-type: wheel
-            install_glob: "*win_amd64.whl"
+            install_glob: "*cp311*win_amd64.whl"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
