@@ -111,12 +111,16 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact-type: wheel
+            install_glob: "*manylinux*x86_64.whl"
           - os: ubuntu-latest
             artifact-type: sdist
+            install_glob: "*.tar.gz"
           - os: macos-latest
             artifact-type: wheel
+            install_glob: "*macosx*arm64.whl"
           - os: windows-latest
             artifact-type: wheel
+            install_glob: "*win_amd64.whl"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -142,10 +146,12 @@ jobs:
           . .venv-release-smoke/bin/activate
           python -m pip install --upgrade pip
           if [ "${{ matrix.artifact-type }}" = "wheel" ]; then
-            python -m pip install "$(find dist -name '*.whl' -print -quit)"
+            artifact_path="$(find dist -maxdepth 1 -name "${{ matrix.install_glob }}" -print -quit)"
           else
-            python -m pip install "$(find dist -name '*.tar.gz' -print -quit)"
+            artifact_path="$(find dist -maxdepth 1 -name "${{ matrix.install_glob }}" -print -quit)"
           fi
+          test -n "${artifact_path}"
+          python -m pip install "${artifact_path}"
 
       - name: Install artifact in clean environment (Windows)
         if: runner.os == 'Windows'
@@ -155,12 +161,12 @@ jobs:
           .\.venv-release-smoke\Scripts\Activate.ps1
           python -m pip install --upgrade pip
           if ("${{ matrix.artifact-type }}" -eq "wheel") {
-            $wheel = Get-ChildItem dist -Filter '*.whl' | Select-Object -First 1
-            python -m pip install $wheel.FullName
+            $artifact = Get-ChildItem dist -Filter "${{ matrix.install_glob }}" | Select-Object -First 1
           } else {
-            $sdist = Get-ChildItem dist -Filter '*.tar.gz' | Select-Object -First 1
-            python -m pip install $sdist.FullName
+            $artifact = Get-ChildItem dist -Filter "${{ matrix.install_glob }}" | Select-Object -First 1
           }
+          if (-not $artifact) { throw "Release artifact not found for pattern: ${{ matrix.install_glob }}" }
+          python -m pip install $artifact.FullName
 
       - name: Run release smoke workflow (Unix)
         if: runner.os != 'Windows'
