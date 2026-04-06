@@ -5,6 +5,24 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.6.2] - 2026-04-06
+
+### Changed
+
+- canonical sensor resolution now targets `rsrf>=0.3.1` and uses the installed
+  package runtime contract instead of probing for checkout-style registry files
+  beside the Python package
+- mapping docs now describe the `rsrf` runtime-cache bootstrap model and the
+  explicit `RSRF_ROOT` / `RSRF_CACHE_DIR` override points
+
+### Fixed
+
+- prepared runtimes can now resolve missing canonical target sensor schemas
+  lazily through `rsrf`, so source-only builds no longer fail when mapping into
+  built-in target sensors
+- package and release smoke workflows now exercise the real packaged-`rsrf`
+  canonical build-and-map path without `--srf-root`
+
 ## [0.6.1] - 2026-04-06
 
 ### Added
