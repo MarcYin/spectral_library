@@ -6,7 +6,7 @@ __pycache__/
 .DS_Store
 .coverage
 tmp/
-build/
+/build/
 dist/
 *.egg-info/
 *.so
