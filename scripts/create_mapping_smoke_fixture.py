@@ -41,11 +41,25 @@ def _band_payload(
 ) -> dict[str, object]:
     return {
         "band_id": band_id,
-        "segment": segment,
         "response_definition": {
+            "kind": "sampled",
             "wavelength_nm": wavelength_nm,
             "response": response,
         },
+        "extensions": {
+            "spectral_library": {
+                "segment": segment,
+            }
+        },
+    }
+
+
+def _sensor_payload(*, sensor_id: str, bands: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "schema_type": "rsrf_sensor_definition",
+        "schema_version": "1.0.0",
+        "sensor_id": sensor_id,
+        "bands": bands,
     }
 
 
@@ -110,9 +124,9 @@ def create_smoke_fixture(output_root: Path) -> dict[str, str]:
         spectra_rows,
     )
 
-    sensor_a = {
-        "sensor_id": "sensor_a",
-        "bands": [
+    sensor_a = _sensor_payload(
+        sensor_id="sensor_a",
+        bands=[
             _band_payload(
                 band_id="blue",
                 segment="vnir",
@@ -126,10 +140,10 @@ def create_smoke_fixture(output_root: Path) -> dict[str, str]:
                 response=[0.2, 1.0, 0.2],
             ),
         ],
-    }
-    sensor_b = {
-        "sensor_id": "sensor_b",
-        "bands": [
+    )
+    sensor_b = _sensor_payload(
+        sensor_id="sensor_b",
+        bands=[
             _band_payload(
                 band_id="target_vnir",
                 segment="vnir",
@@ -143,7 +157,7 @@ def create_smoke_fixture(output_root: Path) -> dict[str, str]:
                 response=[0.2, 1.0, 0.2],
             ),
         ],
-    }
+    )
     srf_root.mkdir(parents=True, exist_ok=True)
     (srf_root / "sensor_a.json").write_text(json.dumps(sensor_a, indent=2) + "\n", encoding="utf-8")
     (srf_root / "sensor_b.json").write_text(json.dumps(sensor_b, indent=2) + "\n", encoding="utf-8")

@@ -1,9 +1,10 @@
 {
+  "schema_type": "rsrf_sensor_definition",
+  "schema_version": "1.0.0",
   "sensor_id": "terra_modis",
   "bands": [
     {
       "band_id": "blue",
-      "segment": "vnir",
       "response_definition": {
         "wavelength_nm": [
           450.89,
@@ -670,16 +671,17 @@
           0.01,
           0.01,
           0.01
-        ]
+        ],
+        "kind": "sampled"
       },
-      "center_nm": 465.7336,
-      "fwhm_nm": 18.36,
-      "support_min_nm": 450.89,
-      "support_max_nm": 480.79
+      "extensions": {
+        "spectral_library": {
+          "segment": "vnir"
+        }
+      }
     },
     {
       "band_id": "green",
-      "segment": "vnir",
       "response_definition": {
         "wavelength_nm": [
           538.746,
@@ -1624,16 +1626,17 @@
           0.01,
           0.01,
           0.01
-        ]
+        ],
+        "kind": "sampled"
       },
-      "center_nm": 553.7329,
-      "fwhm_nm": 19.2815,
-      "support_min_nm": 538.746,
-      "support_max_nm": 568.3405
+      "extensions": {
+        "spectral_library": {
+          "segment": "vnir"
+        }
+      }
     },
     {
       "band_id": "red",
-      "segment": "vnir",
       "response_definition": {
         "wavelength_nm": [
           614.08,
@@ -2970,16 +2973,17 @@
           0.01,
           0.01,
           0.01
-        ]
+        ],
+        "kind": "sampled"
       },
-      "center_nm": 646.2006,
-      "fwhm_nm": 45.97,
-      "support_min_nm": 614.08,
-      "support_max_nm": 681.8
+      "extensions": {
+        "spectral_library": {
+          "segment": "vnir"
+        }
+      }
     },
     {
       "band_id": "nir",
-      "segment": "vnir",
       "response_definition": {
         "wavelength_nm": [
           819.11,
@@ -4514,16 +4518,17 @@
           0.01,
           0.01,
           0.01
-        ]
+        ],
+        "kind": "sampled"
       },
-      "center_nm": 856.4946,
-      "fwhm_nm": 37.41,
-      "support_min_nm": 819.11,
-      "support_max_nm": 899.52
+      "extensions": {
+        "spectral_library": {
+          "segment": "vnir"
+        }
+      }
     },
     {
       "band_id": "swir1",
-      "segment": "swir",
       "response_definition": {
         "wavelength_nm": [
           1594.6,
@@ -5220,16 +5225,17 @@
           0.01,
           0.01,
           0.01
-        ]
+        ],
+        "kind": "sampled"
       },
-      "center_nm": 1629.2307,
-      "fwhm_nm": 28.8,
-      "support_min_nm": 1594.6,
-      "support_max_nm": 1662.7
+      "extensions": {
+        "spectral_library": {
+          "segment": "swir"
+        }
+      }
     },
     {
       "band_id": "swir2",
-      "segment": "swir",
       "response_definition": {
         "wavelength_nm": [
           2058.2,
@@ -5752,12 +5758,14 @@
           0.01,
           0.01,
           0.01
-        ]
+        ],
+        "kind": "sampled"
       },
-      "center_nm": 2114.2554,
-      "fwhm_nm": 51.8,
-      "support_min_nm": 2058.2,
-      "support_max_nm": 2175.9
+      "extensions": {
+        "spectral_library": {
+          "segment": "swir"
+        }
+      }
     }
   ]
 }

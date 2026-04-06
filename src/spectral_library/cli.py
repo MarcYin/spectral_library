@@ -14,11 +14,7 @@ from typing import Iterator, Mapping, Sequence
 import numpy as np
 
 from ._version import __version__
-from .batch import fetch_batch, tidy_source_directory
-from .build_db import assemble_catalog
-from .coverage_filter import filter_normalized_by_coverage
-from .fetchers import get_fetcher
-from .manifest import filter_sources, load_manifest, manifest_sha256, split_csv_arg
+from .distribution import RuntimeDownloadError, download_prepared_library
 from .mapping import (
     CANONICAL_WAVELENGTHS,
     SUPPORTED_KNN_BACKENDS,
@@ -37,18 +33,20 @@ from .mapping import (
     _remove_output_path,
     _temporary_output_path,
     benchmark_mapping,
+    build_mapping_library,
     prepare_mapping_library,
     validate_prepared_library,
 )
-from .normalize import normalize_sources
-from .quality_plots import generate_quality_plots
-from .library_package import build_library_package
+from .normalization import build_library_package, filter_normalized_by_coverage, generate_quality_plots, normalize_sources
+from .sources import assemble_catalog, fetch_batch, filter_sources, load_manifest, manifest_sha256, split_csv_arg, tidy_source_directory
+from .sources.fetchers import get_fetcher
 
 
 DEFAULT_MANIFEST = Path("manifests/sources.csv")
 DEFAULT_USER_AGENT = f"spectral-library/{__version__}"
 PUBLIC_COMMANDS = (
     "prepare-mapping-library",
+    "build-mapping-library",
     "download-prepared-library",
     "map-reflectance",
     "map-reflectance-batch",
@@ -1240,11 +1238,11 @@ def _configure_library_package_parser(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(func=cmd_build_library_package)
 
 
-def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
+def cmd_build_mapping_library(args: argparse.Namespace) -> int:
     knn_index_backends = _split_repeated_csv_arg(args.knn_index_backend)
     _emit_cli_log(
         args,
-        command="prepare-mapping-library",
+        command="build-mapping-library",
         event="command_started",
         context={
             "dtype": args.dtype,
@@ -1255,7 +1253,7 @@ def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
             "srf_root": str(Path(args.srf_root)) if args.srf_root else None,
         },
     )
-    manifest = prepare_mapping_library(
+    manifest = build_mapping_library(
         Path(args.siac_root),
         Path(args.srf_root) if args.srf_root else None,
         Path(args.output_root),
@@ -1267,7 +1265,7 @@ def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
     payload["output_root"] = str(Path(args.output_root))
     _emit_cli_log(
         args,
-        command="prepare-mapping-library",
+        command="build-mapping-library",
         event="command_completed",
         context={
             "knn_index_backends": knn_index_backends,
@@ -1631,6 +1629,10 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prepare_mapping_library(args: argparse.Namespace) -> int:
+    return cmd_build_mapping_library(args)
+
+
 def cmd_validate_prepared_library(args: argparse.Namespace) -> int:
     _emit_cli_log(
         args,
@@ -1663,8 +1665,6 @@ def cmd_validate_prepared_library(args: argparse.Namespace) -> int:
 
 
 def cmd_download_prepared_library(args: argparse.Namespace) -> int:
-    from .runtime_download import RuntimeDownloadError, download_prepared_library
-
     _emit_cli_log(
         args,
         command="download-prepared-library",
@@ -1704,7 +1704,7 @@ def _build_base_parser(*, prog: str) -> argparse.ArgumentParser:
 
 def _add_public_subparsers(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     prepare_mapping_parser = subparsers.add_parser(
-        "prepare-mapping-library",
+        "build-mapping-library",
         help="Build a prepared runtime layer for retrieval-based spectral mapping.",
     )
     prepare_mapping_parser.add_argument("--siac-root", required=True)
@@ -1718,7 +1718,21 @@ def _add_public_subparsers(subparsers: argparse._SubParsersAction[argparse.Argum
         default=[],
         choices=list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS),
     )
-    prepare_mapping_parser.set_defaults(func=cmd_prepare_mapping_library)
+    prepare_mapping_parser.set_defaults(func=cmd_build_mapping_library)
+
+    legacy_prepare_mapping_parser = subparsers.add_parser("prepare-mapping-library", help=argparse.SUPPRESS)
+    legacy_prepare_mapping_parser.add_argument("--siac-root", required=True)
+    legacy_prepare_mapping_parser.add_argument("--srf-root", default="")
+    legacy_prepare_mapping_parser.add_argument("--source-sensor", action="append", required=True)
+    legacy_prepare_mapping_parser.add_argument("--output-root", required=True)
+    legacy_prepare_mapping_parser.add_argument("--dtype", default="float32")
+    legacy_prepare_mapping_parser.add_argument(
+        "--knn-index-backend",
+        action="append",
+        default=[],
+        choices=list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS),
+    )
+    legacy_prepare_mapping_parser.set_defaults(func=cmd_prepare_mapping_library)
 
     download_parser = subparsers.add_parser(
         "download-prepared-library",

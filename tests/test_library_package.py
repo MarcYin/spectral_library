@@ -8,10 +8,9 @@ from pathlib import Path
 
 import duckdb
 
-from spectral_library.library_package import build_library_package
-from spectral_library.manifest import SourceRecord
-from spectral_library.siac import build_library_package as legacy_build_library_package
-from spectral_library.siac import build_siac_library
+from spectral_library.normalization import build_library_package as normalization_build_library_package
+from spectral_library.normalization.package import build_library_package
+from spectral_library.sources.manifest import SourceRecord
 
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, object]]) -> None:
@@ -50,9 +49,8 @@ def _manifest_row(source_id: str, name: str, **overrides: str) -> dict[str, str]
 
 
 class BuildLibraryPackageTests(unittest.TestCase):
-    def test_legacy_siac_module_aliases_build_library_package(self) -> None:
-        self.assertIs(build_siac_library, build_library_package)
-        self.assertIs(legacy_build_library_package, build_library_package)
+    def test_normalization_package_exports_build_library_package(self) -> None:
+        self.assertIs(normalization_build_library_package, build_library_package)
 
     def test_build_library_package_exports_tables_and_prototypes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

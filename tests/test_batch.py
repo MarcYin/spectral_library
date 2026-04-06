@@ -6,15 +6,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from spectral_library.batch import (
+from spectral_library.sources.fetch import (
     _classify_output_path,
     _retarget_artifact_paths,
     fetch_batch,
     seed_source_from_existing,
     tidy_source_directory,
 )
-from spectral_library.fetchers.base import FetchResult
-from spectral_library.manifest import SourceRecord
+from spectral_library.sources.fetchers.base import FetchResult
+from spectral_library.sources.manifest import SourceRecord
 
 
 def make_source(**overrides: str) -> SourceRecord:
@@ -325,7 +325,7 @@ class FetchBatchTests(unittest.TestCase):
                     return broken_fetcher
                 raise AssertionError(name)
 
-            with patch("spectral_library.batch.get_fetcher", side_effect=fake_get_fetcher):
+            with patch("spectral_library.sources.fetch.get_fetcher", side_effect=fake_get_fetcher):
                 summary = fetch_batch(
                     manifest_path,
                     output_root,
@@ -374,7 +374,7 @@ class FetchBatchTests(unittest.TestCase):
                     artifacts=[],
                 )
 
-            with patch("spectral_library.batch.get_fetcher", return_value=fetcher):
+            with patch("spectral_library.sources.fetch.get_fetcher", return_value=fetcher):
                 summary = fetch_batch(
                     manifest_path,
                     output_root,
@@ -394,7 +394,7 @@ class FetchBatchTests(unittest.TestCase):
                 del source, output_dir, fetch_mode, user_agent
                 raise RuntimeError("boom")
 
-            with patch("spectral_library.batch.get_fetcher", return_value=broken_fetcher):
+            with patch("spectral_library.sources.fetch.get_fetcher", return_value=broken_fetcher):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
                     fetch_batch(
                         manifest_path,
@@ -418,7 +418,7 @@ class FetchBatchTests(unittest.TestCase):
                 del source, output_dir, fetch_mode, user_agent
                 raise RuntimeError("network failed")
 
-            with patch("spectral_library.batch.get_fetcher", return_value=broken_fetcher):
+            with patch("spectral_library.sources.fetch.get_fetcher", return_value=broken_fetcher):
                 with self.assertRaises(RuntimeError):
                     fetch_batch(
                         manifest_path,

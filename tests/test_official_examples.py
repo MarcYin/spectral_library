@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from spectral_library import SensorSRFSchema, SpectralMapper, prepare_mapping_library, validate_prepared_library
+from spectral_library import SensorSRFSchema, SpectralMapper, build_mapping_library, validate_prepared_library
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -90,9 +90,12 @@ class OfficialExamplesTests(unittest.TestCase):
             schema = SensorSRFSchema.from_dict(payload)
             self.assertEqual(schema.sensor_id, sensor_id)
             self.assertEqual(schema.band_ids(), band_ids)
+            self.assertEqual(payload["schema_type"], "rsrf_sensor_definition")
+            self.assertEqual(payload["schema_version"], "1.0.0")
             self.assertIn("response_definition", payload["bands"][0])
             self.assertNotIn("wavelength_nm", payload["bands"][0])
             self.assertNotIn("rsr", payload["bands"][0])
+            self.assertEqual(payload["bands"][0]["extensions"]["spectral_library"]["segment"], "vnir")
 
         manifest_payload = json.loads((EXAMPLES_ROOT / "official_source_manifest.json").read_text(encoding="utf-8"))
         sentinel_payload = next(
@@ -130,7 +133,7 @@ class OfficialExamplesTests(unittest.TestCase):
             test_srf_root.mkdir()
             for path in _official_srf_paths():
                 shutil.copy2(path, test_srf_root / path.name)
-            prepare_mapping_library(
+            build_mapping_library(
                 siac_root=siac_root,
                 srf_root=test_srf_root,
                 output_root=prepared_root,
@@ -219,7 +222,7 @@ class OfficialExamplesTests(unittest.TestCase):
         self.assertIn("| `nir` | `Band 2` | `B8A` | `Band 5` | `Band 5` |", doc_text)
         self.assertIn(f"`{float(modis_rows[0]['reflectance']):.4f}`", doc_text)
         self.assertIn("[Mathematical Foundations](theory.md)", doc_text)
-        self.assertIn("spectral-library prepare-mapping-library \\\n  --siac-root", doc_text)
+        self.assertIn("spectral-library build-mapping-library \\\n  --siac-root", doc_text)
         self.assertIn("spectral-library map-reflectance-batch \\\n  --prepared-root", doc_text)
         self.assertIn("Held-Out Estimator Comparison", doc_text)
 

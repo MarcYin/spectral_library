@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from spectral_library.coverage_filter import filter_normalized_by_coverage
+from spectral_library.normalization.coverage import filter_normalized_by_coverage
 
 
 def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, object]]) -> None:

@@ -1,24 +1,17 @@
-from __future__ import annotations
+"""Backward-compatible wrapper package for fetcher adapters."""
 
-from . import ecosis, ecostress, ess_dive, github_archive, manual, mendeley, neon, pangaea, specchio, static_http, zenodo
+from .base import *  # noqa: F401,F403
+from .ecosis import *  # noqa: F401,F403
+from .ecostress import *  # noqa: F401,F403
+from .ess_dive import *  # noqa: F401,F403
+from .github_archive import *  # noqa: F401,F403
+from .manual import *  # noqa: F401,F403
+from .mendeley import *  # noqa: F401,F403
+from .neon import *  # noqa: F401,F403
+from .pangaea import *  # noqa: F401,F403
+from .specchio import *  # noqa: F401,F403
+from .static_http import *  # noqa: F401,F403
+from .zenodo import *  # noqa: F401,F403
+from ..sources.fetchers import FETCHERS, get_fetcher
 
-FETCHERS = {
-    "static_http": static_http.fetch,
-    "ecostress_web": ecostress.fetch,
-    "github_archive": github_archive.fetch,
-    "zenodo_api": zenodo.fetch,
-    "ecosis_package": ecosis.fetch,
-    "ess_dive_dataone": ess_dive.fetch,
-    "mendeley_public": mendeley.fetch,
-    "neon_api": neon.fetch,
-    "pangaea": pangaea.fetch,
-    "specchio_client": specchio.fetch,
-    "manual_portal": manual.fetch,
-    "earthdata_lpdaac": manual.fetch,
-}
-
-
-def get_fetcher(name: str):
-    if name not in FETCHERS:
-        raise KeyError(f"Unsupported fetch adapter: {name}")
-    return FETCHERS[name]
+__all__ = ["FETCHERS", "get_fetcher"]

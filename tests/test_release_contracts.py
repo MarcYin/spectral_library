@@ -19,6 +19,7 @@ from spectral_library import (
     SensorSRFSchema,
     SpectralMapper,
     benchmark_mapping,
+    build_mapping_library,
     cli,
     prepare_mapping_library,
     validate_prepared_library,
@@ -41,6 +42,7 @@ class PublicApiContractTests(unittest.TestCase):
             "SpectralLibraryError",
             "SpectralMapper",
             "benchmark_mapping",
+            "build_mapping_library",
             "prepare_mapping_library",
             "validate_prepared_library",
         }
@@ -48,8 +50,9 @@ class PublicApiContractTests(unittest.TestCase):
         self.assertTrue((Path(spectral_library.__file__).resolve().parent / "py.typed").exists())
 
     def test_public_signatures_are_stable(self) -> None:
+        self.assertIs(prepare_mapping_library, build_mapping_library)
         self.assertEqual(
-            tuple(inspect.signature(prepare_mapping_library).parameters),
+            tuple(inspect.signature(build_mapping_library).parameters),
             ("siac_root", "srf_root", "output_root", "source_sensors", "dtype", "knn_index_backends"),
         )
         self.assertEqual(
@@ -280,6 +283,7 @@ class CliContractTests(unittest.TestCase):
         self.assertTrue(
             {
                 "prepare-mapping-library",
+                "build-mapping-library",
                 "map-reflectance",
                 "map-reflectance-batch",
                 "benchmark-mapping",
@@ -288,12 +292,16 @@ class CliContractTests(unittest.TestCase):
         )
         self.assertFalse(set(cli.INTERNAL_COMMANDS) & set(command_parsers))
 
-        prepare_options = {option for action in command_parsers["prepare-mapping-library"]._actions for option in action.option_strings}
+        legacy_prepare_options = {
+            option for action in command_parsers["prepare-mapping-library"]._actions for option in action.option_strings
+        }
+        prepare_options = {option for action in command_parsers["build-mapping-library"]._actions for option in action.option_strings}
         map_options = {option for action in command_parsers["map-reflectance"]._actions for option in action.option_strings}
         batch_options = {option for action in command_parsers["map-reflectance-batch"]._actions for option in action.option_strings}
         benchmark_options = {option for action in command_parsers["benchmark-mapping"]._actions for option in action.option_strings}
         backend_choices = set(command_parsers["map-reflectance"]._option_string_actions["--knn-backend"].choices)
 
+        self.assertEqual(legacy_prepare_options, prepare_options)
         self.assertTrue(
             {"--siac-root", "--srf-root", "--source-sensor", "--output-root", "--knn-index-backend"}.issubset(
                 prepare_options
@@ -469,14 +477,14 @@ class PreparedRuntimeContractTests(unittest.TestCase):
                     "interpolation_summary",
                 },
             )
-            self.assertEqual(manifest_payload["schema_version"], "2.0.0")
+            self.assertEqual(manifest_payload["schema_version"], "3.0.0")
             self.assertEqual(set(manifest_payload["file_checksums"]), set(manifest.file_checksums))
             self.assertEqual(manifest_payload["knn_index_artifacts"], manifest.knn_index_artifacts)
             self.assertEqual(set(manifest_payload["interpolation_summary"]), set(manifest.interpolation_summary))
 
             checksums_payload = json.loads((fixture["prepared_root"] / "checksums.json").read_text(encoding="utf-8"))
             self.assertEqual(set(checksums_payload), {"files", "schema_version"})
-            self.assertEqual(checksums_payload["schema_version"], "2.0.0")
+            self.assertEqual(checksums_payload["schema_version"], "3.0.0")
             self.assertIn("manifest.json", checksums_payload["files"])
             self.assertIn("mapping_metadata.parquet", checksums_payload["files"])
             self.assertIn("sensor_schema.json", checksums_payload["files"])
@@ -485,15 +493,21 @@ class PreparedRuntimeContractTests(unittest.TestCase):
 
             sensor_schema_payload = json.loads((fixture["prepared_root"] / "sensor_schema.json").read_text(encoding="utf-8"))
             self.assertEqual(set(sensor_schema_payload), {"schema_version", "canonical_wavelength_grid", "sensors"})
-            self.assertEqual(sensor_schema_payload["schema_version"], "2.0.0")
+            self.assertEqual(sensor_schema_payload["schema_version"], "3.0.0")
             self.assertEqual(
                 sensor_schema_payload["canonical_wavelength_grid"],
                 {"start_nm": 400, "end_nm": 2500, "step_nm": 1},
             )
+            self.assertEqual(sensor_schema_payload["sensors"][0]["schema_type"], "rsrf_sensor_definition")
+            self.assertEqual(sensor_schema_payload["sensors"][0]["schema_version"], "1.0.0")
             self.assertIn("response_definition", sensor_schema_payload["sensors"][0]["bands"][0])
+            self.assertEqual(
+                sensor_schema_payload["sensors"][0]["bands"][0]["extensions"]["spectral_library"]["segment"],
+                "vnir",
+            )
 
     def test_prepared_runtime_compatibility_error_is_public_and_stable(self) -> None:
-        for schema_version in ("1.2.0", "3.0.0"):
+        for schema_version in ("1.2.0", "4.0.0"):
             with self.subTest(schema_version=schema_version):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     fixture, _ = _prepare_fixture(Path(tmpdir))

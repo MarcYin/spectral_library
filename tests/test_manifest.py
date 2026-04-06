@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from spectral_library.manifest import SourceRecord, filter_sources, load_manifest, manifest_sha256, split_csv_arg
+from spectral_library.sources.manifest import SourceRecord, filter_sources, load_manifest, manifest_sha256, split_csv_arg
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

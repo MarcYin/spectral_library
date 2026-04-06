@@ -16,8 +16,8 @@ import pandas as pd
 from netCDF4 import Dataset
 from openpyxl import Workbook
 
-from spectral_library.manifest import SourceRecord
-from spectral_library.normalize import (
+from spectral_library.sources.manifest import SourceRecord
+from spectral_library.normalization.pipeline import (
     SpectrumRecord,
     TARGET_WAVELENGTHS,
     _clean_spectrum,

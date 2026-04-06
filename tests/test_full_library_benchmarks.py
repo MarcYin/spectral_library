@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from spectral_library import prepare_mapping_library
+from spectral_library import build_mapping_library
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "run_full_library_benchmarks.py"
@@ -215,7 +215,7 @@ class FullLibraryBenchmarkRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture = self.smoke_fixture_module.create_smoke_fixture(Path(tmpdir) / "smoke")
             prepared_root = Path(fixture["prepared_root"])
-            prepare_mapping_library(
+            build_mapping_library(
                 Path(fixture["siac_root"]),
                 Path(fixture["srf_root"]),
                 prepared_root,
@@ -250,7 +250,7 @@ class FullLibraryBenchmarkRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture = self.smoke_fixture_module.create_smoke_fixture(Path(tmpdir) / "smoke")
             prepared_root = Path(fixture["prepared_root"])
-            prepare_mapping_library(
+            build_mapping_library(
                 Path(fixture["siac_root"]),
                 Path(fixture["srf_root"]),
                 prepared_root,

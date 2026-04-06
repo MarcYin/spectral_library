@@ -12,9 +12,9 @@ from pathlib import Path
 from urllib.error import HTTPError
 from unittest.mock import patch
 
-from spectral_library.fetchers import get_fetcher
-from spectral_library.fetchers.base import ArtifactRecord, FetchResult, sha256_file, utc_now_iso, write_json
-from spectral_library.fetchers.ecostress import (
+from spectral_library.sources.fetchers import get_fetcher
+from spectral_library.sources.fetchers.base import ArtifactRecord, FetchResult, sha256_file, utc_now_iso, write_json
+from spectral_library.sources.fetchers.ecostress import (
     DEFAULT_SEARCH_TYPES as ECOSTRESS_DEFAULT_SEARCH_TYPES,
     _enumerate_catalog as ecostress_enumerate_catalog,
     _enumerate_class as ecostress_enumerate_class,
@@ -26,45 +26,45 @@ from spectral_library.fetchers.ecostress import (
     _read_int_env as ecostress_read_int_env,
     fetch as fetch_ecostress,
 )
-from spectral_library.fetchers.ecosis import (
+from spectral_library.sources.fetchers.ecosis import (
     _extract_package_slug,
     _extract_resources,
     _normalize_resource_url,
     fetch as fetch_ecosis,
 )
-from spectral_library.fetchers.ess_dive import (
+from spectral_library.sources.fetchers.ess_dive import (
     _extract_doi as ess_dive_extract_doi,
     _is_metadata_member as ess_dive_is_metadata_member,
     _parse_sysmeta as ess_dive_parse_sysmeta,
     fetch as fetch_ess_dive,
 )
-from spectral_library.fetchers.github_archive import (
+from spectral_library.sources.fetchers.github_archive import (
     _iter_matching_members,
     _relative_destination,
     fetch as fetch_github_archive,
 )
-from spectral_library.fetchers.http_utils import infer_filename, looks_like_download, sanitize_filename
-from spectral_library.fetchers.manual import fetch as fetch_manual
-from spectral_library.fetchers.mendeley import (
+from spectral_library.sources.fetchers.http_utils import infer_filename, looks_like_download, sanitize_filename
+from spectral_library.sources.fetchers.manual import fetch as fetch_manual
+from spectral_library.sources.fetchers.mendeley import (
     _extract_dataset_id_and_version as mendeley_extract_dataset_id_and_version,
     _extract_files as mendeley_extract_files,
     fetch as fetch_mendeley,
 )
-from spectral_library.fetchers.neon import (
+from spectral_library.sources.fetchers.neon import (
     _extract_product_code as neon_extract_product_code,
     _select_neon_files as neon_select_files,
     fetch as fetch_neon,
 )
-from spectral_library.fetchers.pangaea import fetch as fetch_pangaea
-from spectral_library.fetchers.specchio import _load_query_config, fetch as fetch_specchio
-from spectral_library.fetchers.static_http import fetch as fetch_static_http
-from spectral_library.fetchers.zenodo import (
+from spectral_library.sources.fetchers.pangaea import fetch as fetch_pangaea
+from spectral_library.sources.fetchers.specchio import _load_query_config, fetch as fetch_specchio
+from spectral_library.sources.fetchers.static_http import fetch as fetch_static_http
+from spectral_library.sources.fetchers.zenodo import (
     _extract_record_id,
     _file_urls,
     _filename_from_content_url,
     fetch as fetch_zenodo,
 )
-from spectral_library.manifest import SourceRecord
+from spectral_library.sources.manifest import SourceRecord
 
 
 class FakeHeaders(dict):
@@ -397,7 +397,7 @@ class EcosisFetcherTests(unittest.TestCase):
             "resource.csv",
         )
 
-    @patch("spectral_library.fetchers.ecosis.urlopen")
+    @patch("spectral_library.sources.fetchers.ecosis.urlopen")
     def test_ecosis_fetch_captures_metadata(self, mock_urlopen) -> None:
         payload = {
             "ecosis": {
@@ -443,7 +443,7 @@ class EcosisFetcherTests(unittest.TestCase):
             self.assertEqual(package_payload["resource_count"], 2)
             self.assertEqual(package_payload["export_url"], "https://ecosis.org/api/package/test/export?metadata=true")
 
-    @patch("spectral_library.fetchers.ecosis.urlopen")
+    @patch("spectral_library.sources.fetchers.ecosis.urlopen")
     def test_ecosis_fetch_downloads_package_resources(self, mock_urlopen) -> None:
         payload = {
             "ecosis": {
@@ -497,7 +497,7 @@ class EcosisFetcherTests(unittest.TestCase):
             self.assertTrue((Path(tmpdir) / "metadata.csv").exists())
             self.assertIn("Downloaded 2 EcoSIS package resources", result.notes[0])
 
-    @patch("spectral_library.fetchers.ecosis.urlopen")
+    @patch("spectral_library.sources.fetchers.ecosis.urlopen")
     def test_ecosis_fetch_downloads_configured_asset_url(self, mock_urlopen) -> None:
         payload = {
             "ecosis": {
@@ -554,7 +554,7 @@ class EcosisFetcherTests(unittest.TestCase):
             self.assertTrue((Path(tmpdir) / "meta.csv").exists())
             self.assertIn("configured", result.notes[0].lower())
 
-    @patch("spectral_library.fetchers.ecosis.urlopen")
+    @patch("spectral_library.sources.fetchers.ecosis.urlopen")
     def test_ecosis_fetch_falls_back_to_package_export(self, mock_urlopen) -> None:
         payload = {"ecosis": {"package_id": "package-1", "package_title": "Test Package", "resources": []}}
         mock_urlopen.side_effect = [
@@ -583,7 +583,7 @@ class EcosisFetcherTests(unittest.TestCase):
             self.assertTrue((Path(tmpdir) / "test.csv").exists())
             self.assertIn("package export", result.notes[0].lower())
 
-    @patch("spectral_library.fetchers.ecosis.urlopen")
+    @patch("spectral_library.sources.fetchers.ecosis.urlopen")
     def test_ecosis_fetch_downloads_selected_url_not_listed_in_resources(self, mock_urlopen) -> None:
         payload = {
             "ecosis": {
@@ -652,7 +652,7 @@ class NeonFetcherTests(unittest.TestCase):
         self.assertEqual(len(selected), 1)
         self.assertEqual(selected[0]["name"], "FSP_GRSM.csv")
 
-    @patch("spectral_library.fetchers.neon.urlopen")
+    @patch("spectral_library.sources.fetchers.neon.urlopen")
     def test_neon_fetch_downloads_spectral_csvs(self, mock_urlopen) -> None:
         product_payload = {
             "data": {
@@ -751,7 +751,7 @@ class EssDiveFetcherTests(unittest.TestCase):
             ess_dive_is_metadata_member({"identifier": "member", "format_id": "text/csv", "file_name": "spectra.csv"}, "meta")
         )
 
-    @patch("spectral_library.fetchers.ess_dive.urlopen")
+    @patch("spectral_library.sources.fetchers.ess_dive.urlopen")
     def test_ess_dive_fetch_downloads_package_members(self, mock_urlopen) -> None:
         solr_payload = {
             "response": {
@@ -844,7 +844,7 @@ class MendeleyFetcherTests(unittest.TestCase):
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0]["filename"], "spectra.xlsx")
 
-    @patch("spectral_library.fetchers.mendeley.urlopen")
+    @patch("spectral_library.sources.fetchers.mendeley.urlopen")
     def test_mendeley_fetch_downloads_public_files(self, mock_urlopen) -> None:
         versioned_payload = {
             "id": "9dx32rszp8",
@@ -950,7 +950,7 @@ class EcostressFetcherTests(unittest.TestCase):
             ["a.txt", "b.txt"],
         )
 
-    @patch("spectral_library.fetchers.ecostress._post_search")
+    @patch("spectral_library.sources.fetchers.ecostress._post_search")
     def test_ecostress_enumerate_class_handles_more_results(self, mock_post_search) -> None:
         first_page = "".join(f'<input value="f{value}.txt" />' for value in range(1, 101))
         second_page = "".join(f'<input value="f{value}.txt" />' for value in range(100, 103))
@@ -974,7 +974,7 @@ class EcostressFetcherTests(unittest.TestCase):
         self.assertEqual(summary["maxhits_used"], 200)
         self.assertFalse(summary["has_more_results"])
 
-    @patch("spectral_library.fetchers.ecostress._post_search")
+    @patch("spectral_library.sources.fetchers.ecostress._post_search")
     def test_ecostress_enumerate_class_collects_paged_windows(self, mock_post_search) -> None:
         def make_page(start: int, stop: int, has_more: bool = True) -> str:
             inputs = "".join(f'<input value="f{value}.txt" />' for value in range(start, stop + 1))
@@ -999,8 +999,8 @@ class EcostressFetcherTests(unittest.TestCase):
         self.assertEqual(summary["maxhits_used"], 300)
         self.assertTrue(summary["has_more_results"])
 
-    @patch("spectral_library.fetchers.ecostress._post_search")
-    @patch("spectral_library.fetchers.ecostress.urlopen")
+    @patch("spectral_library.sources.fetchers.ecostress._post_search")
+    @patch("spectral_library.sources.fetchers.ecostress.urlopen")
     def test_ecostress_enumerate_catalog_falls_back_to_all_class(self, mock_urlopen, mock_post_search) -> None:
         mock_urlopen.return_value = FakeResponse(
             b"<a href=\"javascript:orderall('water');\">All Water</a>",
@@ -1015,8 +1015,8 @@ class EcostressFetcherTests(unittest.TestCase):
         self.assertEqual(payload["search_types"], ["water"])
         self.assertEqual(payload["classes"][0]["class_value"], "All")
 
-    @patch("spectral_library.fetchers.ecostress._post_search")
-    @patch("spectral_library.fetchers.ecostress.urlopen")
+    @patch("spectral_library.sources.fetchers.ecostress._post_search")
+    @patch("spectral_library.sources.fetchers.ecostress.urlopen")
     def test_ecostress_enumerate_catalog_honors_selected_search_types(self, mock_urlopen, mock_post_search) -> None:
         mock_urlopen.return_value = FakeResponse(
             b"""
@@ -1034,7 +1034,7 @@ class EcostressFetcherTests(unittest.TestCase):
         self.assertEqual(filenames, ["water.txt"])
         self.assertEqual(payload["search_types"], ["water"])
 
-    @patch("spectral_library.fetchers.ecostress.urlopen")
+    @patch("spectral_library.sources.fetchers.ecostress.urlopen")
     def test_ecostress_fetch_metadata_mode(self, mock_urlopen) -> None:
         download_html = b"""
         <html>
@@ -1079,7 +1079,7 @@ class EcostressFetcherTests(unittest.TestCase):
             self.assertEqual(catalog["total_files"], 1)
             self.assertEqual(catalog["search_types"], ["water"])
 
-    @patch("spectral_library.fetchers.ecostress.urlopen")
+    @patch("spectral_library.sources.fetchers.ecostress.urlopen")
     def test_ecostress_fetch_assets_mode_downloads_files(self, mock_urlopen) -> None:
         download_html = b"""
         <html>
@@ -1124,7 +1124,7 @@ class EcostressFetcherTests(unittest.TestCase):
             self.assertIn("ECOSTRESS_MAX_FILES", result.notes[1])
             self.assertIn("Downloaded 1 ECOSTRESS spectral text files", result.notes[-1])
 
-    @patch("spectral_library.fetchers.ecostress.urlopen")
+    @patch("spectral_library.sources.fetchers.ecostress.urlopen")
     def test_ecostress_fetch_assets_mode_without_max_file_limit(self, mock_urlopen) -> None:
         download_html = b"""
         <html>
@@ -1167,7 +1167,7 @@ class EcostressFetcherTests(unittest.TestCase):
             self.assertEqual(len(result.artifacts), 2)
             self.assertNotIn("ECOSTRESS_MAX_FILES", " ".join(result.notes))
 
-    @patch("spectral_library.fetchers.ecostress.urlopen")
+    @patch("spectral_library.sources.fetchers.ecostress.urlopen")
     def test_ecostress_fetch_assets_mode_reuses_existing_tidied_files(self, mock_urlopen) -> None:
         download_html = b"""
         <html>
@@ -1232,7 +1232,7 @@ class GitHubArchiveFetcherTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     _relative_destination(zipfile.ZipInfo("repo-root/other/file.txt"), "surface")
 
-    @patch("spectral_library.fetchers.github_archive.urlopen")
+    @patch("spectral_library.sources.fetchers.github_archive.urlopen")
     def test_github_archive_fetch_metadata_mode(self, mock_urlopen) -> None:
         source = make_source(
             source_id="emit_l2a_surface",
@@ -1253,7 +1253,7 @@ class GitHubArchiveFetcherTests(unittest.TestCase):
             self.assertEqual(payload["archive_url"], "https://codeload.github.com/emit-sds/emit-sds-l2a/zip/refs/heads/develop")
             self.assertEqual(payload["extract_prefix"], "surface")
 
-    @patch("spectral_library.fetchers.github_archive.urlopen")
+    @patch("spectral_library.sources.fetchers.github_archive.urlopen")
     def test_github_archive_fetch_assets_mode_extracts_only_surface_prefix(self, mock_urlopen) -> None:
         archive_buffer = io.BytesIO()
         with zipfile.ZipFile(archive_buffer, "w") as archive:
@@ -1288,7 +1288,7 @@ class GitHubArchiveFetcherTests(unittest.TestCase):
 
 
 class StaticHttpFetcherTests(unittest.TestCase):
-    @patch("spectral_library.fetchers.static_http.urlopen")
+    @patch("spectral_library.sources.fetchers.static_http.urlopen")
     def test_static_http_metadata_mode(self, mock_urlopen) -> None:
         mock_urlopen.return_value = FakeResponse(
             b"ignored",
@@ -1304,7 +1304,7 @@ class StaticHttpFetcherTests(unittest.TestCase):
             self.assertEqual(len(result.artifacts), 1)
             self.assertIn("Metadata captured", result.notes[0])
 
-    @patch("spectral_library.fetchers.static_http.urlopen")
+    @patch("spectral_library.sources.fetchers.static_http.urlopen")
     def test_static_http_assets_mode_downloads_file(self, mock_urlopen) -> None:
         mock_urlopen.return_value = FakeResponse(
             b"payload",
@@ -1320,7 +1320,7 @@ class StaticHttpFetcherTests(unittest.TestCase):
             self.assertEqual(len(result.artifacts), 2)
             self.assertTrue((Path(tmpdir) / "archive.zip").exists())
 
-    @patch("spectral_library.fetchers.static_http.urlopen")
+    @patch("spectral_library.sources.fetchers.static_http.urlopen")
     def test_static_http_assets_mode_html_only_adds_note(self, mock_urlopen) -> None:
         mock_urlopen.return_value = FakeResponse(
             b"<html></html>",
@@ -1336,7 +1336,7 @@ class StaticHttpFetcherTests(unittest.TestCase):
             self.assertEqual(len(result.artifacts), 1)
             self.assertIn("manual asset resolution", result.notes[0])
 
-    @patch("spectral_library.fetchers.static_http.urlopen")
+    @patch("spectral_library.sources.fetchers.static_http.urlopen")
     def test_static_http_assets_mode_prefers_download_url(self, mock_urlopen) -> None:
         response = FakeResponse(
             b"payload",
@@ -1359,7 +1359,7 @@ class StaticHttpFetcherTests(unittest.TestCase):
             requested_url = json.loads((Path(tmpdir) / "http_response.json").read_text(encoding="utf-8"))["requested_url"]
             self.assertEqual(requested_url, "https://downloads.example.com/direct.csv")
 
-    @patch("spectral_library.fetchers.static_http.urlopen")
+    @patch("spectral_library.sources.fetchers.static_http.urlopen")
     def test_static_http_falls_back_when_download_url_is_forbidden(self, mock_urlopen) -> None:
         forbidden = HTTPError(
             url="https://downloads.example.com/direct.zip",
@@ -1394,7 +1394,7 @@ class SpecchioFetcherTests(unittest.TestCase):
     def test_specchio_helper_functions_cover_edge_cases(self) -> None:
         fake_jpype_module = object()
         with patch.dict(sys.modules, {"jpype": fake_jpype_module}):
-            from spectral_library.fetchers.specchio import _descriptor_name, _load_jpype_module, _parse_server_index, _safe_len, _to_list
+            from spectral_library.sources.fetchers.specchio import _descriptor_name, _load_jpype_module, _parse_server_index, _safe_len, _to_list
 
             descriptor = object()
             self.assertIs(_load_jpype_module(), fake_jpype_module)
@@ -1409,11 +1409,11 @@ class SpecchioFetcherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _load_query_config('[1]')
         with self.assertRaises(ValueError):
-            from spectral_library.fetchers.specchio import _parse_server_index
+            from spectral_library.sources.fetchers.specchio import _parse_server_index
 
             _parse_server_index("abc")
         with self.assertRaises(ValueError):
-            from spectral_library.fetchers.specchio import _parse_server_index
+            from spectral_library.sources.fetchers.specchio import _parse_server_index
 
             _parse_server_index("-1")
 
@@ -1492,7 +1492,7 @@ class SpecchioFetcherTests(unittest.TestCase):
             "SPECCHIO_JAVA_HOME": "/tmp/java-home",
         }
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict("os.environ", env, clear=True):
-            with patch("spectral_library.fetchers.specchio._load_jpype_module", return_value=fake_jpype):
+            with patch("spectral_library.sources.fetchers.specchio._load_jpype_module", return_value=fake_jpype):
                 result = fetch_specchio(source, Path(tmpdir), "metadata", "ua")
 
             self.assertEqual(result.status, "metadata_only")
@@ -1523,7 +1523,7 @@ class SpecchioFetcherTests(unittest.TestCase):
         fake_factory = FakeSpecchioFactory(FakeSpecchioClient())
         fake_jpype = FakeJPype(fake_factory)
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict("os.environ", env, clear=True):
-            with patch("spectral_library.fetchers.specchio._load_jpype_module", return_value=fake_jpype):
+            with patch("spectral_library.sources.fetchers.specchio._load_jpype_module", return_value=fake_jpype):
                 with self.assertRaisesRegex(ValueError, "attribute not found"):
                     fetch_specchio(source, Path(tmpdir), "assets", "ua")
 
@@ -1532,7 +1532,7 @@ class SpecchioFetcherTests(unittest.TestCase):
             "SPECCHIO_SERVER_INDEX": "9",
         }
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict("os.environ", bad_index_env, clear=True):
-            with patch("spectral_library.fetchers.specchio._load_jpype_module", return_value=fake_jpype):
+            with patch("spectral_library.sources.fetchers.specchio._load_jpype_module", return_value=fake_jpype):
                 with self.assertRaisesRegex(ValueError, "out of range"):
                     fetch_specchio(source, Path(tmpdir), "metadata", "ua")
 
@@ -1540,7 +1540,7 @@ class SpecchioFetcherTests(unittest.TestCase):
         empty_factory.descriptors = []
         empty_jpype = FakeJPype(empty_factory)
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict("os.environ", {"SPECCHIO_CLIENT_JAR": "/tmp/specchio-client.jar"}, clear=True):
-            with patch("spectral_library.fetchers.specchio._load_jpype_module", return_value=empty_jpype):
+            with patch("spectral_library.sources.fetchers.specchio._load_jpype_module", return_value=empty_jpype):
                 with self.assertRaisesRegex(ValueError, "no server descriptors"):
                     fetch_specchio(source, Path(tmpdir), "metadata", "ua")
 
@@ -1568,7 +1568,7 @@ class SpecchioFetcherTests(unittest.TestCase):
             ),
         }
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict("os.environ", env, clear=True):
-            with patch("spectral_library.fetchers.specchio._load_jpype_module", return_value=fake_jpype):
+            with patch("spectral_library.sources.fetchers.specchio._load_jpype_module", return_value=fake_jpype):
                 result = fetch_specchio(source, Path(tmpdir), "assets", "ua")
 
             self.assertEqual(result.status, "downloaded")
@@ -1599,7 +1599,7 @@ class ZenodoFetcherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _extract_record_id("https://zenodo.org/records/not-a-number")
 
-    @patch("spectral_library.fetchers.zenodo.urlopen")
+    @patch("spectral_library.sources.fetchers.zenodo.urlopen")
     def test_zenodo_fetch_metadata_mode(self, mock_urlopen) -> None:
         payload = {
             "files": [
@@ -1627,7 +1627,7 @@ class ZenodoFetcherTests(unittest.TestCase):
             self.assertEqual(result.artifacts[1].status, "discovered")
             self.assertIn("metadata captured", result.notes[0].lower())
 
-    @patch("spectral_library.fetchers.zenodo.urlopen")
+    @patch("spectral_library.sources.fetchers.zenodo.urlopen")
     def test_zenodo_fetch_assets_mode_downloads_files(self, mock_urlopen) -> None:
         payload = {
             "files": [
@@ -1661,7 +1661,7 @@ class ZenodoFetcherTests(unittest.TestCase):
             self.assertEqual(len(result.artifacts), 2)
             self.assertTrue((Path(tmpdir) / "spectra.csv").exists())
 
-    @patch("spectral_library.fetchers.zenodo.urlopen")
+    @patch("spectral_library.sources.fetchers.zenodo.urlopen")
     def test_zenodo_fetch_assets_mode_prefers_download_url(self, mock_urlopen) -> None:
         payload = {
             "files": [
@@ -1708,7 +1708,7 @@ class ZenodoFetcherTests(unittest.TestCase):
             self.assertTrue((Path(tmpdir) / "spectra.csv").exists())
             self.assertIn("limited asset download", result.notes[0].lower())
 
-    @patch("spectral_library.fetchers.zenodo.urlopen")
+    @patch("spectral_library.sources.fetchers.zenodo.urlopen")
     def test_zenodo_fetch_downloads_selected_content_url_not_listed_in_record(self, mock_urlopen) -> None:
         payload = {
             "files": [
@@ -1745,7 +1745,7 @@ class ZenodoFetcherTests(unittest.TestCase):
             self.assertTrue((Path(tmpdir) / "primary spectra.csv").exists())
             self.assertIn("downloaded it directly", result.notes[0].lower())
 
-    @patch("spectral_library.fetchers.zenodo.urlopen")
+    @patch("spectral_library.sources.fetchers.zenodo.urlopen")
     def test_zenodo_fetch_reports_unmatched_noncontent_download_url(self, mock_urlopen) -> None:
         payload = {"files": []}
         mock_urlopen.return_value = FakeResponse(
@@ -1766,7 +1766,7 @@ class ZenodoFetcherTests(unittest.TestCase):
 
 
 class PangaeaFetcherTests(unittest.TestCase):
-    @patch("spectral_library.fetchers.pangaea.urlopen")
+    @patch("spectral_library.sources.fetchers.pangaea.urlopen")
     def test_pangaea_fetch_metadata_mode(self, mock_urlopen) -> None:
         landing_html = b'<html><a href="https://doi.pangaea.de/10.1594/PANGAEA.948492">doi</a></html>'
         doi_html = b'<html><a href="https://download.pangaea.de/dataset/948492/files/GLORIA-2022.zip">zip</a></html>'
@@ -1788,7 +1788,7 @@ class PangaeaFetcherTests(unittest.TestCase):
             self.assertEqual(result.artifacts[0].artifact_id, "pangaea_record")
             self.assertIn("metadata captured", result.notes[0].lower())
 
-    @patch("spectral_library.fetchers.pangaea.urlopen")
+    @patch("spectral_library.sources.fetchers.pangaea.urlopen")
     def test_pangaea_fetch_assets_mode_downloads_archive(self, mock_urlopen) -> None:
         landing_html = b'<html><a href="https://doi.pangaea.de/10.1594/PANGAEA.886287">doi</a></html>'
         doi_html = b'<html><a href="?format=zip">zip</a></html>'

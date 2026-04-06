@@ -1,15 +1,4 @@
-"""Utilities for preparing and querying spectral mapping runtimes.
-
-This module covers two related workflows:
-
-1. Preparing a runtime bundle from canonical SIAC spectra plus sensor response
-   definitions.
-2. Retrieving nearest-neighbor spectra from a prepared bundle and projecting
-   them into hyperspectral or target-sensor space.
-
-The implementation favors explicit validation because prepared runtimes are
-treated as stable artifacts that may be reused across commands and machines.
-"""
+"""Runtime mapping engine."""
 
 from __future__ import annotations
 
@@ -31,670 +20,17 @@ from uuid import uuid4
 import duckdb
 import numpy as np
 
-from . import _rustaccel
-from ._version import __version__
+from ... import _rustaccel
+from ..._version import __version__
 
+from ..adapters import backends as _backends, sensors as _sensors
+from ..build import library as _build
+from . import core as _core
 
-PREPARED_SCHEMA_VERSION = "2.0.0"
-SUPPORTED_PREPARED_SCHEMA_MAJOR_VERSIONS = ("2",)
-SUPPORTED_OUTPUT_MODES = (
-    "target_sensor",
-    "vnir_spectrum",
-    "swir_spectrum",
-    "full_spectrum",
-)
-SUPPORTED_NEIGHBOR_ESTIMATORS = (
-    "mean",
-    "distance_weighted_mean",
-    "simplex_mixture",
-)
-SUPPORTED_KNN_BACKENDS = (
-    "numpy",
-    "scipy_ckdtree",
-    "faiss",
-    "pynndescent",
-    "scann",
-)
-SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS = (
-    "faiss",
-    "pynndescent",
-    "scann",
-)
-SCANN_MIN_AH_TRAINING_SAMPLE_SIZE = 16
-KNN_BACKEND_INSTALL_HINTS = {
-    "scipy_ckdtree": 'pip install "spectral-library[knn]"',
-    "faiss": 'pip install "spectral-library[knn-faiss]"',
-    "pynndescent": 'pip install "spectral-library[knn-pynndescent]"',
-    "scann": 'pip install "spectral-library[knn-scann]"',
-}
-ZARR_INSTALL_HINT = 'pip install "spectral-library[zarr]"'
-CONFIDENCE_POLICY_VERSION = "1"
-CONFIDENCE_REVIEW_THRESHOLD = 0.60
-CONFIDENCE_ACCEPT_THRESHOLD = 0.85
-SEGMENTS = ("vnir", "swir")
-CANONICAL_START_NM = 400
-CANONICAL_END_NM = 2500
-VNIR_START_NM = 400
-VNIR_END_NM = 1000
-SWIR_START_NM = 800
-SWIR_END_NM = 2500
-FULL_BLEND_START_NM = 800
-FULL_BLEND_END_NM = 1000
-MAX_INTERNAL_INTERPOLATED_GAP_COUNT = 8
-MAX_INTERNAL_INTERPOLATED_RUN_COUNT = 8
+for _module in (_core, _sensors):
+    globals().update({name: getattr(_module, name) for name in dir(_module) if not name.startswith("__")})
 
-CANONICAL_WAVELENGTHS = np.arange(CANONICAL_START_NM, CANONICAL_END_NM + 1, dtype=np.int32)
-VNIR_WAVELENGTHS = np.arange(VNIR_START_NM, VNIR_END_NM + 1, dtype=np.int32)
-SWIR_WAVELENGTHS = np.arange(SWIR_START_NM, SWIR_END_NM + 1, dtype=np.int32)
-SEGMENT_RANGES = {
-    "vnir": (VNIR_START_NM, VNIR_END_NM),
-    "swir": (SWIR_START_NM, SWIR_END_NM),
-}
-SEGMENT_WAVELENGTHS = {
-    "vnir": VNIR_WAVELENGTHS,
-    "swir": SWIR_WAVELENGTHS,
-}
-SEGMENT_FILE_NAMES = {
-    "vnir": "hyperspectral_vnir.npy",
-    "swir": "hyperspectral_swir.npy",
-}
-FULL_WAVELENGTH_COUNT = int(CANONICAL_WAVELENGTHS.size)
-RSRF_ROOT_ENV_VAR = "RSRF_ROOT"
-RSRF_REGISTRY_RELATIVE_PATH = Path("data") / "registry" / "sensors.parquet"
-RSRF_INSTALL_HINT = 'pip install "rsrf>=0.2.0"'
-RSRF_REPRESENTATION_VARIANT = "band_average"
-
-
-@dataclass(frozen=True)
-class _RsrfBandSelection:
-    band_id: str
-    rsrf_band_id: str
-    segment: str
-
-
-RSRF_SENSOR_BAND_SELECTIONS: dict[str, tuple[_RsrfBandSelection, ...]] = {
-    "sentinel-2a_msi": (
-        _RsrfBandSelection("ultra_blue", "B01", "vnir"),
-        _RsrfBandSelection("blue", "B02", "vnir"),
-        _RsrfBandSelection("green", "B03", "vnir"),
-        _RsrfBandSelection("red", "B04", "vnir"),
-        _RsrfBandSelection("nir", "B8A", "vnir"),
-        _RsrfBandSelection("swir1", "B11", "swir"),
-        _RsrfBandSelection("swir2", "B12", "swir"),
-    ),
-    "sentinel-2b_msi": (
-        _RsrfBandSelection("ultra_blue", "B01", "vnir"),
-        _RsrfBandSelection("blue", "B02", "vnir"),
-        _RsrfBandSelection("green", "B03", "vnir"),
-        _RsrfBandSelection("red", "B04", "vnir"),
-        _RsrfBandSelection("nir", "B8A", "vnir"),
-        _RsrfBandSelection("swir1", "B11", "swir"),
-        _RsrfBandSelection("swir2", "B12", "swir"),
-    ),
-    "sentinel-2c_msi": (
-        _RsrfBandSelection("ultra_blue", "B01", "vnir"),
-        _RsrfBandSelection("blue", "B02", "vnir"),
-        _RsrfBandSelection("green", "B03", "vnir"),
-        _RsrfBandSelection("red", "B04", "vnir"),
-        _RsrfBandSelection("nir", "B8A", "vnir"),
-        _RsrfBandSelection("swir1", "B11", "swir"),
-        _RsrfBandSelection("swir2", "B12", "swir"),
-    ),
-    "landsat-8_oli": (
-        _RsrfBandSelection("ultra_blue", "B1", "vnir"),
-        _RsrfBandSelection("blue", "B2", "vnir"),
-        _RsrfBandSelection("green", "B3", "vnir"),
-        _RsrfBandSelection("red", "B4", "vnir"),
-        _RsrfBandSelection("nir", "B5", "vnir"),
-        _RsrfBandSelection("swir1", "B6", "swir"),
-        _RsrfBandSelection("swir2", "B7", "swir"),
-    ),
-    "landsat-9_oli2": (
-        _RsrfBandSelection("ultra_blue", "B1", "vnir"),
-        _RsrfBandSelection("blue", "B2", "vnir"),
-        _RsrfBandSelection("green", "B3", "vnir"),
-        _RsrfBandSelection("red", "B4", "vnir"),
-        _RsrfBandSelection("nir", "B5", "vnir"),
-        _RsrfBandSelection("swir1", "B6", "swir"),
-        _RsrfBandSelection("swir2", "B7", "swir"),
-    ),
-    "terra_modis": (
-        _RsrfBandSelection("blue", "B3", "vnir"),
-        _RsrfBandSelection("green", "B4", "vnir"),
-        _RsrfBandSelection("red", "B1", "vnir"),
-        _RsrfBandSelection("nir", "B2", "vnir"),
-        _RsrfBandSelection("swir1", "B6", "swir"),
-        _RsrfBandSelection("swir2", "B7", "swir"),
-    ),
-    "snpp_viirs": (
-        _RsrfBandSelection("blue", "M2", "vnir"),
-        _RsrfBandSelection("green", "M4", "vnir"),
-        _RsrfBandSelection("red", "M5", "vnir"),
-        _RsrfBandSelection("nir", "M7", "vnir"),
-        _RsrfBandSelection("swir1", "M10", "swir"),
-        _RsrfBandSelection("swir2", "M11", "swir"),
-    ),
-    "noaa-20_viirs": (
-        _RsrfBandSelection("blue", "M2", "vnir"),
-        _RsrfBandSelection("green", "M4", "vnir"),
-        _RsrfBandSelection("red", "M5", "vnir"),
-        _RsrfBandSelection("nir", "M7", "vnir"),
-        _RsrfBandSelection("swir1", "M10", "swir"),
-        _RsrfBandSelection("swir2", "M11", "swir"),
-    ),
-    "noaa-21_viirs": (
-        _RsrfBandSelection("blue", "M2", "vnir"),
-        _RsrfBandSelection("green", "M4", "vnir"),
-        _RsrfBandSelection("red", "M5", "vnir"),
-        _RsrfBandSelection("nir", "M7", "vnir"),
-        _RsrfBandSelection("swir1", "M10", "swir"),
-        _RsrfBandSelection("swir2", "M11", "swir"),
-    ),
-}
-
-
-class SpectralLibraryError(Exception):
-    """Base error type used by the mapping workflow."""
-
-    def __init__(self, code: str, message: str, *, context: Mapping[str, object] | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.context = dict(context or {})
-
-    def to_dict(self, *, command: str | None = None) -> dict[str, object]:
-        payload: dict[str, object] = {
-            "error_code": self.code,
-            "message": self.message,
-        }
-        if command:
-            payload["command"] = command
-        if self.context:
-            payload["context"] = self.context
-        return payload
-
-    def __str__(self) -> str:
-        return self.message
-
-
-class SensorSchemaError(SpectralLibraryError):
-    """Raised when an SRF schema is malformed or internally inconsistent."""
-
-    def __init__(self, message: str, *, context: Mapping[str, object] | None = None) -> None:
-        super().__init__("invalid_sensor_schema", message, context=context)
-
-
-class PreparedLibraryBuildError(SpectralLibraryError):
-    """Raised while building a prepared runtime bundle."""
-
-    def __init__(self, message: str, *, context: Mapping[str, object] | None = None) -> None:
-        super().__init__("prepare_failed", message, context=context)
-
-
-class PreparedLibraryValidationError(SpectralLibraryError):
-    """Raised when a prepared runtime bundle fails validation."""
-
-    def __init__(self, message: str, *, context: Mapping[str, object] | None = None) -> None:
-        super().__init__("invalid_prepared_library", message, context=context)
-
-
-class PreparedLibraryCompatibilityError(SpectralLibraryError):
-    """Raised when a prepared runtime uses an incompatible schema version."""
-
-    def __init__(self, message: str, *, context: Mapping[str, object] | None = None) -> None:
-        super().__init__("prepared_library_incompatible", message, context=context)
-
-
-class MappingInputError(SpectralLibraryError):
-    """Raised when a mapping request cannot be executed as provided."""
-
-    def __init__(self, message: str, *, context: Mapping[str, object] | None = None) -> None:
-        super().__init__("invalid_mapping_input", message, context=context)
-
-
-@dataclass(frozen=True)
-class SensorBandDefinition:
-    """Single-band spectral response definition for a multispectral sensor."""
-
-    band_id: str
-    segment: str
-    wavelength_nm: tuple[float, ...]
-    rsr: tuple[float, ...]
-    center_nm: float | None = None
-    fwhm_nm: float | None = None
-    support_min_nm: float | None = None
-    support_max_nm: float | None = None
-
-    def __post_init__(self) -> None:
-        if not self.band_id:
-            raise SensorSchemaError("Sensor band_id must be non-empty.")
-        if self.segment not in SEGMENTS:
-            raise SensorSchemaError(
-                "Sensor segment must be either 'vnir' or 'swir'.",
-                context={"band_id": self.band_id, "segment": self.segment},
-            )
-        if len(self.wavelength_nm) != len(self.rsr):
-            raise SensorSchemaError(
-                "Sensor wavelength_nm and rsr arrays must have the same length.",
-                context={"band_id": self.band_id},
-            )
-        if len(self.wavelength_nm) == 0:
-            raise SensorSchemaError("Sensor bands must define at least one SRF sample.", context={"band_id": self.band_id})
-
-        wavelengths = np.asarray(self.wavelength_nm, dtype=np.float64)
-        rsr = np.asarray(self.rsr, dtype=np.float64)
-        if not np.all(np.isfinite(wavelengths)) or not np.all(np.isfinite(rsr)):
-            raise SensorSchemaError("Sensor SRF values must be finite.", context={"band_id": self.band_id})
-        if np.any(np.diff(wavelengths) <= 0):
-            raise SensorSchemaError("Sensor wavelengths must be strictly increasing.", context={"band_id": self.band_id})
-        if np.all(rsr <= 0):
-            raise SensorSchemaError(
-                "Sensor SRF values must include at least one positive support sample.",
-                context={"band_id": self.band_id},
-            )
-
-        support_min = self.support_min_nm if self.support_min_nm is not None else float(wavelengths[rsr > 0].min())
-        support_max = self.support_max_nm if self.support_max_nm is not None else float(wavelengths[rsr > 0].max())
-        segment_min, segment_max = SEGMENT_RANGES[self.segment]
-        tolerance = 1e-6
-        if support_min < segment_min - tolerance or support_max > segment_max + tolerance:
-            raise SensorSchemaError(
-                "Sensor band support must stay inside its declared segment range.",
-                context={
-                    "band_id": self.band_id,
-                    "segment": self.segment,
-                    "support_min_nm": support_min,
-                    "support_max_nm": support_max,
-                },
-            )
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, object]) -> "SensorBandDefinition":
-        if "band_id" not in payload:
-            raise SensorSchemaError("Sensor band definition is missing band_id.")
-        if "segment" not in payload:
-            raise SensorSchemaError("Sensor band definition is missing segment.", context={"band_id": payload.get("band_id")})
-        if "response_definition" not in payload:
-            raise SensorSchemaError(
-                "Sensor band definition must include an rsrf-compatible response definition.",
-                context={"band_id": payload.get("band_id")},
-            )
-        ordered_wavelengths, ordered_rsr, center_nm, fwhm_nm, support_min_nm, support_max_nm = (
-            _coerce_sensor_band_response_definition(payload)
-        )
-
-        return cls(
-            band_id=str(payload["band_id"]),
-            segment=str(payload["segment"]),
-            wavelength_nm=ordered_wavelengths,
-            rsr=ordered_rsr,
-            center_nm=center_nm,
-            fwhm_nm=fwhm_nm,
-            support_min_nm=support_min_nm,
-            support_max_nm=support_max_nm,
-        )
-
-    def to_dict(self) -> dict[str, object]:
-        payload: dict[str, object] = {
-            "band_id": self.band_id,
-            "segment": self.segment,
-            "response_definition": {
-                "wavelength_nm": list(self.wavelength_nm),
-                "response": list(self.rsr),
-            },
-        }
-        if self.center_nm is not None:
-            payload["center_nm"] = self.center_nm
-        if self.fwhm_nm is not None:
-            payload["fwhm_nm"] = self.fwhm_nm
-        if self.support_min_nm is not None:
-            payload["support_min_nm"] = self.support_min_nm
-        if self.support_max_nm is not None:
-            payload["support_max_nm"] = self.support_max_nm
-        return payload
-
-
-@dataclass(frozen=True)
-class SensorSRFSchema:
-    """Collection of band response definitions for a sensor."""
-
-    sensor_id: str
-    bands: tuple[SensorBandDefinition, ...]
-
-    def __post_init__(self) -> None:
-        if not self.sensor_id:
-            raise SensorSchemaError("Sensor schema sensor_id must be non-empty.")
-        if not self.bands:
-            raise SensorSchemaError("Sensor schema must include at least one band.", context={"sensor_id": self.sensor_id})
-        band_ids = [band.band_id for band in self.bands]
-        if len(set(band_ids)) != len(band_ids):
-            raise SensorSchemaError("Sensor band_id values must be unique.", context={"sensor_id": self.sensor_id})
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, object]) -> "SensorSRFSchema":
-        if "sensor_id" not in payload:
-            raise SensorSchemaError("Sensor schema is missing sensor_id.")
-        if "bands" not in payload:
-            raise SensorSchemaError("Sensor schema is missing bands.", context={"sensor_id": payload.get("sensor_id")})
-        bands = tuple(SensorBandDefinition.from_dict(band_payload) for band_payload in payload["bands"])  # type: ignore[index]
-        return cls(sensor_id=str(payload["sensor_id"]), bands=bands)
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "sensor_id": self.sensor_id,
-            "bands": [band.to_dict() for band in self.bands],
-        }
-
-    def band_ids(self) -> tuple[str, ...]:
-        return tuple(band.band_id for band in self.bands)
-
-    def bands_for_segment(self, segment: str) -> tuple[SensorBandDefinition, ...]:
-        if segment not in SEGMENTS:
-            raise SensorSchemaError("Unknown sensor segment.", context={"segment": segment, "sensor_id": self.sensor_id})
-        return tuple(band for band in self.bands if band.segment == segment)
-
-
-@dataclass(frozen=True)
-class PreparedLibraryManifest:
-    """Metadata contract for a prepared runtime bundle."""
-
-    schema_version: str
-    package_version: str
-    source_siac_root: str
-    source_siac_build_id: str
-    prepared_at: str
-    source_sensors: tuple[str, ...]
-    supported_output_modes: tuple[str, ...]
-    row_count: int
-    vnir_wavelength_range_nm: tuple[int, int]
-    swir_wavelength_range_nm: tuple[int, int]
-    array_dtype: str
-    file_checksums: dict[str, str] = field(default_factory=dict)
-    knn_index_artifacts: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
-    interpolation_summary: dict[str, int] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, object]) -> "PreparedLibraryManifest":
-        return cls(
-            schema_version=str(payload["schema_version"]),
-            package_version=str(payload["package_version"]),
-            source_siac_root=str(payload["source_siac_root"]),
-            source_siac_build_id=str(payload["source_siac_build_id"]),
-            prepared_at=str(payload["prepared_at"]),
-            source_sensors=tuple(str(value) for value in payload["source_sensors"]),  # type: ignore[index]
-            supported_output_modes=tuple(str(value) for value in payload["supported_output_modes"]),  # type: ignore[index]
-            row_count=int(payload["row_count"]),
-            vnir_wavelength_range_nm=tuple(int(value) for value in payload["vnir_wavelength_range_nm"]),  # type: ignore[index]
-            swir_wavelength_range_nm=tuple(int(value) for value in payload["swir_wavelength_range_nm"]),  # type: ignore[index]
-            array_dtype=str(payload["array_dtype"]),
-            file_checksums={str(key): str(value) for key, value in dict(payload["file_checksums"]).items()},  # type: ignore[arg-type]
-            knn_index_artifacts={
-                str(backend): {
-                    str(sensor_id): {
-                        str(segment): str(path)
-                        for segment, path in dict(sensor_payload).items()
-                    }
-                    for sensor_id, sensor_payload in dict(backend_payload).items()
-                }
-                for backend, backend_payload in dict(payload.get("knn_index_artifacts") or {}).items()  # type: ignore[arg-type]
-            },
-            interpolation_summary={
-                str(key): int(value)
-                for key, value in dict(payload.get("interpolation_summary") or {}).items()  # type: ignore[arg-type]
-            },
-        )
-
-    @classmethod
-    def from_json(cls, path: Path) -> "PreparedLibraryManifest":
-        payload = _read_json_document(
-            path,
-            error_factory=PreparedLibraryValidationError,
-            document_name=path.name,
-        )
-        if not isinstance(payload, dict):
-            raise PreparedLibraryValidationError(
-                f"{path.name} must contain a JSON object.",
-                context={"path": str(path)},
-            )
-        try:
-            return cls.from_dict(payload)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise PreparedLibraryValidationError(
-                f"{path.name} is missing required fields or contains invalid values.",
-                context={"path": str(path)},
-            ) from exc
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": self.schema_version,
-            "package_version": self.package_version,
-            "source_siac_root": self.source_siac_root,
-            "source_siac_build_id": self.source_siac_build_id,
-            "prepared_at": self.prepared_at,
-            "source_sensors": list(self.source_sensors),
-            "supported_output_modes": list(self.supported_output_modes),
-            "row_count": self.row_count,
-            "vnir_wavelength_range_nm": list(self.vnir_wavelength_range_nm),
-            "swir_wavelength_range_nm": list(self.swir_wavelength_range_nm),
-            "array_dtype": self.array_dtype,
-            "file_checksums": dict(self.file_checksums),
-            "knn_index_artifacts": {
-                backend: {
-                    sensor_id: dict(sensor_payload)
-                    for sensor_id, sensor_payload in backend_payload.items()
-                }
-                for backend, backend_payload in self.knn_index_artifacts.items()
-            },
-            **(
-                {"interpolation_summary": dict(self.interpolation_summary)}
-                if self.interpolation_summary
-                else {}
-            ),
-        }
-
-
-@dataclass
-class MappingResult:
-    """Outputs and diagnostics for a single mapping request."""
-
-    target_reflectance: np.ndarray | None = None
-    target_band_ids: tuple[str, ...] = ()
-    reconstructed_vnir: np.ndarray | None = None
-    reconstructed_swir: np.ndarray | None = None
-    reconstructed_full_spectrum: np.ndarray | None = None
-    reconstructed_wavelength_nm: np.ndarray | None = None
-    neighbor_ids_by_segment: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    neighbor_distances_by_segment: dict[str, np.ndarray] = field(default_factory=dict)
-    segment_outputs: dict[str, np.ndarray] = field(default_factory=dict)
-    segment_valid_band_counts: dict[str, int] = field(default_factory=dict)
-    diagnostics: dict[str, object] = field(default_factory=dict)
-
-    def to_summary_dict(self) -> dict[str, object]:
-        return {
-            "target_band_ids": list(self.target_band_ids),
-            "segment_valid_band_counts": dict(self.segment_valid_band_counts),
-            "neighbor_ids_by_segment": {
-                segment: list(neighbor_ids) for segment, neighbor_ids in self.neighbor_ids_by_segment.items()
-            },
-            "neighbor_distances_by_segment": {
-                segment: [float(value) for value in distances]
-                for segment, distances in self.neighbor_distances_by_segment.items()
-            },
-            "diagnostics": self.diagnostics,
-        }
-
-
-@dataclass
-class BatchMappingResult:
-    """Mapping results for a batch of samples."""
-
-    sample_ids: tuple[str, ...]
-    results: tuple[MappingResult, ...]
-
-    def to_summary_dict(self) -> dict[str, object]:
-        return {
-            "sample_ids": list(self.sample_ids),
-            "results": [
-                {"sample_id": sample_id, **result.to_summary_dict()}
-                for sample_id, result in zip(self.sample_ids, self.results)
-            ],
-        }
-
-
-@dataclass
-class BatchMappingArrayResult:
-    """Dense array outputs for a batch of mapped samples."""
-
-    sample_ids: tuple[str, ...]
-    reflectance: np.ndarray
-    source_fit_rmse: np.ndarray
-    output_columns: tuple[str, ...]
-    wavelength_nm: np.ndarray | None = None
-
-
-@dataclass
-class _ZarrBatchExport:
-    root: Any
-    reflectance_dataset: Any
-    source_fit_rmse_dataset: Any
-    sample_id_dataset: Any
-    output_columns: tuple[str, ...]
-    output_width: int
-    chunk_size: int
-
-
-@dataclass
-class _ScipyCkdtreeCacheEntry:
-    data: np.ndarray
-    index: Any
-
-
-@dataclass
-class LinearSpectralMapper:
-    """Fixed linear mapper compiled from a prepared runtime."""
-
-    source_sensor: str
-    output_mode: str
-    weights: np.ndarray
-    bias: np.ndarray
-    dtype: np.dtype[Any]
-    target_sensor: str | None = None
-    source_band_ids: tuple[str, ...] = ()
-    output_band_ids: tuple[str, ...] = ()
-    output_wavelength_nm: np.ndarray | None = None
-
-    def __post_init__(self) -> None:
-        self.dtype = np.dtype(self.dtype)
-        if self.dtype.kind != "f":
-            raise MappingInputError("LinearSpectralMapper requires a floating-point dtype.", context={"dtype": self.dtype.name})
-
-        self.weights = np.ascontiguousarray(self.weights, dtype=self.dtype)
-        self.bias = np.ascontiguousarray(self.bias, dtype=self.dtype)
-        if self.weights.ndim != 2:
-            raise MappingInputError("LinearSpectralMapper weights must be two-dimensional.")
-        if self.bias.ndim != 1:
-            raise MappingInputError("LinearSpectralMapper bias must be one-dimensional.")
-        if self.weights.shape[1] != self.bias.shape[0]:
-            raise MappingInputError(
-                "LinearSpectralMapper weights and bias shapes must agree.",
-                context={
-                    "weights_shape": list(self.weights.shape),
-                    "bias_shape": list(self.bias.shape),
-                },
-            )
-        if self.source_band_ids and self.weights.shape[0] != len(self.source_band_ids):
-            raise MappingInputError(
-                "LinearSpectralMapper weights do not match the declared source band ids.",
-                context={
-                    "weights_shape": list(self.weights.shape),
-                    "source_band_count": len(self.source_band_ids),
-                },
-            )
-        if self.output_band_ids and self.bias.shape[0] != len(self.output_band_ids):
-            raise MappingInputError(
-                "LinearSpectralMapper bias does not match the declared target band ids.",
-                context={
-                    "bias_shape": list(self.bias.shape),
-                    "target_band_count": len(self.output_band_ids),
-                },
-            )
-        if self.output_wavelength_nm is not None:
-            self.output_wavelength_nm = np.asarray(self.output_wavelength_nm, dtype=np.float64)
-            if self.output_wavelength_nm.ndim != 1 or self.output_wavelength_nm.shape[0] != self.bias.shape[0]:
-                raise MappingInputError(
-                    "LinearSpectralMapper output_wavelength_nm must match the output width.",
-                    context={
-                        "bias_shape": list(self.bias.shape),
-                        "wavelength_shape": list(self.output_wavelength_nm.shape),
-                    },
-                )
-
-    @property
-    def output_count(self) -> int:
-        """Return the number of emitted output columns."""
-
-        return int(self.bias.shape[0])
-
-    def map_array(
-        self,
-        reflectance_rows: np.ndarray,
-        *,
-        out: np.ndarray | None = None,
-        chunk_size: int | None = None,
-    ) -> np.ndarray:
-        """Map dense source-sensor rows with one matrix multiply per chunk."""
-
-        inputs = np.asarray(reflectance_rows)
-        if inputs.ndim != 2:
-            raise MappingInputError(
-                "LinearSpectralMapper.map_array requires a two-dimensional array.",
-                context={"shape": list(inputs.shape)},
-            )
-        if inputs.shape[1] != self.weights.shape[0]:
-            raise MappingInputError(
-                "reflectance_rows must match the compiled source band count.",
-                context={
-                    "shape": list(inputs.shape),
-                    "expected_source_band_count": int(self.weights.shape[0]),
-                },
-            )
-
-        output_shape = (int(inputs.shape[0]), int(self.output_count))
-        if out is None:
-            output = np.empty(output_shape, dtype=self.dtype)
-        else:
-            output = np.asarray(out)
-            if output.shape != output_shape:
-                raise MappingInputError(
-                    "out must have the same row count as reflectance_rows and the compiled output width.",
-                    context={"expected_shape": list(output_shape), "actual_shape": list(output.shape)},
-                )
-            if output.dtype.kind != "f":
-                raise MappingInputError("out must use a floating-point dtype.", context={"dtype": output.dtype.name})
-            if not output.flags.writeable:
-                raise MappingInputError("out must be writeable.")
-
-        rows_per_chunk = _normalized_linear_mapper_chunk_size(
-            chunk_size,
-            input_width=int(self.weights.shape[0]),
-            output_width=int(self.output_count),
-            dtype=self.dtype,
-        )
-        use_direct_out = output.dtype == self.dtype
-
-        for start in range(0, inputs.shape[0], rows_per_chunk):
-            stop = min(inputs.shape[0], start + rows_per_chunk)
-            input_chunk = np.ascontiguousarray(inputs[start:stop], dtype=self.dtype)
-            if use_direct_out:
-                out_chunk = output[start:stop]
-                np.matmul(input_chunk, self.weights, out=out_chunk)
-                out_chunk += self.bias
-            else:
-                mapped_chunk = input_chunk @ self.weights
-                mapped_chunk += self.bias
-                output[start:stop] = mapped_chunk
-        return output
-
+del _module, _core, _sensors
 
 @dataclass
 class _SegmentRetrieval:
@@ -717,7 +53,6 @@ class _SegmentRetrieval:
     confidence_components: dict[str, float] = field(default_factory=dict)
     reason: str | None = None
 
-
 @dataclass
 class _RichSegmentMetadata:
     valid_band_count: int
@@ -728,7 +63,6 @@ class _RichSegmentMetadata:
     diagnostics: dict[str, object] = field(default_factory=dict)
     reason: str | None = None
 
-
 @dataclass
 class _DenseSegmentOutputBatch:
     success: np.ndarray
@@ -738,12 +72,10 @@ class _DenseSegmentOutputBatch:
     valid_band_count: np.ndarray
     target_output_indices: np.ndarray | None = None
 
-
 @dataclass
 class _RichSegmentBatch:
     dense_output: _DenseSegmentOutputBatch
     metadata: tuple[_RichSegmentMetadata, ...]
-
 
 def _empty_dense_segment_output_batch(
     *,
@@ -764,7 +96,6 @@ def _empty_dense_segment_output_batch(
         ),
     )
 
-
 def _assign_dense_segment_output_batch_rows(
     *,
     target: _DenseSegmentOutputBatch,
@@ -782,7 +113,6 @@ def _assign_dense_segment_output_batch_rows(
         elif not np.array_equal(target.target_output_indices, source.target_output_indices):
             raise PreparedLibraryValidationError("Dense segment batches disagree on target output indices.")
 
-
 @dataclass
 class _TargetSensorProjection:
     output_width: int
@@ -797,12 +127,10 @@ class _TargetSensorProjection:
     vnir_target_rows: np.ndarray
     swir_target_rows: np.ndarray
 
-
 @dataclass
 class _CandidateBatchGroup:
     sample_indices: np.ndarray
     candidate_rows: np.ndarray
-
 
 @dataclass
 class _BatchedResultMaterialization:
@@ -813,1145 +141,6 @@ class _BatchedResultMaterialization:
     target_rows: np.ndarray | None
     target_status_codes: np.ndarray | None
     target_band_ids: tuple[str, ...]
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, str) and not value.strip():
-        return None
-    return float(value)
-
-
-def _coerce_sensor_band_response_definition(
-    payload: Mapping[str, object],
-) -> tuple[tuple[float, ...], tuple[float, ...], float | None, float | None, float | None, float | None]:
-    rsrf_module = _load_rsrf_module()
-    missing_api = [
-        name
-        for name in ("coerce_response_definition", "realize_curve")
-        if not hasattr(rsrf_module, name)
-    ]
-    if missing_api:
-        raise SensorSchemaError(
-            "rsrf does not expose the custom response-definition API required for sensor schema loading.",
-            context={"missing_attributes": missing_api},
-        )
-    response_definition = _response_definition_input_from_payload(payload)
-
-    try:
-        resolved_definition = rsrf_module.coerce_response_definition(
-            response_definition,
-            band_id=str(payload["band_id"]),
-            source_variant=_optional_string(payload.get("source_variant")) or "custom",
-        )
-    except (TypeError, ValueError) as exc:
-        raise SensorSchemaError(
-            "Sensor band definition could not be normalized through rsrf.",
-            context={"band_id": payload.get("band_id")},
-        ) from exc
-
-    if hasattr(resolved_definition, "wavelength_nm") and hasattr(resolved_definition, "response"):
-        wavelengths = np.asarray(resolved_definition.wavelength_nm, dtype=np.float64)
-        response = np.asarray(resolved_definition.response, dtype=np.float64)
-        center_nm = _optional_float(payload.get("center_nm")) or _optional_float(payload.get("center_wavelength_nm"))
-        fwhm_nm = _optional_float(payload.get("fwhm_nm"))
-    else:
-        try:
-            realized_curve = rsrf_module.realize_curve(resolved_definition)
-        except (TypeError, ValueError, NotImplementedError) as exc:
-            raise SensorSchemaError(
-                "Sensor band definition could not be realized through rsrf.",
-                context={"band_id": payload.get("band_id")},
-            ) from exc
-        wavelengths = np.asarray(realized_curve.wavelength_nm, dtype=np.float64)
-        response = np.asarray(realized_curve.response, dtype=np.float64)
-        center_nm = _optional_float(payload.get("center_nm"))
-        if center_nm is None:
-            center_nm = float(resolved_definition.center_wavelength_nm)
-        fwhm_nm = _optional_float(payload.get("fwhm_nm"))
-        if fwhm_nm is None:
-            fwhm_nm = float(resolved_definition.fwhm_nm)
-
-    ordered_pairs = sorted(zip(wavelengths.tolist(), response.tolist()), key=lambda item: item[0])
-    ordered_wavelengths = tuple(float(wavelength) for wavelength, _ in ordered_pairs)
-    ordered_rsr = tuple(float(weight) for _, weight in ordered_pairs)
-    positive_support = [wavelength for wavelength, weight in ordered_pairs if weight > 0]
-
-    support_min_nm = _optional_float(payload.get("support_min_nm"))
-    if support_min_nm is None and positive_support:
-        support_min_nm = float(min(positive_support))
-
-    support_max_nm = _optional_float(payload.get("support_max_nm"))
-    if support_max_nm is None and positive_support:
-        support_max_nm = float(max(positive_support))
-
-    return ordered_wavelengths, ordered_rsr, center_nm, fwhm_nm, support_min_nm, support_max_nm
-
-
-def _response_definition_input_from_payload(payload: Mapping[str, object]) -> object:
-    response_definition = payload["response_definition"]
-    if isinstance(response_definition, Mapping):
-        return dict(response_definition)
-    return response_definition
-
-
-def _optional_string(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    return text
-
-
-def _default_sample_id(index: int) -> str:
-    return f"sample_{index + 1:06d}"
-
-
-def _attach_sample_context(error: SpectralLibraryError, *, sample_id: str, sample_index: int) -> SpectralLibraryError:
-    context = {"sample_id": sample_id, "sample_index": sample_index, **error.context}
-    if type(error) is SpectralLibraryError:
-        return SpectralLibraryError(error.code, error.message, context=context)
-    return error.__class__(error.message, context=context)
-
-
-def _normalized_sample_ids(sample_ids: Sequence[str] | None, *, sample_count: int) -> tuple[str, ...]:
-    """Normalize batch sample identifiers and enforce one id per row."""
-
-    if sample_count < 1:
-        raise MappingInputError("Batch mapping requires at least one reflectance sample.")
-    if sample_ids is None:
-        return tuple(_default_sample_id(index) for index in range(sample_count))
-
-    if len(sample_ids) != sample_count:
-        raise MappingInputError(
-            "sample_ids must have the same length as the reflectance batch.",
-            context={"sample_count": sample_count, "sample_id_count": len(sample_ids)},
-        )
-
-    normalized: list[str] = []
-    for index, sample_id in enumerate(sample_ids):
-        text = str(sample_id).strip()
-        if not text:
-            raise MappingInputError("sample_ids must be non-empty.", context={"sample_index": index})
-        normalized.append(text)
-
-    if len(set(normalized)) != len(normalized):
-        raise MappingInputError("sample_ids must be unique within a batch.")
-    return tuple(normalized)
-
-
-def _segment_slice(segment: str) -> slice:
-    start_nm, end_nm = SEGMENT_RANGES[segment]
-    start_index = start_nm - CANONICAL_START_NM
-    stop_index = end_nm - CANONICAL_START_NM + 1
-    return slice(start_index, stop_index)
-
-
-def _blend_overlap(vnir: np.ndarray, swir: np.ndarray) -> np.ndarray:
-    """Blend the 800-1000 nm overlap so full spectra transition smoothly."""
-
-    overlap_wavelengths = np.arange(FULL_BLEND_START_NM, FULL_BLEND_END_NM + 1, dtype=np.float64)
-    weights = (FULL_BLEND_END_NM - overlap_wavelengths) / (FULL_BLEND_END_NM - FULL_BLEND_START_NM)
-    vnir_overlap_start = FULL_BLEND_START_NM - VNIR_START_NM
-    swir_overlap_start = FULL_BLEND_START_NM - SWIR_START_NM
-    overlap_length = overlap_wavelengths.size
-    return (
-        weights * vnir[vnir_overlap_start : vnir_overlap_start + overlap_length]
-        + (1.0 - weights) * swir[swir_overlap_start : swir_overlap_start + overlap_length]
-    )
-
-
-def _assemble_full_spectrum(vnir: np.ndarray, swir: np.ndarray) -> np.ndarray:
-    """Merge VNIR and SWIR reconstructions onto the canonical wavelength grid."""
-
-    full = np.empty(FULL_WAVELENGTH_COUNT, dtype=np.float64)
-    blend_start = FULL_BLEND_START_NM - CANONICAL_START_NM
-    blend_stop = FULL_BLEND_END_NM - CANONICAL_START_NM + 1
-    swir_overlap_stop = FULL_BLEND_END_NM - SWIR_START_NM + 1
-    full[:blend_start] = vnir[:blend_start]
-    full[blend_start:blend_stop] = _blend_overlap(vnir, swir)
-    full[blend_stop:] = swir[swir_overlap_stop:]
-    return full
-
-
-def _assemble_full_spectrum_batch(vnir: np.ndarray, swir: np.ndarray) -> np.ndarray:
-    """Rust-backed batch variant of :func:`_assemble_full_spectrum`."""
-
-    return np.asarray(
-        _rustaccel.assemble_full_spectrum_batch(
-            vnir=np.asarray(vnir, dtype=np.float64),
-            swir=np.asarray(swir, dtype=np.float64),
-        ),
-        dtype=np.float64,
-    )
-
-
-def _normalized_linear_mapper_dtype(dtype: str | np.dtype[Any]) -> np.dtype[Any]:
-    resolved = np.dtype(dtype)
-    if resolved.kind != "f":
-        raise MappingInputError("Linear mapper dtype must be floating-point.", context={"dtype": resolved.name})
-    return resolved
-
-
-def _normalized_linear_mapper_chunk_size(
-    chunk_size: int | None,
-    *,
-    input_width: int,
-    output_width: int,
-    dtype: np.dtype[Any],
-) -> int:
-    if chunk_size is not None:
-        if int(chunk_size) < 1:
-            raise MappingInputError("chunk_size must be at least 1.", context={"chunk_size": int(chunk_size)})
-        return int(chunk_size)
-
-    bytes_per_row = max(1, (int(input_width) + int(output_width)) * int(np.dtype(dtype).itemsize))
-    return max(1, int((64 * 1024 * 1024) // bytes_per_row))
-
-
-def _estimated_dense_array_bytes(*, row_count: int, column_count: int, dtype: np.dtype[Any]) -> int:
-    return int(int(row_count) * int(column_count) * int(np.dtype(dtype).itemsize))
-
-
-def _fit_linear_map(
-    source_matrix: np.ndarray,
-    *,
-    output_width: int,
-    output_loader: Callable[[int, int], np.ndarray],
-    compile_chunk_size: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Fit one linear projection with chunked normal-equation accumulation."""
-
-    row_count = int(source_matrix.shape[0])
-    input_width = int(source_matrix.shape[1])
-    design_width = input_width + 1
-    xtx = np.zeros((design_width, design_width), dtype=np.float64)
-    xty = np.zeros((design_width, int(output_width)), dtype=np.float64)
-
-    for start in range(0, row_count, int(compile_chunk_size)):
-        stop = min(row_count, start + int(compile_chunk_size))
-        x_chunk = np.asarray(source_matrix[start:stop], dtype=np.float64)
-        y_chunk = np.asarray(output_loader(start, stop), dtype=np.float64)
-        expected_shape = (stop - start, int(output_width))
-        if y_chunk.shape != expected_shape:
-            raise PreparedLibraryValidationError(
-                "Linear mapper compile output block shape did not match the prepared runtime.",
-                context={"expected_shape": list(expected_shape), "actual_shape": list(y_chunk.shape)},
-            )
-
-        design = np.empty((stop - start, design_width), dtype=np.float64)
-        design[:, 0] = 1.0
-        design[:, 1:] = x_chunk
-        xtx += design.T @ design
-        xty += design.T @ y_chunk
-
-    try:
-        coefficients = np.linalg.solve(xtx, xty)
-    except np.linalg.LinAlgError:
-        coefficients = np.linalg.pinv(xtx) @ xty
-    return coefficients[0], coefficients[1:]
-
-
-def _ensure_supported_output_mode(output_mode: str) -> None:
-    if output_mode not in SUPPORTED_OUTPUT_MODES:
-        raise MappingInputError(
-            "Unsupported output_mode.",
-            context={"output_mode": output_mode, "supported_output_modes": list(SUPPORTED_OUTPUT_MODES)},
-        )
-
-
-def _validate_mapping_request(
-    output_mode: str,
-    *,
-    k: int,
-    min_valid_bands: int,
-    neighbor_estimator: str = "mean",
-    knn_backend: str = "numpy",
-    knn_eps: float = 0.0,
-) -> None:
-    """Validate a mapping configuration before any retrieval work starts."""
-
-    _ensure_supported_output_mode(output_mode)
-    if k < 1:
-        raise MappingInputError("k must be at least 1.", context={"k": k})
-    if min_valid_bands < 1:
-        raise MappingInputError("min_valid_bands must be at least 1.", context={"min_valid_bands": min_valid_bands})
-    if neighbor_estimator not in SUPPORTED_NEIGHBOR_ESTIMATORS:
-        raise MappingInputError(
-            "neighbor_estimator is not supported.",
-            context={
-                "neighbor_estimator": neighbor_estimator,
-                "supported_neighbor_estimators": list(SUPPORTED_NEIGHBOR_ESTIMATORS),
-            },
-        )
-    if knn_backend not in SUPPORTED_KNN_BACKENDS:
-        raise MappingInputError(
-            "knn_backend is not supported.",
-            context={
-                "knn_backend": knn_backend,
-                "supported_knn_backends": list(SUPPORTED_KNN_BACKENDS),
-            },
-        )
-    if knn_eps < 0:
-        raise MappingInputError("knn_eps must be non-negative.", context={"knn_eps": knn_eps})
-
-
-def _normalized_source_sensors(source_sensors: Sequence[str]) -> list[str]:
-    normalized: list[str] = []
-    for sensor_id in source_sensors:
-        text = str(sensor_id).strip()
-        if text and text not in normalized:
-            normalized.append(text)
-    if not normalized:
-        raise PreparedLibraryBuildError("At least one source sensor must be provided.")
-    return normalized
-
-
-def _load_rsrf_module() -> Any:
-    try:
-        import rsrf  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise SensorSchemaError(
-            "rsrf is required to resolve built-in sensor schemas and normalize custom sensor definitions. "
-            f"Install it with `{RSRF_INSTALL_HINT}`.",
-        ) from exc
-    return rsrf
-
-
-def _candidate_rsrf_roots(rsrf_module: Any) -> tuple[Path, ...]:
-    candidates: list[Path] = []
-    env_value = (os.environ.get(RSRF_ROOT_ENV_VAR) or "").strip()
-    if env_value:
-        candidates.append(Path(env_value).expanduser())
-
-    package_root = Path(getattr(rsrf_module, "PACKAGE_ROOT", Path(rsrf_module.__file__).resolve().parent)).resolve()
-    candidates.extend((package_root.parent.parent, package_root.parent))
-
-    unique_candidates: list[Path] = []
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved not in unique_candidates:
-            unique_candidates.append(resolved)
-    return tuple(unique_candidates)
-
-
-def _resolve_rsrf_root() -> Path:
-    rsrf_module = _load_rsrf_module()
-    for candidate in _candidate_rsrf_roots(rsrf_module):
-        if (candidate / RSRF_REGISTRY_RELATIVE_PATH).exists():
-            return candidate
-    raise SensorSchemaError(
-        "rsrf is installed but its registry data could not be located.",
-        context={
-            "searched_roots": [str(candidate) for candidate in _candidate_rsrf_roots(rsrf_module)],
-            "env_var": RSRF_ROOT_ENV_VAR,
-        },
-    )
-
-
-def _rsrf_supported_sensor_ids() -> tuple[str, ...]:
-    return tuple(sorted(RSRF_SENSOR_BAND_SELECTIONS))
-
-
-def _rsrf_band_support_bounds(
-    curve_wavelengths: np.ndarray,
-    curve_response: np.ndarray,
-    *,
-    native_support_min_nm: float | None,
-    native_support_max_nm: float | None,
-    segment: str,
-) -> tuple[float, float]:
-    positive_mask = np.asarray(curve_response, dtype=np.float64) > 0
-    if not np.any(positive_mask):
-        raise SensorSchemaError("rsrf curve has no positive support.")
-
-    support_min = float(curve_wavelengths[positive_mask].min()) if native_support_min_nm is None else float(native_support_min_nm)
-    support_max = float(curve_wavelengths[positive_mask].max()) if native_support_max_nm is None else float(native_support_max_nm)
-    segment_min, segment_max = SEGMENT_RANGES[segment]
-    clipped_min = max(float(CANONICAL_START_NM), float(segment_min), support_min)
-    clipped_max = min(float(CANONICAL_END_NM), float(segment_max), support_max)
-    if clipped_min > clipped_max:
-        raise SensorSchemaError(
-            "rsrf curve support does not overlap the canonical segment range.",
-            context={
-                "segment": segment,
-                "support_min_nm": support_min,
-                "support_max_nm": support_max,
-            },
-        )
-    return clipped_min, clipped_max
-
-
-def _sensor_band_definition_from_rsrf(
-    rsrf_module: Any,
-    rsrf_root: Path,
-    sensor_id: str,
-    selection: _RsrfBandSelection,
-) -> SensorBandDefinition:
-    band_rows = rsrf_module.list_bands(
-        sensor_id,
-        representation_variant=RSRF_REPRESENTATION_VARIANT,
-        root=rsrf_root,
-    )
-    band_row = next((row for row in band_rows if str(row["band_id"]) == selection.rsrf_band_id), None)
-    if band_row is None:
-        raise SensorSchemaError(
-            "rsrf does not provide the requested band for the selected sensor.",
-            context={"sensor_id": sensor_id, "band_id": selection.rsrf_band_id},
-        )
-
-    curve = rsrf_module.load_curve(
-        sensor_id,
-        selection.rsrf_band_id,
-        representation_variant=RSRF_REPRESENTATION_VARIANT,
-        root=rsrf_root,
-    )
-    wavelengths = np.asarray(curve.wavelength_nm, dtype=np.float64)
-    response = np.asarray(curve.response, dtype=np.float64)
-    support_min_nm, support_max_nm = _rsrf_band_support_bounds(
-        wavelengths,
-        response,
-        native_support_min_nm=_optional_float(band_row.get("native_support_min_nm")),
-        native_support_max_nm=_optional_float(band_row.get("native_support_max_nm")),
-        segment=selection.segment,
-    )
-    mask = (wavelengths >= support_min_nm) & (wavelengths <= support_max_nm)
-    return SensorBandDefinition(
-        band_id=selection.band_id,
-        segment=selection.segment,
-        wavelength_nm=tuple(float(value) for value in wavelengths[mask]),
-        rsr=tuple(float(value) for value in response[mask]),
-        center_nm=_optional_float(band_row.get("center_wavelength_nm")),
-        fwhm_nm=_optional_float(band_row.get("fwhm_nm")),
-        support_min_nm=float(support_min_nm),
-        support_max_nm=float(support_max_nm),
-    )
-
-
-def _load_rsrf_sensor_schema(sensor_id: str) -> SensorSRFSchema:
-    if sensor_id not in RSRF_SENSOR_BAND_SELECTIONS:
-        raise SensorSchemaError(
-            "sensor_id is not supported by the built-in rsrf mapping catalog.",
-            context={"sensor_id": sensor_id, "supported_sensor_ids": list(_rsrf_supported_sensor_ids())},
-        )
-    rsrf_module = _load_rsrf_module()
-    rsrf_root = _resolve_rsrf_root()
-    bands = tuple(
-        _sensor_band_definition_from_rsrf(rsrf_module, rsrf_root, sensor_id, selection)
-        for selection in RSRF_SENSOR_BAND_SELECTIONS[sensor_id]
-    )
-    return SensorSRFSchema(sensor_id=sensor_id, bands=bands)
-
-
-def _normalized_knn_index_backends(knn_index_backends: Sequence[str] | None) -> list[str]:
-    if not knn_index_backends:
-        return []
-    normalized: list[str] = []
-    for backend in knn_index_backends:
-        text = str(backend).strip()
-        if not text:
-            continue
-        if text not in SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS:
-            raise PreparedLibraryBuildError(
-                "Requested knn_index_backend is not supported for persisted indexes.",
-                context={
-                    "knn_index_backend": text,
-                    "supported_knn_index_backends": list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS),
-                },
-            )
-        if text not in normalized:
-            normalized.append(text)
-    return normalized
-
-
-def _update_digest_from_file(digest: Any, path: Path) -> None:
-    """Feed file contents into an existing SHA256 digest."""
-
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(1024 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    _update_digest_from_file(digest, path)
-    return digest.hexdigest()
-
-
-def _sha256_runtime_path(path: Path) -> str:
-    if path.is_file():
-        return _sha256_file(path)
-    if path.is_dir():
-        digest = hashlib.sha256()
-        for child in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
-            digest.update(str(child.relative_to(path)).encode("utf-8"))
-            _update_digest_from_file(digest, child)
-        return digest.hexdigest()
-    raise FileNotFoundError(path)
-
-
-def _sha256_paths(paths: Sequence[Path]) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(paths):
-        digest.update(path.name.encode("utf-8"))
-        _update_digest_from_file(digest, path)
-    return digest.hexdigest()
-
-
-def _longest_true_run(mask: np.ndarray) -> int:
-    longest = 0
-    current = 0
-    for value in np.asarray(mask, dtype=bool):
-        if bool(value):
-            current += 1
-            if current > longest:
-                longest = current
-        else:
-            current = 0
-    return int(longest)
-
-
-def _summarize_missing_gap_counts(spectrum: np.ndarray) -> dict[str, int]:
-    missing_mask = np.isnan(spectrum)
-    if not missing_mask.any():
-        return {
-            "missing_count": 0,
-            "leading_gap_count": 0,
-            "trailing_gap_count": 0,
-            "internal_gap_count": 0,
-            "max_internal_gap_run_count": 0,
-        }
-
-    leading_gap_count = 0
-    while leading_gap_count < missing_mask.size and bool(missing_mask[leading_gap_count]):
-        leading_gap_count += 1
-
-    trailing_gap_count = 0
-    while trailing_gap_count < missing_mask.size and bool(missing_mask[missing_mask.size - 1 - trailing_gap_count]):
-        trailing_gap_count += 1
-
-    internal_start = leading_gap_count
-    internal_end = missing_mask.size - trailing_gap_count
-    internal_mask = np.asarray(missing_mask[internal_start:internal_end], dtype=bool)
-    return {
-        "missing_count": int(missing_mask.sum()),
-        "leading_gap_count": int(leading_gap_count),
-        "trailing_gap_count": int(trailing_gap_count),
-        "internal_gap_count": int(internal_mask.sum()),
-        "max_internal_gap_run_count": _longest_true_run(internal_mask),
-    }
-
-
-def _empty_interpolation_summary() -> dict[str, int]:
-    return {
-        "interpolated_row_count": 0,
-        "rows_with_leading_gaps": 0,
-        "rows_with_trailing_gaps": 0,
-        "rows_with_internal_gaps": 0,
-        "max_missing_count": 0,
-        "max_leading_gap_count": 0,
-        "max_trailing_gap_count": 0,
-        "max_internal_gap_count": 0,
-        "max_internal_gap_run_count": 0,
-    }
-
-
-def _update_interpolation_summary(summary: dict[str, int], gap_counts: Mapping[str, int]) -> None:
-    summary["interpolated_row_count"] += 1
-    if int(gap_counts["leading_gap_count"]) > 0:
-        summary["rows_with_leading_gaps"] += 1
-    if int(gap_counts["trailing_gap_count"]) > 0:
-        summary["rows_with_trailing_gaps"] += 1
-    if int(gap_counts["internal_gap_count"]) > 0:
-        summary["rows_with_internal_gaps"] += 1
-    summary["max_missing_count"] = max(summary["max_missing_count"], int(gap_counts["missing_count"]))
-    summary["max_leading_gap_count"] = max(summary["max_leading_gap_count"], int(gap_counts["leading_gap_count"]))
-    summary["max_trailing_gap_count"] = max(summary["max_trailing_gap_count"], int(gap_counts["trailing_gap_count"]))
-    summary["max_internal_gap_count"] = max(summary["max_internal_gap_count"], int(gap_counts["internal_gap_count"]))
-    summary["max_internal_gap_run_count"] = max(
-        summary["max_internal_gap_run_count"],
-        int(gap_counts["max_internal_gap_run_count"]),
-    )
-
-
-def _ordered_neighbor_rows(
-    distances: np.ndarray,
-    candidate_row_indices: np.ndarray,
-    *,
-    k: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the closest candidate rows ordered deterministically by distance."""
-
-    neighbor_count = min(int(k), int(candidate_row_indices.size))
-    if neighbor_count <= 0:
-        raise MappingInputError("k must be at least 1.", context={"k": k})
-    if neighbor_count == candidate_row_indices.size:
-        local_top = np.arange(candidate_row_indices.size)
-    else:
-        local_top = np.argpartition(distances, neighbor_count - 1)[:neighbor_count]
-    ordered_local = local_top[np.lexsort((candidate_row_indices[local_top], distances[local_top]))]
-    return candidate_row_indices[ordered_local], np.asarray(distances[ordered_local], dtype=np.float64)
-
-
-def _ordered_neighbor_rows_from_local_distances(
-    local_candidate_indices: np.ndarray,
-    local_distances: np.ndarray,
-    candidate_row_indices: np.ndarray,
-    *,
-    query_width: int,
-    k: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Resolve exact backend distances without rescoring the candidate matrix."""
-
-    if query_width <= 0:
-        raise MappingInputError("At least one valid source band is required for mapping.")
-    local_indices = np.asarray(local_candidate_indices, dtype=np.int64)
-    resolved_distances = np.asarray(local_distances, dtype=np.float64)
-    valid = (local_indices >= 0) & (local_indices < int(candidate_row_indices.size)) & np.isfinite(resolved_distances)
-    local_indices = local_indices[valid]
-    resolved_distances = resolved_distances[valid]
-    if local_indices.size == 0:
-        raise PreparedLibraryValidationError("Neighbor search backend returned no candidate rows.")
-    unique_local_indices, unique_positions = np.unique(local_indices, return_index=True)
-    exact_rmse = resolved_distances[unique_positions] / math.sqrt(float(query_width))
-    return _ordered_neighbor_rows(exact_rmse, candidate_row_indices[unique_local_indices], k=k)
-
-
-def _ordered_neighbor_rows_batch_from_local_distances(
-    local_candidate_indices: np.ndarray,
-    local_distance_matrix: np.ndarray,
-    candidate_row_indices: np.ndarray,
-    *,
-    query_width: int,
-    k: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Batch variant of ``_ordered_neighbor_rows_from_local_distances``."""
-
-    local_indices = np.asarray(local_candidate_indices, dtype=np.int64)
-    local_distances = np.asarray(local_distance_matrix, dtype=np.float64)
-    if local_indices.shape != local_distances.shape:
-        raise MappingInputError(
-            "Exact local neighbor indices and distances must share the same shape.",
-            context={
-                "local_index_shape": list(local_indices.shape),
-                "local_distance_shape": list(local_distances.shape),
-            },
-        )
-    if local_indices.ndim != 2:
-        raise MappingInputError(
-            "Exact local neighbor indices must be two-dimensional for batched mapping.",
-            context={"local_index_shape": list(local_indices.shape)},
-        )
-    neighbor_indices_rows: list[np.ndarray] = []
-    neighbor_distance_rows: list[np.ndarray] = []
-    for row_indices, row_distances in zip(local_indices, local_distances):
-        resolved_indices, resolved_distances = _ordered_neighbor_rows_from_local_distances(
-            row_indices,
-            row_distances,
-            candidate_row_indices,
-            query_width=query_width,
-            k=k,
-        )
-        neighbor_indices_rows.append(np.asarray(resolved_indices, dtype=np.int64))
-        neighbor_distance_rows.append(np.asarray(resolved_distances, dtype=np.float64))
-    return (
-        np.asarray(neighbor_indices_rows, dtype=np.int64),
-        np.asarray(neighbor_distance_rows, dtype=np.float64),
-    )
-
-
-def _load_ckdtree_class() -> type[Any]:
-    try:
-        from scipy.spatial import cKDTree  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise MappingInputError(
-            f'scipy_ckdtree backend requires scipy. Install it with `{KNN_BACKEND_INSTALL_HINTS["scipy_ckdtree"]}`.',
-            context={"knn_backend": "scipy_ckdtree"},
-        ) from exc
-    return cKDTree
-
-
-def _scipy_ckdtree_workers() -> int:
-    raw_value = (os.environ.get("SPECTRAL_LIBRARY_SCIPY_WORKERS") or "").strip()
-    if not raw_value:
-        return 1
-    try:
-        workers = int(raw_value)
-    except ValueError as exc:
-        raise MappingInputError(
-            "SPECTRAL_LIBRARY_SCIPY_WORKERS must be an integer when set.",
-            context={"env_var": "SPECTRAL_LIBRARY_SCIPY_WORKERS", "value": raw_value},
-        ) from exc
-    if workers == 0 or workers < -1:
-        raise MappingInputError(
-            "SPECTRAL_LIBRARY_SCIPY_WORKERS must be -1 or a positive integer.",
-            context={"env_var": "SPECTRAL_LIBRARY_SCIPY_WORKERS", "value": raw_value},
-        )
-    return workers
-
-
-def _load_faiss_module() -> Any:
-    try:
-        import faiss  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise MappingInputError(
-            f'faiss backend requires faiss-cpu. Install it with `{KNN_BACKEND_INSTALL_HINTS["faiss"]}`.',
-            context={"knn_backend": "faiss"},
-        ) from exc
-    return faiss
-
-
-def _load_pynndescent_class() -> type[Any]:
-    try:
-        from pynndescent import NNDescent  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise MappingInputError(
-            f'pynndescent backend requires pynndescent. Install it with `{KNN_BACKEND_INSTALL_HINTS["pynndescent"]}`.',
-            context={"knn_backend": "pynndescent"},
-        ) from exc
-    return NNDescent
-
-
-def _load_scann_ops() -> Any:
-    try:
-        import scann  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise MappingInputError(
-            f'scann backend requires ScaNN. Install it with `{KNN_BACKEND_INSTALL_HINTS["scann"]}`.',
-            context={"knn_backend": "scann"},
-        ) from exc
-    return scann.scann_ops_pybind
-
-
-def _load_zarr_module() -> Any:
-    try:
-        import zarr  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise MappingInputError(
-            f'Zarr batch export requires zarr. Install it with `{ZARR_INSTALL_HINT}`.',
-            context={"output_format": "zarr"},
-        ) from exc
-    return zarr
-
-
-def _default_zarr_compressor() -> Any | None:
-    try:
-        from numcodecs import Blosc  # type: ignore[import-not-found]
-    except ModuleNotFoundError:
-        return None
-    return Blosc(cname="zstd", clevel=3, shuffle=Blosc.BITSHUFFLE)
-
-
-def _load_zarr_vlen_utf8_codec() -> Any:
-    try:
-        from numcodecs import VLenUTF8  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise MappingInputError(
-            f'Zarr batch export requires numcodecs via `{ZARR_INSTALL_HINT}`.',
-            context={"output_format": "zarr"},
-        ) from exc
-    return VLenUTF8()
-
-
-def _zarr_utf8_codec() -> Any:
-    try:
-        from numcodecs import VLenUTF8  # type: ignore[import-not-found]
-    except ModuleNotFoundError as exc:
-        raise MappingInputError(
-            f'Zarr batch export requires numcodecs. Install it with `{ZARR_INSTALL_HINT}`.',
-            context={"output_format": "zarr"},
-        ) from exc
-    return VLenUTF8()
-
-
-def _remove_output_path(path: Path) -> None:
-    if not path.exists():
-        return
-    if path.is_dir():
-        shutil.rmtree(path)
-        return
-    path.unlink()
-
-
-def _temporary_output_path(path: Path) -> Path:
-    return path.parent / f".{path.name}.tmp-{uuid4().hex}"
-
-
-def _finalize_output_path(temp_path: Path, output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    backup_path: Path | None = None
-    if output_path.exists():
-        backup_path = output_path.parent / f".{output_path.name}.bak-{uuid4().hex}"
-        output_path.replace(backup_path)
-    try:
-        temp_path.replace(output_path)
-    except Exception:
-        if backup_path is not None and backup_path.exists() and not output_path.exists():
-            backup_path.replace(output_path)
-        raise
-    else:
-        if backup_path is not None:
-            _remove_output_path(backup_path)
-
-
-def _persist_faiss_index(candidate_matrix: np.ndarray, output_path: Path) -> None:
-    faiss = _load_faiss_module()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    index = faiss.IndexHNSWFlat(int(candidate_matrix.shape[1]), 32)
-    if hasattr(index, "hnsw"):
-        index.hnsw.efConstruction = max(40, min(int(candidate_matrix.shape[0]), 320))
-    index.add(np.asarray(candidate_matrix, dtype=np.float32))
-    faiss.write_index(index, str(output_path))
-
-
-def _load_persisted_faiss_index(path: Path) -> Any:
-    faiss = _load_faiss_module()
-    return faiss.read_index(str(path))
-
-
-def _persist_pynndescent_index(candidate_matrix: np.ndarray, output_path: Path) -> None:
-    NNDescent = _load_pynndescent_class()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    index = NNDescent(np.asarray(candidate_matrix, dtype=np.float32), metric="euclidean")
-    if hasattr(index, "prepare"):
-        index.prepare()
-    with output_path.open("wb") as handle:
-        pickle.dump(index, handle)
-
-
-def _load_persisted_pynndescent_index(path: Path) -> Any:
-    with path.open("rb") as handle:
-        return pickle.load(handle)
-
-
-def _persist_scann_index(candidate_matrix: np.ndarray, output_path: Path) -> None:
-    searcher = _build_scann_searcher(
-        np.asarray(candidate_matrix, dtype=np.float32),
-        neighbor_count=min(int(candidate_matrix.shape[0]), 64),
-        knn_eps=0.0,
-    )
-    output_path.mkdir(parents=True, exist_ok=True)
-    if hasattr(searcher, "serialize"):
-        searcher.serialize(str(output_path))
-        return
-    raise PreparedLibraryBuildError(
-        "scann searcher does not support serialization in this environment.",
-        context={"knn_backend": "scann", "path": str(output_path)},
-    )
-
-
-def _load_persisted_scann_index(path: Path) -> Any:
-    scann_ops = _load_scann_ops()
-    if hasattr(scann_ops, "load_searcher"):
-        return scann_ops.load_searcher(str(path))
-    raise MappingInputError(
-        "scann backend does not support persisted searcher loading in this environment.",
-        context={"knn_backend": "scann", "path": str(path)},
-    )
-
-
-def _persist_knn_index(candidate_matrix: np.ndarray, *, backend: str, output_path: Path) -> None:
-    handlers = {
-        "faiss": _persist_faiss_index,
-        "pynndescent": _persist_pynndescent_index,
-        "scann": _persist_scann_index,
-    }
-    handler = handlers.get(backend)
-    if handler is not None:
-        handler(candidate_matrix, output_path)
-        return
-    raise PreparedLibraryBuildError(
-        "KNN index persistence is not supported for the requested backend.",
-        context={"knn_backend": backend, "supported_knn_index_backends": list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS)},
-    )
-
-
-def _load_persisted_knn_index(path: Path, *, backend: str) -> Any:
-    handlers = {
-        "faiss": _load_persisted_faiss_index,
-        "pynndescent": _load_persisted_pynndescent_index,
-        "scann": _load_persisted_scann_index,
-    }
-    handler = handlers.get(backend)
-    if handler is not None:
-        return handler(path)
-    raise MappingInputError(
-        "KNN index persistence is not supported for the requested backend.",
-        context={"knn_backend": backend, "supported_knn_index_backends": list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS)},
-    )
-
-
-def _normalize_query_matrix(query_values: np.ndarray, *, dtype: np.dtype[Any]) -> np.ndarray:
-    """Normalize single-row and batched queries to a 2D matrix."""
-
-    query_matrix = np.asarray(query_values, dtype=dtype)
-    if query_matrix.ndim == 1:
-        return query_matrix.reshape(1, -1)
-    if query_matrix.ndim != 2:
-        raise MappingInputError(
-            "Query values must be one-dimensional or two-dimensional.",
-            context={"query_shape": list(query_matrix.shape)},
-        )
-    return query_matrix
-
-
-def _normalize_local_indices(local_indices: np.ndarray, *, query_count: int) -> np.ndarray:
-    """Normalize backend neighbor indices to ``(query_count, k)``."""
-
-    normalized = np.asarray(local_indices, dtype=np.int64)
-    if normalized.ndim == 0:
-        return normalized.reshape(1, 1)
-    if normalized.ndim == 1:
-        return normalized.reshape(query_count, -1)
-    if normalized.ndim != 2:
-        raise MappingInputError(
-            "Neighbor search backend returned indices with an unsupported shape.",
-            context={"local_index_shape": list(normalized.shape)},
-        )
-    return normalized
-
-
-def _normalize_local_distances(local_distances: np.ndarray, *, query_count: int) -> np.ndarray:
-    """Normalize backend neighbor distances to ``(query_count, k)``."""
-
-    normalized = np.asarray(local_distances, dtype=np.float64)
-    if normalized.ndim == 0:
-        return normalized.reshape(1, 1)
-    if normalized.ndim == 1:
-        return normalized.reshape(query_count, -1)
-    if normalized.ndim != 2:
-        raise MappingInputError(
-            "Neighbor search backend returned distances with an unsupported shape.",
-            context={"local_distance_shape": list(normalized.shape)},
-        )
-    return normalized
-
-
-def _build_scann_searcher(
-    candidate_matrix: np.ndarray,
-    *,
-    neighbor_count: int,
-    knn_eps: float,
-) -> Any:
-    """Build a ScaNN searcher tuned for the current candidate set size."""
-
-    scann_ops = _load_scann_ops()
-    candidate_count = int(candidate_matrix.shape[0])
-    num_leaves = max(1, min(candidate_count, int(round(math.sqrt(candidate_count)))))
-    base_leaves_to_search = max(1, min(num_leaves, int(round(math.sqrt(num_leaves))) or 1))
-    leaves_to_search = max(
-        1,
-        min(
-            num_leaves,
-            int(math.ceil(base_leaves_to_search / (1.0 + max(float(knn_eps), 0.0) * 4.0))),
-        ),
-    )
-    training_sample_size = min(candidate_count, max(32, num_leaves * 10))
-    builder = scann_ops.builder(np.asarray(candidate_matrix, dtype=np.float32), neighbor_count, "squared_l2")
-    builder = builder.tree(
-        num_leaves=num_leaves,
-        num_leaves_to_search=leaves_to_search,
-        training_sample_size=training_sample_size,
-    )
-    # Tiny candidate sets cannot train ScaNN's asymmetric hashing path.
-    # Fall back to brute-force scoring so the builder still satisfies ScaNN's
-    # requirement that exactly one scoring mode is configured.
-    if hasattr(builder, "score_ah") and training_sample_size >= SCANN_MIN_AH_TRAINING_SAMPLE_SIZE:
-        builder = builder.score_ah(2, anisotropic_quantization_threshold=0.2)
-    elif hasattr(builder, "score_brute_force"):
-        builder = builder.score_brute_force()
-    if hasattr(builder, "reorder"):
-        builder = builder.reorder(neighbor_count)
-    return builder.build()
-
-
-def _query_faiss_index(index: Any, query_values: np.ndarray, *, k: int) -> np.ndarray:
-    _, local_indices = index.search(_normalize_query_matrix(query_values, dtype=np.float32), int(k))
-    return np.asarray(local_indices, dtype=np.int64)
-
-
-def _query_pynndescent_index(index: Any, query_values: np.ndarray, *, k: int, knn_eps: float) -> np.ndarray:
-    local_indices, _ = index.query(
-        _normalize_query_matrix(query_values, dtype=np.float32),
-        k=int(k),
-        epsilon=float(knn_eps),
-    )
-    return np.asarray(local_indices, dtype=np.int64)
-
-
-def _query_scann_index(index: Any, query_values: np.ndarray, *, k: int) -> np.ndarray:
-    query_matrix = _normalize_query_matrix(query_values, dtype=np.float32)
-    try:
-        search_result = index.search_batched(query_matrix, final_num_neighbors=int(k))
-    except TypeError:
-        search_result = index.search_batched(query_matrix)
-    local_indices = search_result[0] if isinstance(search_result, tuple) else search_result
-    return np.asarray(local_indices, dtype=np.int64)
-
-
-def _query_knn_index(
-    index: Any,
-    query_values: np.ndarray,
-    *,
-    k: int,
-    knn_backend: str,
-    knn_eps: float,
-) -> np.ndarray:
-    """Query a backend index and normalize its output shape."""
-
-    query_count = int(_normalize_query_matrix(query_values, dtype=np.float64).shape[0])
-    if knn_backend == "scipy_ckdtree":
-        _, local_indices = index.query(
-            _normalize_query_matrix(query_values, dtype=np.float64),
-            k=int(k),
-            eps=float(knn_eps),
-            workers=_scipy_ckdtree_workers(),
-        )
-    elif knn_backend == "faiss":
-        local_indices = _query_faiss_index(index, query_values, k=k)
-    elif knn_backend == "pynndescent":
-        local_indices = _query_pynndescent_index(index, query_values, k=k, knn_eps=knn_eps)
-    elif knn_backend == "scann":
-        local_indices = _query_scann_index(index, query_values, k=k)
-    else:
-        raise MappingInputError(
-            "knn_backend is not supported.",
-            context={
-                "knn_backend": knn_backend,
-                "supported_knn_backends": list(SUPPORTED_KNN_BACKENDS),
-            },
-        )
-    return _normalize_local_indices(np.asarray(local_indices, dtype=np.int64), query_count=query_count)
-
-
-def _query_knn_index_with_distances(
-    index: Any,
-    query_values: np.ndarray,
-    *,
-    k: int,
-    knn_backend: str,
-    knn_eps: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Query a backend index and normalize both indices and distances."""
-
-    query_count = int(_normalize_query_matrix(query_values, dtype=np.float64).shape[0])
-    if knn_backend != "scipy_ckdtree":
-        raise MappingInputError(
-            "Distance-returning KNN queries are only supported for scipy_ckdtree.",
-            context={"knn_backend": knn_backend},
-        )
-    local_distances, local_indices = index.query(
-        _normalize_query_matrix(query_values, dtype=np.float64),
-        k=int(k),
-        eps=float(knn_eps),
-        workers=_scipy_ckdtree_workers(),
-    )
-    return (
-        _normalize_local_indices(np.asarray(local_indices, dtype=np.int64), query_count=query_count),
-        _normalize_local_distances(np.asarray(local_distances, dtype=np.float64), query_count=query_count),
-    )
-
-
-def _query_local_scipy_ckdtree_results(
-    candidate_matrix: np.ndarray,
-    query_values: np.ndarray,
-    *,
-    k: int,
-    knn_eps: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Build a temporary SciPy cKDTree and return local indices with distances."""
-
-    neighbor_count = min(int(k), int(candidate_matrix.shape[0]))
-    if neighbor_count <= 0:
-        raise MappingInputError("k must be at least 1.", context={"k": k})
-    cKDTree = _load_ckdtree_class()
-    index = cKDTree(np.asarray(candidate_matrix, dtype=np.float64))
-    return _query_knn_index_with_distances(
-        index,
-        query_values,
-        k=neighbor_count,
-        knn_backend="scipy_ckdtree",
-        knn_eps=knn_eps,
-    )
-
-
-def _search_local_neighbor_indices(
-    candidate_matrix: np.ndarray,
-    query_values: np.ndarray,
-    *,
-    k: int,
-    knn_backend: str,
-    knn_eps: float,
-) -> np.ndarray | None:
-    """Return approximate local neighbor indices for one or more query rows.
-
-    Approximate backends are only used to generate a candidate shortlist. The
-    final row order is still re-ranked with exact RMSE distances.
-    """
-
-    if knn_backend == "numpy":
-        return None
-
-    neighbor_count = min(int(k), int(candidate_matrix.shape[0]))
-    if neighbor_count <= 0:
-        raise MappingInputError("k must be at least 1.", context={"k": k})
-
-    if knn_backend == "scipy_ckdtree":
-        cKDTree = _load_ckdtree_class()
-        index = cKDTree(np.asarray(candidate_matrix, dtype=np.float64))
-        return _query_knn_index(index, query_values, k=neighbor_count, knn_backend=knn_backend, knn_eps=knn_eps)
-
-    if knn_backend == "faiss":
-        faiss = _load_faiss_module()
-        vector_dim = int(candidate_matrix.shape[1])
-        index = faiss.IndexHNSWFlat(vector_dim, 32)
-        if hasattr(index, "hnsw"):
-            index.hnsw.efConstruction = max(40, neighbor_count * 8)
-            index.hnsw.efSearch = max(
-                neighbor_count,
-                int(math.ceil(max(32, neighbor_count * 8) / (1.0 + max(float(knn_eps), 0.0) * 4.0))),
-            )
-        index.add(np.asarray(candidate_matrix, dtype=np.float32))
-        return _query_knn_index(index, query_values, k=neighbor_count, knn_backend=knn_backend, knn_eps=knn_eps)
-
-    if knn_backend == "pynndescent":
-        NNDescent = _load_pynndescent_class()
-        index = NNDescent(np.asarray(candidate_matrix, dtype=np.float32), metric="euclidean")
-        return _query_knn_index(index, query_values, k=neighbor_count, knn_backend=knn_backend, knn_eps=knn_eps)
-
-    if knn_backend == "scann":
-        index = _build_scann_searcher(candidate_matrix, neighbor_count=neighbor_count, knn_eps=knn_eps)
-        return _query_knn_index(index, query_values, k=neighbor_count, knn_backend=knn_backend, knn_eps=knn_eps)
-
-    raise MappingInputError(
-        "knn_backend is not supported.",
-        context={
-            "knn_backend": knn_backend,
-            "supported_knn_backends": list(SUPPORTED_KNN_BACKENDS),
-        },
-    )
-
-
-def _query_persisted_knn_index(
-    index: Any,
-    query_values: np.ndarray,
-    *,
-    k: int,
-    knn_backend: str,
-    knn_eps: float,
-) -> np.ndarray:
-    if knn_backend not in SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS:
-        raise MappingInputError(
-            "Persisted KNN querying is not supported for the requested backend.",
-            context={"knn_backend": knn_backend},
-        )
-    return _query_knn_index(index, query_values, k=k, knn_backend=knn_backend, knn_eps=knn_eps)
-
 
 def _refine_neighbor_rows(
     candidate_matrix: np.ndarray,
@@ -1968,8 +157,7 @@ def _refine_neighbor_rows(
         raise PreparedLibraryValidationError("Neighbor search backend returned no candidate rows.")
     found_row_indices = candidate_row_indices[local_indices]
     exact_distances = np.sqrt(np.mean((candidate_matrix[local_indices] - query_vector) ** 2, axis=1))
-    return _ordered_neighbor_rows(exact_distances, found_row_indices, k=k)
-
+    return _backends._ordered_neighbor_rows(exact_distances, found_row_indices, k=k)
 
 def _refine_neighbor_rows_batch_accel(
     *,
@@ -1993,7 +181,6 @@ def _refine_neighbor_rows_batch_accel(
         np.asarray(neighbor_distances, dtype=np.float64),
     )
 
-
 def _search_neighbor_rows(
     candidate_matrix: np.ndarray,
     query_vector: np.ndarray,
@@ -2005,9 +192,9 @@ def _search_neighbor_rows(
 ) -> tuple[np.ndarray, np.ndarray]:
     if knn_backend == "numpy":
         distances = np.sqrt(np.mean((candidate_matrix - query_vector) ** 2, axis=1))
-        return _ordered_neighbor_rows(distances, candidate_row_indices, k=k)
+        return _backends._ordered_neighbor_rows(distances, candidate_row_indices, k=k)
 
-    local_indices = _search_local_neighbor_indices(
+    local_indices = _backends._search_local_neighbor_indices(
         candidate_matrix,
         query_vector,
         k=k,
@@ -2017,7 +204,6 @@ def _search_neighbor_rows(
     if local_indices is None:
         raise PreparedLibraryValidationError("Neighbor search backend returned no candidate rows.")
     return _refine_neighbor_rows(candidate_matrix, query_vector, candidate_row_indices, local_indices[0], k=k)
-
 
 def _combine_neighbor_spectra_batch_accel(
     *,
@@ -2043,7 +229,6 @@ def _combine_neighbor_spectra_batch_accel(
         np.asarray(neighbor_weights, dtype=np.float64),
         np.asarray(source_fit_rmse, dtype=np.float64),
     )
-
 
 def _refine_and_combine_neighbor_spectra_batch_accel(
     *,
@@ -2076,7 +261,6 @@ def _refine_and_combine_neighbor_spectra_batch_accel(
     )
     return np.asarray(reconstructed, dtype=np.float64), np.asarray(source_fit_rmse, dtype=np.float64)
 
-
 def _combine_neighbor_spectra_batch(
     *,
     hyperspectral_rows: np.ndarray,
@@ -2097,7 +281,6 @@ def _combine_neighbor_spectra_batch(
         valid_indices=resolved_valid_indices,
         neighbor_estimator=neighbor_estimator,
     )
-
 
 def _finalize_target_sensor_batch_accel(
     *,
@@ -2128,7 +311,6 @@ def _finalize_target_sensor_batch_accel(
     )
     return np.asarray(output_rows, dtype=np.float64), np.asarray(status_codes, dtype=np.int32)
 
-
 def _merge_target_sensor_segments_batch_accel(
     *,
     vnir_rows: np.ndarray,
@@ -2154,7 +336,6 @@ def _merge_target_sensor_segments_batch_accel(
     )
     return np.asarray(output_rows, dtype=np.float64), np.asarray(status_codes, dtype=np.int32)
 
-
 def _stitch_target_sensor_segment_rows(
     *,
     vnir_rows: np.ndarray,
@@ -2179,7 +360,6 @@ def _stitch_target_sensor_segment_rows(
         out_status_codes=out_status_codes,
     )
     return np.asarray(output_rows, dtype=np.float64), np.asarray(status_codes, dtype=np.int32)
-
 
 def _segment_confidence_payload(
     *,
@@ -2219,7 +399,6 @@ def _segment_confidence_payload(
         "fit": fit_score,
         "weight_concentration": weight_concentration,
     }
-
 
 def _segment_confidence_payload_batch(
     *,
@@ -2301,7 +480,6 @@ def _segment_confidence_payload_batch(
     )
     return confidence_scores, confidence_components
 
-
 def _confidence_policy_payload(confidence_score: float | None) -> dict[str, object]:
     """Translate a confidence score into the public review/accept policy."""
 
@@ -2331,877 +509,10 @@ def _confidence_policy_payload(confidence_score: float | None) -> dict[str, obje
         "accept_threshold": CONFIDENCE_ACCEPT_THRESHOLD,
     }
 
-
-def _source_retrieval_bands(schema: SensorSRFSchema, segment: str) -> tuple[SensorBandDefinition, ...]:
-    if segment == "swir":
-        return tuple(
-            band
-            for band in schema.bands
-            if band.segment == "swir" or band.band_id == "nir"
-        )
-    return schema.bands_for_segment(segment)
-
-
-def _source_retrieval_band_indices(schema: SensorSRFSchema, segment: str) -> tuple[int, ...]:
-    return tuple(
-        index
-        for index, band in enumerate(schema.bands)
-        if band.segment == segment or (segment == "swir" and band.band_id == "nir")
-    )
-
-
-def _source_retrieval_band_ids(schema: SensorSRFSchema, segment: str) -> tuple[str, ...]:
-    """Return source band ids in the exact order used for retrieval."""
-
-    return tuple(band.band_id for band in _source_retrieval_bands(schema, segment))
-
-
-def _resample_band_response(band: SensorBandDefinition, *, segment_only: bool) -> np.ndarray:
-    canonical = np.interp(
-        CANONICAL_WAVELENGTHS.astype(np.float64),
-        np.asarray(band.wavelength_nm, dtype=np.float64),
-        np.asarray(band.rsr, dtype=np.float64),
-        left=0.0,
-        right=0.0,
-    )
-    if segment_only:
-        return canonical[_segment_slice(band.segment)]
-    return canonical
-
-
-def _response_weighted_average(
-    values: np.ndarray,
-    response: np.ndarray,
-    *,
-    error_message: str,
-    error_context: Mapping[str, object],
-) -> np.ndarray:
-    """Apply a normalized spectral response to one vector or a row matrix."""
-
-    denominator = float(np.sum(response))
-    if denominator <= 0:
-        raise SensorSchemaError(error_message, context=error_context)
-    return np.asarray(values @ response / denominator)
-
-
-def _simulate_response_matrix(
-    input_matrix: np.ndarray,
-    bands: Sequence[SensorBandDefinition],
-    *,
-    dtype: np.dtype[Any],
-    segment_only: bool,
-) -> np.ndarray:
-    """Simulate multispectral band values from hyperspectral inputs."""
-
-    matrix = np.empty((input_matrix.shape[0], len(bands)), dtype=dtype)
-    for index, band in enumerate(bands):
-        response = _resample_band_response(band, segment_only=segment_only)
-        matrix[:, index] = _response_weighted_average(
-            input_matrix,
-            response,
-            error_message="Resampled SRF support must remain positive.",
-            error_context={"band_id": band.band_id, "segment": band.segment},
-        ).astype(dtype, copy=False)
-    return matrix
-
-
-def _simulate_segment_matrix(
-    hyperspectral_segment: np.ndarray,
-    bands: Sequence[SensorBandDefinition],
-    *,
-    dtype: np.dtype[Any],
-) -> np.ndarray:
-    """Test-visible helper that simulates segment-local band responses."""
-
-    return _simulate_response_matrix(
-        hyperspectral_segment,
-        bands,
-        dtype=dtype,
-        segment_only=True,
-    )
-
-
-def _simulate_source_retrieval_matrix(
-    hyperspectral_full: np.ndarray,
-    bands: Sequence[SensorBandDefinition],
-    *,
-    dtype: np.dtype[Any],
-) -> np.ndarray:
-    """Simulate source-sensor retrieval inputs from full hyperspectral rows."""
-
-    return _simulate_response_matrix(
-        hyperspectral_full,
-        bands,
-        dtype=dtype,
-        segment_only=False,
-    )
-
-
-def _simulate_source_retrieval_matrix_from_segments(
-    hyperspectral_vnir: np.ndarray,
-    hyperspectral_swir: np.ndarray,
-    bands: Sequence[SensorBandDefinition],
-    *,
-    dtype: np.dtype[Any],
-) -> np.ndarray:
-    """Simulate source retrieval inputs from prepared VNIR/SWIR arrays."""
-
-    matrix = np.empty((hyperspectral_vnir.shape[0], len(bands)), dtype=dtype)
-    for index, band in enumerate(bands):
-        if band.segment == "vnir":
-            source_rows = hyperspectral_vnir
-        elif band.segment == "swir":
-            source_rows = hyperspectral_swir
-        else:
-            raise SensorSchemaError("Unknown sensor segment.", context={"segment": band.segment, "band_id": band.band_id})
-        response = _resample_band_response(band, segment_only=True)
-        matrix[:, index] = _response_weighted_average(
-            source_rows,
-            response,
-            error_message="Resampled SRF support must remain positive.",
-            error_context={"band_id": band.band_id, "segment": band.segment},
-        ).astype(dtype, copy=False)
-    return matrix
-
-
-def _load_sensor_payloads(path: Path) -> list[Mapping[str, object]]:
-    payload = _read_json_document(
-        path,
-        error_factory=SensorSchemaError,
-        document_name=path.name,
-    )
-    if isinstance(payload, dict) and "sensors" in payload:
-        sensors = payload["sensors"]
-        if not isinstance(sensors, list):
-            raise SensorSchemaError("sensor_schema.json sensors entry must be a list.", context={"path": str(path)})
-        return [sensor_payload for sensor_payload in sensors if isinstance(sensor_payload, dict)]
-    if isinstance(payload, dict):
-        return [payload]
-    raise SensorSchemaError("Sensor schema JSON must be an object.", context={"path": str(path)})
-
-
-def _load_prepared_sensor_schema_payload(
-    path: Path,
-    *,
-    expected_schema_version: str,
-) -> tuple[Mapping[str, object], list[Mapping[str, object]]]:
-    payload = _read_json_document(
-        path,
-        error_factory=PreparedLibraryValidationError,
-        document_name=path.name,
-    )
-    if not isinstance(payload, dict):
-        raise PreparedLibraryValidationError(
-            "sensor_schema.json must be a JSON object.",
-            context={"path": str(path)},
-        )
-
-    schema_version = _optional_string(payload.get("schema_version"))
-    if not schema_version:
-        raise PreparedLibraryValidationError(
-            "sensor_schema.json is missing schema_version.",
-            context={"path": str(path)},
-        )
-    if schema_version != expected_schema_version:
-        raise PreparedLibraryValidationError(
-            "sensor_schema.json schema_version does not match manifest.json.",
-            context={
-                "path": str(path),
-                "sensor_schema_version": schema_version,
-                "manifest_schema_version": expected_schema_version,
-            },
-        )
-
-    canonical_grid = payload.get("canonical_wavelength_grid")
-    if not isinstance(canonical_grid, Mapping):
-        raise PreparedLibraryValidationError(
-            "sensor_schema.json is missing canonical_wavelength_grid.",
-            context={"path": str(path)},
-        )
-    expected_grid = {
-        "start_nm": CANONICAL_START_NM,
-        "end_nm": CANONICAL_END_NM,
-        "step_nm": 1,
-    }
-    actual_grid = {
-        "start_nm": canonical_grid.get("start_nm"),
-        "end_nm": canonical_grid.get("end_nm"),
-        "step_nm": canonical_grid.get("step_nm"),
-    }
-    if actual_grid != expected_grid:
-        raise PreparedLibraryValidationError(
-            "sensor_schema.json canonical_wavelength_grid is incompatible with this package.",
-            context={
-                "path": str(path),
-                "expected_canonical_wavelength_grid": expected_grid,
-                "actual_canonical_wavelength_grid": actual_grid,
-            },
-        )
-
-    sensors = payload.get("sensors")
-    if not isinstance(sensors, list):
-        raise PreparedLibraryValidationError(
-            "sensor_schema.json sensors entry must be a list.",
-            context={"path": str(path)},
-        )
-    if not all(isinstance(sensor_payload, dict) for sensor_payload in sensors):
-        raise PreparedLibraryValidationError(
-            "sensor_schema.json sensors entries must be JSON objects.",
-            context={"path": str(path)},
-        )
-    sensor_payloads = [sensor_payload for sensor_payload in sensors if isinstance(sensor_payload, dict)]
-    return payload, sensor_payloads
-
-
-def _validate_custom_sensor_payload(path: Path, payload: Mapping[str, object]) -> None:
-    sensor_id = _optional_string(payload.get("sensor_id"))
-    if not sensor_id or sensor_id in RSRF_SENSOR_BAND_SELECTIONS:
-        return
-
-    bands = payload.get("bands")
-    if not isinstance(bands, Sequence) or isinstance(bands, (str, bytes, bytearray)):
-        return
-
-    for band_payload in bands:
-        if not isinstance(band_payload, Mapping):
-            continue
-        if "response_definition" in band_payload:
-            continue
-        raise SensorSchemaError(
-            "Custom sensor SRF JSON bands must provide `response_definition`; legacy top-level sampled-band payloads are no longer supported.",
-            context={
-                "path": str(path),
-                "sensor_id": sensor_id,
-                "band_id": band_payload.get("band_id"),
-            },
-        )
-
-
-def _prepared_runtime_band_payload(band: SensorBandDefinition) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "band_id": band.band_id,
-        "segment": band.segment,
-        "response_definition": {
-            "wavelength_nm": list(band.wavelength_nm),
-            "response": list(band.rsr),
-        },
-    }
-    if band.center_nm is not None:
-        payload["center_nm"] = band.center_nm
-    if band.fwhm_nm is not None:
-        payload["fwhm_nm"] = band.fwhm_nm
-    if band.support_min_nm is not None:
-        payload["support_min_nm"] = band.support_min_nm
-    if band.support_max_nm is not None:
-        payload["support_max_nm"] = band.support_max_nm
-    return payload
-
-
-def _prepared_runtime_sensor_payload(schema: SensorSRFSchema) -> dict[str, object]:
-    return {
-        "sensor_id": schema.sensor_id,
-        "bands": [_prepared_runtime_band_payload(band) for band in schema.bands],
-    }
-
-
-def load_sensor_schemas(
-    srf_root: Path | None,
-    *,
-    required_sensor_ids: Sequence[str] | None = None,
-) -> dict[str, SensorSRFSchema]:
-    """Load sensor schemas from local JSON files and rsrf-backed built-ins."""
-
-    schemas: dict[str, SensorSRFSchema] = {}
-    resolved_srf_root = None if srf_root is None else Path(srf_root)
-    json_paths: list[Path] = []
-    if resolved_srf_root is not None:
-        if resolved_srf_root.exists():
-            json_paths = sorted(path for path in resolved_srf_root.glob("*.json") if path.is_file())
-        elif required_sensor_ids is None:
-            raise SensorSchemaError("SRF root does not exist.", context={"srf_root": str(resolved_srf_root)})
-
-    for path in json_paths:
-        for payload in _load_sensor_payloads(path):
-            _validate_custom_sensor_payload(path, payload)
-            schema = SensorSRFSchema.from_dict(payload)
-            if schema.sensor_id in RSRF_SENSOR_BAND_SELECTIONS:
-                continue
-            if schema.sensor_id in schemas:
-                raise SensorSchemaError(
-                    "Duplicate sensor_id encountered while loading SRF definitions.",
-                    context={"sensor_id": schema.sensor_id, "path": str(path)},
-                )
-            schemas[schema.sensor_id] = schema
-
-    if required_sensor_ids is None:
-        if not schemas:
-            raise SensorSchemaError(
-                "No sensor schema JSON files were found.",
-                context={"srf_root": str(resolved_srf_root) if resolved_srf_root is not None else None},
-            )
-        return schemas
-
-    for sensor_id in required_sensor_ids:
-        if sensor_id in RSRF_SENSOR_BAND_SELECTIONS:
-            schemas[sensor_id] = _load_rsrf_sensor_schema(sensor_id)
-            continue
-        if sensor_id not in schemas:
-            raise SensorSchemaError(
-                "Requested source sensors could not be resolved.",
-                context={
-                    "missing_source_sensors": [sensor_id],
-                    "srf_root": str(resolved_srf_root) if resolved_srf_root is not None else None,
-                },
-            )
-
-    if not schemas:
-        raise SensorSchemaError("No sensor schemas could be resolved.")
-    return schemas
-
-
-def _load_siac_rows(
-    metadata_path: Path,
-    spectra_path: Path,
-    *,
-    dtype: np.dtype[Any],
-) -> tuple[list[str], list[dict[str, object]], np.ndarray, dict[str, int]]:
-    """Load and align SIAC metadata rows with canonical hyperspectral spectra."""
-
-    if not metadata_path.exists() or not spectra_path.exists():
-        raise PreparedLibraryBuildError(
-            "SIAC tabular inputs are missing required files.",
-            context={"metadata_path": str(metadata_path), "spectra_path": str(spectra_path)},
-        )
-
-    with metadata_path.open("r", encoding="utf-8", newline="") as handle:
-        metadata_reader = csv.DictReader(handle)
-        metadata_fieldnames = list(metadata_reader.fieldnames or [])
-        metadata_rows = [dict(row) for row in metadata_reader]
-
-    if not metadata_rows:
-        raise PreparedLibraryBuildError("SIAC spectra metadata is empty.", context={"metadata_path": str(metadata_path)})
-
-    required_keys = ("source_id", "spectrum_id", "sample_name")
-    missing_keys = [key for key in required_keys if key not in metadata_fieldnames]
-    if missing_keys:
-        raise PreparedLibraryBuildError(
-            "SIAC spectra metadata is missing required identifier columns.",
-            context={"metadata_path": str(metadata_path), "missing_columns": missing_keys},
-        )
-
-    with spectra_path.open("r", encoding="utf-8", newline="") as handle:
-        spectra_reader = csv.DictReader(handle)
-        spectra_fieldnames = list(spectra_reader.fieldnames or [])
-        nm_columns = [column for column in spectra_fieldnames if column.startswith("nm_")]
-        if not nm_columns:
-            raise PreparedLibraryBuildError(
-                "SIAC normalized spectra is missing nm_* columns.",
-                context={"spectra_path": str(spectra_path)},
-            )
-
-        wavelengths = [int(column.split("_", 1)[1]) for column in nm_columns]
-        expected_wavelengths = list(range(CANONICAL_START_NM, CANONICAL_END_NM + 1))
-        if wavelengths != expected_wavelengths:
-            raise PreparedLibraryBuildError(
-                "SIAC normalized spectra must be on the canonical 400-2500 nm grid.",
-                context={
-                    "spectra_path": str(spectra_path),
-                    "expected_start_nm": CANONICAL_START_NM,
-                    "expected_end_nm": CANONICAL_END_NM,
-                },
-            )
-
-        spectra_by_key: dict[tuple[str, str, str], np.ndarray] = {}
-        interpolation_summary = _empty_interpolation_summary()
-        canonical_wavelengths = np.asarray(expected_wavelengths, dtype=np.float64)
-        for row in spectra_reader:
-            key = (row["source_id"], row["spectrum_id"], row["sample_name"])
-            if key in spectra_by_key:
-                raise PreparedLibraryBuildError(
-                    "Duplicate spectra rows were found while preparing the mapping library.",
-                    context={"source_id": key[0], "spectrum_id": key[1], "sample_name": key[2]},
-                )
-            values: list[float] = []
-            for column in nm_columns:
-                cell = row.get(column)
-                if cell is None or str(cell).strip() == "":
-                    values.append(float("nan"))
-                    continue
-                try:
-                    values.append(float(cell))
-                except (TypeError, ValueError) as exc:
-                    raise PreparedLibraryBuildError(
-                        "SIAC normalized spectra nm_* values must be numeric when present.",
-                        context={
-                            "spectra_path": str(spectra_path),
-                            "source_id": key[0],
-                            "spectrum_id": key[1],
-                            "sample_name": key[2],
-                            "column": column,
-                            "value": cell,
-                        },
-                    ) from exc
-            spectrum = np.asarray(values, dtype=np.float64)
-            if np.isnan(spectrum).any():
-                valid = np.isfinite(spectrum)
-                gap_counts = _summarize_missing_gap_counts(spectrum)
-                if int(valid.sum()) < 2:
-                    raise PreparedLibraryBuildError(
-                        "SIAC normalized spectra rows with missing nm_* cells must contain at least two numeric values.",
-                        context={
-                            "spectra_path": str(spectra_path),
-                            "source_id": key[0],
-                            "spectrum_id": key[1],
-                            "sample_name": key[2],
-                            "missing_value_count": int(gap_counts["missing_count"]),
-                        },
-                    )
-                if int(gap_counts["internal_gap_count"]) > MAX_INTERNAL_INTERPOLATED_GAP_COUNT:
-                    raise PreparedLibraryBuildError(
-                        "SIAC normalized spectra rows may only interpolate a small number of internal nm_* gaps.",
-                        context={
-                            "spectra_path": str(spectra_path),
-                            "source_id": key[0],
-                            "spectrum_id": key[1],
-                            "sample_name": key[2],
-                            "internal_gap_count": int(gap_counts["internal_gap_count"]),
-                            "max_allowed_internal_gap_count": MAX_INTERNAL_INTERPOLATED_GAP_COUNT,
-                        },
-                    )
-                if int(gap_counts["max_internal_gap_run_count"]) > MAX_INTERNAL_INTERPOLATED_RUN_COUNT:
-                    raise PreparedLibraryBuildError(
-                        "SIAC normalized spectra rows may only interpolate short contiguous internal nm_* gaps.",
-                        context={
-                            "spectra_path": str(spectra_path),
-                            "source_id": key[0],
-                            "spectrum_id": key[1],
-                            "sample_name": key[2],
-                            "max_internal_gap_run_count": int(gap_counts["max_internal_gap_run_count"]),
-                            "max_allowed_internal_gap_run_count": MAX_INTERNAL_INTERPOLATED_RUN_COUNT,
-                        },
-                    )
-                spectrum = np.interp(canonical_wavelengths, canonical_wavelengths[valid], spectrum[valid])
-                _update_interpolation_summary(interpolation_summary, gap_counts)
-            spectra_by_key[key] = np.asarray(spectrum, dtype=dtype)
-
-    aligned_metadata_rows: list[dict[str, object]] = []
-    hyperspectral = np.empty((len(metadata_rows), FULL_WAVELENGTH_COUNT), dtype=dtype)
-    metadata_keys: set[tuple[str, str, str]] = set()
-    for row_index, row in enumerate(metadata_rows):
-        key = (str(row["source_id"]), str(row["spectrum_id"]), str(row["sample_name"]))
-        metadata_keys.add(key)
-        if key not in spectra_by_key:
-            raise PreparedLibraryBuildError(
-                "SIAC spectra metadata and normalized spectra are not row-complete.",
-                context={"source_id": key[0], "spectrum_id": key[1], "sample_name": key[2]},
-            )
-        hyperspectral[row_index] = spectra_by_key[key]
-        aligned_metadata_rows.append({"row_index": row_index, **row})
-
-    extra_keys = set(spectra_by_key) - metadata_keys
-    if extra_keys:
-        source_id, spectrum_id, sample_name = sorted(extra_keys)[0]
-        raise PreparedLibraryBuildError(
-            "SIAC normalized spectra contains rows that are missing from spectra metadata.",
-            context={"source_id": source_id, "spectrum_id": spectrum_id, "sample_name": sample_name},
-        )
-
-    return ["row_index", *metadata_fieldnames], aligned_metadata_rows, hyperspectral, interpolation_summary
-
-
-def _write_mapping_metadata_parquet(path: Path, fieldnames: Sequence[str], rows: Sequence[Mapping[str, object]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_csv = Path(tmpdir) / "mapping_metadata.csv"
-        with temp_csv.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(fieldnames))
-            writer.writeheader()
-            for row in rows:
-                writer.writerow(row)
-
-        connection = duckdb.connect()
-        try:
-            temp_csv_sql = str(temp_csv).replace("'", "''")
-            output_sql = str(path).replace("'", "''")
-            connection.execute(
-                f"""
-                COPY (
-                  SELECT * FROM read_csv_auto('{temp_csv_sql}', HEADER=TRUE, SAMPLE_SIZE=-1)
-                ) TO '{output_sql}' (FORMAT PARQUET)
-                """
-            )
-        finally:
-            connection.close()
-
-
-def _write_json(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _relative_runtime_name(path: Path, *, root: Path) -> str:
-    return path.relative_to(root).as_posix()
-
-
-def _artifact_name_for_knn_index(backend: str, sensor_id: str, segment: str) -> str:
-    suffix = {
-        "faiss": ".faiss",
-        "pynndescent": ".pkl",
-        "scann": "",
-    }.get(backend)
-    if suffix is None:
-        raise PreparedLibraryBuildError(
-            "KNN index persistence is not supported for the requested backend.",
-            context={"knn_backend": backend, "supported_knn_index_backends": list(SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS)},
-        )
-    return f"knn_indexes/{backend}_{sensor_id}_{segment}{suffix}"
-
-
-def _read_json_document(
-    path: Path,
-    *,
-    error_factory: type[SpectralLibraryError],
-    document_name: str,
-) -> object:
-    """Read a JSON document and translate I/O/parsing errors into domain errors."""
-
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise error_factory(
-            f"Could not read {document_name}.",
-            context={"path": str(path)},
-        ) from exc
-    try:
-        return json.loads(text)
-    except JSONDecodeError as exc:
-        raise error_factory(
-            f"{document_name} is not valid JSON.",
-            context={"path": str(path)},
-        ) from exc
-
-
-def _flatten_knn_index_artifact_names(knn_index_artifacts: Mapping[str, Mapping[str, Mapping[str, str]]]) -> tuple[str, ...]:
-    file_names: list[str] = []
-    for backend in sorted(knn_index_artifacts):
-        backend_payload = knn_index_artifacts[backend]
-        for sensor_id in sorted(backend_payload):
-            for segment in sorted(backend_payload[sensor_id]):
-                file_name = str(backend_payload[sensor_id][segment]).strip()
-                if file_name:
-                    file_names.append(file_name)
-    return tuple(file_names)
-
-
-def _required_runtime_file_names(manifest: PreparedLibraryManifest) -> tuple[str, ...]:
-    stable_files = [
-        "manifest.json",
-        "mapping_metadata.parquet",
-        SEGMENT_FILE_NAMES["vnir"],
-        SEGMENT_FILE_NAMES["swir"],
-        "sensor_schema.json",
-        "checksums.json",
-    ]
-    stable_files.extend(f"source_{sensor_id}_{segment}.npy" for sensor_id in manifest.source_sensors for segment in SEGMENTS)
-    stable_files.extend(_flatten_knn_index_artifact_names(manifest.knn_index_artifacts))
-    return tuple(stable_files)
-
-
-def _validate_manifest_compatibility(manifest: PreparedLibraryManifest) -> None:
-    prepared_major = manifest.schema_version.split(".", 1)[0]
-    if prepared_major not in SUPPORTED_PREPARED_SCHEMA_MAJOR_VERSIONS:
-        raise PreparedLibraryCompatibilityError(
-            "Prepared mapping runtime schema major version is incompatible with this package.",
-            context={
-                "prepared_schema_version": manifest.schema_version,
-                "expected_schema_version": PREPARED_SCHEMA_VERSION,
-                "supported_schema_major_versions": list(SUPPORTED_PREPARED_SCHEMA_MAJOR_VERSIONS),
-            },
-        )
-
-
-def _load_prepared_manifest(prepared_root: Path) -> PreparedLibraryManifest:
-    manifest_path = prepared_root / "manifest.json"
-    if not manifest_path.exists():
-        raise PreparedLibraryValidationError(
-            "Prepared mapping runtime is missing manifest.json.",
-            context={"prepared_root": str(prepared_root)},
-        )
-
-    payload = _read_json_document(
-        manifest_path,
-        error_factory=PreparedLibraryValidationError,
-        document_name="manifest.json",
-    )
-    if not isinstance(payload, dict):
-        raise PreparedLibraryValidationError(
-            "manifest.json must contain a JSON object.",
-            context={"path": str(manifest_path)},
-        )
-
-    try:
-        manifest = PreparedLibraryManifest.from_dict(payload)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise PreparedLibraryValidationError(
-            "manifest.json is missing required fields or contains invalid values.",
-            context={"path": str(manifest_path)},
-        ) from exc
-
-    if not manifest.source_sensors:
-        raise PreparedLibraryValidationError(
-            "manifest.json must declare at least one source sensor.",
-            context={"path": str(manifest_path)},
-        )
-    if len(set(manifest.source_sensors)) != len(manifest.source_sensors):
-        raise PreparedLibraryValidationError(
-            "manifest.json source_sensors must be unique.",
-            context={"path": str(manifest_path)},
-        )
-    if manifest.row_count < 1:
-        raise PreparedLibraryValidationError(
-            "manifest.json row_count must be at least 1.",
-            context={"path": str(manifest_path), "row_count": manifest.row_count},
-        )
-    unsupported_modes = [mode for mode in manifest.supported_output_modes if mode not in SUPPORTED_OUTPUT_MODES]
-    if unsupported_modes:
-        raise PreparedLibraryValidationError(
-            "manifest.json contains unsupported output modes.",
-            context={"path": str(manifest_path), "unsupported_output_modes": unsupported_modes},
-        )
-    if len(manifest.vnir_wavelength_range_nm) != 2 or len(manifest.swir_wavelength_range_nm) != 2:
-        raise PreparedLibraryValidationError(
-            "manifest.json wavelength ranges must contain exactly two values.",
-            context={"path": str(manifest_path)},
-        )
-    try:
-        dtype_np = np.dtype(manifest.array_dtype)
-    except TypeError as exc:
-        raise PreparedLibraryValidationError(
-            "manifest.json array_dtype is not a valid NumPy dtype.",
-            context={"path": str(manifest_path), "array_dtype": manifest.array_dtype},
-        ) from exc
-    if dtype_np.kind != "f":
-        raise PreparedLibraryValidationError(
-            "manifest.json array_dtype must be floating-point.",
-            context={"path": str(manifest_path), "array_dtype": manifest.array_dtype},
-        )
-    unsupported_knn_backends = [
-        backend for backend in manifest.knn_index_artifacts if backend not in SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS
-    ]
-    if unsupported_knn_backends:
-        raise PreparedLibraryValidationError(
-            "manifest.json contains unsupported knn_index_artifacts backends.",
-            context={"path": str(manifest_path), "unsupported_knn_index_backends": unsupported_knn_backends},
-        )
-    for backend, backend_payload in manifest.knn_index_artifacts.items():
-        for sensor_id, sensor_payload in backend_payload.items():
-            if sensor_id not in manifest.source_sensors:
-                raise PreparedLibraryValidationError(
-                    "manifest.json knn_index_artifacts references a sensor that is not in source_sensors.",
-                    context={"path": str(manifest_path), "knn_backend": backend, "sensor_id": sensor_id},
-                )
-            invalid_segments = [segment for segment in sensor_payload if segment not in SEGMENTS]
-            if invalid_segments:
-                raise PreparedLibraryValidationError(
-                    "manifest.json knn_index_artifacts contains invalid segment keys.",
-                    context={
-                        "path": str(manifest_path),
-                        "knn_backend": backend,
-                        "sensor_id": sensor_id,
-                        "invalid_segments": invalid_segments,
-                    },
-                )
-
-    required_checksum_files = {
-        file_name for file_name in _required_runtime_file_names(manifest) if file_name not in {"manifest.json", "checksums.json"}
-    }
-    missing_checksum_files = sorted(required_checksum_files - set(manifest.file_checksums))
-    if missing_checksum_files:
-        raise PreparedLibraryValidationError(
-            "manifest.json file_checksums is missing required runtime files.",
-            context={"path": str(manifest_path), "missing_files": missing_checksum_files},
-        )
-    return manifest
-
-
-def _load_checksums_payload(prepared_root: Path) -> dict[str, object]:
-    checksums_path = prepared_root / "checksums.json"
-    if not checksums_path.exists():
-        raise PreparedLibraryValidationError(
-            "Prepared mapping runtime is missing checksums.json.",
-            context={"prepared_root": str(prepared_root)},
-        )
-    payload = _read_json_document(
-        checksums_path,
-        error_factory=PreparedLibraryValidationError,
-        document_name="checksums.json",
-    )
-    if not isinstance(payload, dict):
-        raise PreparedLibraryValidationError(
-            "checksums.json must contain a JSON object.",
-            context={"path": str(checksums_path)},
-        )
-    files_payload = payload.get("files")
-    if not isinstance(files_payload, dict):
-        raise PreparedLibraryValidationError(
-            "checksums.json must contain a files object.",
-            context={"path": str(checksums_path)},
-        )
-    return payload
-
-
-def _expected_runtime_checksums(manifest: PreparedLibraryManifest, manifest_path: Path) -> dict[str, str]:
-    return {
-        **manifest.file_checksums,
-        manifest_path.name: _sha256_runtime_path(manifest_path),
-    }
-
-
-def prepare_mapping_library(
-    siac_root: Path,
-    srf_root: Path | None,
-    output_root: Path,
-    source_sensors: Sequence[str],
-    *,
-    dtype: str = "float32",
-    knn_index_backends: Sequence[str] | None = None,
-) -> PreparedLibraryManifest:
-    """Prepare a reusable runtime bundle from SIAC spectra and SRF definitions."""
-
-    dtype_np = np.dtype(dtype)
-    if dtype_np.kind != "f":
-        raise PreparedLibraryBuildError("prepare_mapping_library only supports floating-point dtypes.", context={"dtype": dtype})
-
-    source_sensor_ids = _normalized_source_sensors(source_sensors)
-    persisted_knn_backends = _normalized_knn_index_backends(knn_index_backends)
-    output_root = Path(output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
-
-    metadata_path = Path(siac_root) / "tabular" / "siac_spectra_metadata.csv"
-    spectra_path = Path(siac_root) / "tabular" / "siac_normalized_spectra.csv"
-    metadata_fieldnames, metadata_rows, hyperspectral, interpolation_summary = _load_siac_rows(
-        metadata_path,
-        spectra_path,
-        dtype=dtype_np,
-    )
-
-    sensors = load_sensor_schemas(srf_root, required_sensor_ids=source_sensor_ids)
-    missing_source_sensors = [sensor_id for sensor_id in source_sensor_ids if sensor_id not in sensors]
-    if missing_source_sensors:
-        raise SensorSchemaError(
-            "Requested source sensors could not be resolved.",
-            context={"missing_source_sensors": missing_source_sensors, "srf_root": str(srf_root) if srf_root is not None else None},
-        )
-
-    hyperspectral_vnir = hyperspectral[:, _segment_slice("vnir")]
-    hyperspectral_swir = hyperspectral[:, _segment_slice("swir")]
-    np.save(output_root / SEGMENT_FILE_NAMES["vnir"], hyperspectral_vnir)
-    np.save(output_root / SEGMENT_FILE_NAMES["swir"], hyperspectral_swir)
-
-    for sensor_id in source_sensor_ids:
-        schema = sensors[sensor_id]
-        for segment in SEGMENTS:
-            bands = _source_retrieval_bands(schema, segment)
-            segment_matrix = _simulate_source_retrieval_matrix_from_segments(
-                hyperspectral_vnir,
-                hyperspectral_swir,
-                bands,
-                dtype=dtype_np,
-            )
-            np.save(output_root / f"source_{sensor_id}_{segment}.npy", segment_matrix)
-
-    knn_index_artifacts: dict[str, dict[str, dict[str, str]]] = {}
-    for backend in persisted_knn_backends:
-        backend_payload: dict[str, dict[str, str]] = {}
-        for sensor_id in source_sensor_ids:
-            sensor_payload: dict[str, str] = {}
-            for segment in SEGMENTS:
-                matrix_path = output_root / f"source_{sensor_id}_{segment}.npy"
-                candidate_matrix = np.asarray(np.load(matrix_path), dtype=np.float32)
-                artifact_relative_name = _artifact_name_for_knn_index(backend, sensor_id, segment)
-                artifact_path = output_root / artifact_relative_name
-                _persist_knn_index(candidate_matrix, backend=backend, output_path=artifact_path)
-                sensor_payload[segment] = artifact_relative_name
-            backend_payload[sensor_id] = sensor_payload
-        knn_index_artifacts[backend] = backend_payload
-
-    mapping_metadata_path = output_root / "mapping_metadata.parquet"
-    _write_mapping_metadata_parquet(mapping_metadata_path, metadata_fieldnames, metadata_rows)
-
-    sensor_schema_path = output_root / "sensor_schema.json"
-    _write_json(
-        sensor_schema_path,
-        {
-            "schema_version": PREPARED_SCHEMA_VERSION,
-            "canonical_wavelength_grid": {
-                "start_nm": CANONICAL_START_NM,
-                "end_nm": CANONICAL_END_NM,
-                "step_nm": 1,
-            },
-            "sensors": [_prepared_runtime_sensor_payload(schema) for _, schema in sorted(sensors.items())],
-        },
-    )
-
-    stable_files = [
-        mapping_metadata_path,
-        output_root / SEGMENT_FILE_NAMES["vnir"],
-        output_root / SEGMENT_FILE_NAMES["swir"],
-        sensor_schema_path,
-    ]
-    stable_files.extend(output_root / f"source_{sensor_id}_{segment}.npy" for sensor_id in source_sensor_ids for segment in SEGMENTS)
-    stable_files.extend(output_root / file_name for file_name in _flatten_knn_index_artifact_names(knn_index_artifacts))
-    file_checksums = {
-        _relative_runtime_name(path, root=output_root): _sha256_runtime_path(path)
-        for path in stable_files
-    }
-
-    manifest = PreparedLibraryManifest(
-        schema_version=PREPARED_SCHEMA_VERSION,
-        package_version=__version__,
-        source_siac_root=str(Path(siac_root)),
-        source_siac_build_id=_sha256_paths([metadata_path, spectra_path]),
-        prepared_at=datetime.now(timezone.utc).isoformat(),
-        source_sensors=tuple(source_sensor_ids),
-        supported_output_modes=SUPPORTED_OUTPUT_MODES,
-        row_count=int(hyperspectral.shape[0]),
-        vnir_wavelength_range_nm=(VNIR_START_NM, VNIR_END_NM),
-        swir_wavelength_range_nm=(SWIR_START_NM, SWIR_END_NM),
-        array_dtype=dtype_np.name,
-        file_checksums=file_checksums,
-        knn_index_artifacts=knn_index_artifacts,
-        interpolation_summary=interpolation_summary,
-    )
-    manifest_path = output_root / "manifest.json"
-    _write_json(manifest_path, manifest.to_dict())
-
-    checksums_payload = {
-        "schema_version": PREPARED_SCHEMA_VERSION,
-        "files": {
-            **file_checksums,
-            "manifest.json": _sha256_runtime_path(manifest_path),
-        },
-    }
-    _write_json(output_root / "checksums.json", checksums_payload)
-    return manifest
-
-
-def validate_prepared_library(
-    prepared_root: Path,
-    *,
-    verify_checksums: bool = True,
-) -> PreparedLibraryManifest:
-    """Validate a prepared runtime bundle and return its manifest."""
-
-    prepared_root = Path(prepared_root)
-    mapper = SpectralMapper(prepared_root, verify_checksums=verify_checksums)
-    return mapper.manifest
-
-
 def _normalized_text_values(values: Sequence[str] | None) -> tuple[str, ...]:
     """Strip empty strings from a sequence while preserving order."""
 
     return tuple(text for text in (str(value).strip() for value in (values or ())) if text)
-
 
 def _normalized_batch_rows(
     reflectance_rows: Sequence[Sequence[float] | Mapping[str, float]] | np.ndarray,
@@ -3223,7 +534,6 @@ def _normalized_batch_rows(
             raise MappingInputError("Batch mapping requires at least one reflectance sample.")
         return rows
     raise MappingInputError("reflectance_rows must be a two-dimensional array or a sequence of per-sample inputs.")
-
 
 def _normalized_batch_valid_masks(
     valid_mask_rows: Sequence[Sequence[bool] | Mapping[str, bool] | None] | np.ndarray | None,
@@ -3256,7 +566,6 @@ def _normalized_batch_valid_masks(
         return masks
     raise MappingInputError("valid_mask_rows must be a two-dimensional array or a sequence of per-sample masks.")
 
-
 def _failed_segment_retrieval(
     *,
     segment: str,
@@ -3287,7 +596,6 @@ def _failed_segment_retrieval(
         success=False,
         reason=reason,
     )
-
 
 def _segment_diagnostics_payload_from_fields(
     *,
@@ -3329,7 +637,6 @@ def _segment_diagnostics_payload_from_fields(
         "neighbor_band_values": normalized_neighbor_band_values.tolist(),
     }
 
-
 def _failed_segment_metadata(
     *,
     valid_band_count: int,
@@ -3360,7 +667,6 @@ def _failed_segment_metadata(
         diagnostics=diagnostics,
         reason=reason,
     )
-
 
 def _successful_segment_metadata(
     *,
@@ -3417,7 +723,6 @@ def _successful_segment_metadata(
         confidence_score=resolved_confidence_score,
         diagnostics=diagnostics,
     )
-
 
 def _successful_segment_retrieval(
     *,
@@ -3478,7 +783,6 @@ def _successful_segment_retrieval(
         confidence_components=confidence_components,
     )
 
-
 def _segment_diagnostics_payload(retrieval: _SegmentRetrieval) -> dict[str, object]:
     """Serialize one segment retrieval into a JSON-friendly diagnostic payload."""
 
@@ -3498,14 +802,13 @@ def _segment_diagnostics_payload(retrieval: _SegmentRetrieval) -> dict[str, obje
         neighbor_band_values=retrieval.neighbor_band_values,
     )
 
-
 class SpectralMapper:
     """Runtime interface for nearest-neighbor spectral mapping."""
 
     def __init__(self, prepared_root: Path, *, verify_checksums: bool = False) -> None:
         self.prepared_root = Path(prepared_root)
-        self.manifest = _load_prepared_manifest(self.prepared_root)
-        _validate_manifest_compatibility(self.manifest)
+        self.manifest = _build._load_prepared_manifest(self.prepared_root)
+        _build._validate_manifest_compatibility(self.manifest)
         self._validate_required_runtime_files()
         self._validate_checksums(verify_checksums=verify_checksums)
 
@@ -3526,12 +829,12 @@ class SpectralMapper:
         self._target_sensor_projection_cache: dict[str, _TargetSensorProjection] = {}
         self._source_query_cache: dict[str, np.ndarray] = {}
         self._knn_index_cache: dict[tuple[str, str, str], Any] = {}
-        self._scipy_ckdtree_cache: dict[tuple[str, str], _ScipyCkdtreeCacheEntry] = {}
+        self._scipy_ckdtree_cache: dict[tuple[str, str], _backends._ScipyCkdtreeCacheEntry] = {}
 
         self._validate_prepared_layout()
 
     def _validate_required_runtime_files(self) -> None:
-        for file_name in _required_runtime_file_names(self.manifest):
+        for file_name in _build._required_runtime_file_names(self.manifest):
             if not (self.prepared_root / file_name).exists():
                 raise PreparedLibraryValidationError(
                     "Prepared mapping runtime is missing a required file.",
@@ -3539,10 +842,10 @@ class SpectralMapper:
                 )
 
     def _validate_checksums(self, *, verify_checksums: bool) -> None:
-        checksums_payload = _load_checksums_payload(self.prepared_root)
+        checksums_payload = _build._load_checksums_payload(self.prepared_root)
         recorded_checksums = checksums_payload["files"]
         manifest_path = self.prepared_root / "manifest.json"
-        expected_checksums = _expected_runtime_checksums(self.manifest, manifest_path)
+        expected_checksums = _build._expected_runtime_checksums(self.manifest, manifest_path)
         for file_name, expected_checksum in expected_checksums.items():
             if recorded_checksums.get(file_name) != expected_checksum:
                 raise PreparedLibraryValidationError(
@@ -3550,7 +853,7 @@ class SpectralMapper:
                     context={"prepared_root": str(self.prepared_root), "file_name": file_name},
                 )
             if verify_checksums:
-                actual_checksum = _sha256_runtime_path(self.prepared_root / file_name)
+                actual_checksum = _build._sha256_runtime_path(self.prepared_root / file_name)
                 if actual_checksum != expected_checksum:
                     raise PreparedLibraryValidationError(
                         "Prepared mapping runtime checksum verification failed.",
@@ -3667,9 +970,13 @@ class SpectralMapper:
     def get_sensor_schema(self, sensor_id: str) -> SensorSRFSchema:
         """Return the prepared sensor schema for ``sensor_id``."""
 
-        if sensor_id not in self._sensor_schemas:
-            self._sensor_schemas[sensor_id] = _load_rsrf_sensor_schema(sensor_id)
-        return self._sensor_schemas[sensor_id]
+        schema = self._sensor_schemas.get(sensor_id)
+        if schema is None:
+            raise SensorSchemaError(
+                "Sensor schema is not present in the prepared runtime.",
+                context={"prepared_root": str(self.prepared_root), "sensor_id": sensor_id},
+            )
+        return schema
 
     def _load_hyperspectral(self, segment: str) -> np.ndarray:
         if segment not in self._hyperspectral_cache:
@@ -3687,27 +994,18 @@ class SpectralMapper:
         key = (source_sensor, segment)
         if key not in self._source_matrix_cache:
             path = self.prepared_root / f"source_{source_sensor}_{segment}.npy"
-            if path.exists():
-                try:
-                    self._source_matrix_cache[key] = np.load(path, mmap_mode="r")
-                except (OSError, ValueError) as exc:
-                    raise PreparedLibraryValidationError(
-                        "Prepared source retrieval matrix could not be loaded.",
-                        context={"path": str(path), "source_sensor": source_sensor, "segment": segment},
-                    ) from exc
-            else:
-                schema = self.get_sensor_schema(source_sensor)
-                generated = _simulate_source_retrieval_matrix_from_segments(
-                    self._load_hyperspectral("vnir"),
-                    self._load_hyperspectral("swir"),
-                    _source_retrieval_bands(schema, segment),
-                    dtype=np.dtype(self.manifest.array_dtype),
+            if not path.exists():
+                raise PreparedLibraryValidationError(
+                    "Prepared source retrieval matrix is missing.",
+                    context={"path": str(path), "source_sensor": source_sensor, "segment": segment},
                 )
-                try:
-                    np.save(path, generated)
-                    self._source_matrix_cache[key] = np.load(path, mmap_mode="r")
-                except OSError:
-                    self._source_matrix_cache[key] = np.asarray(generated, dtype=np.dtype(self.manifest.array_dtype))
+            try:
+                self._source_matrix_cache[key] = np.load(path, mmap_mode="r")
+            except (OSError, ValueError) as exc:
+                raise PreparedLibraryValidationError(
+                    "Prepared source retrieval matrix could not be loaded.",
+                    context={"path": str(path), "source_sensor": source_sensor, "segment": segment},
+                ) from exc
         return self._source_matrix_cache[key]
 
     def _persisted_knn_index_path(self, backend: str, source_sensor: str, segment: str) -> Path | None:
@@ -3727,7 +1025,7 @@ class SpectralMapper:
         key = (backend, source_sensor, segment)
         if key not in self._knn_index_cache:
             try:
-                self._knn_index_cache[key] = _load_persisted_knn_index(path, backend=backend)
+                self._knn_index_cache[key] = _backends._load_persisted_knn_index(path, backend=backend)
             except SpectralLibraryError:
                 raise
             except Exception as exc:
@@ -3773,7 +1071,7 @@ class SpectralMapper:
         index = self._load_persisted_knn_index(backend, source_sensor, segment)
         if index is None:
             return None
-        return _query_persisted_knn_index(
+        return _backends._query_persisted_knn_index(
             index,
             query_values,
             k=k,
@@ -3929,8 +1227,8 @@ class SpectralMapper:
         if cache_key not in self._scipy_ckdtree_cache:
             source_matrix = self._validated_source_matrix(source_sensor, segment, query_band_ids)
             tree_data = np.asarray(source_matrix, dtype=np.float64)
-            cKDTree = _load_ckdtree_class()
-            self._scipy_ckdtree_cache[cache_key] = _ScipyCkdtreeCacheEntry(
+            cKDTree = _backends._load_ckdtree_class()
+            self._scipy_ckdtree_cache[cache_key] = _backends._ScipyCkdtreeCacheEntry(
                 data=tree_data,
                 index=cKDTree(tree_data),
             )
@@ -3951,7 +1249,7 @@ class SpectralMapper:
             segment=segment,
             query_band_ids=query_band_ids,
         )
-        return _query_knn_index(
+        return _backends._query_knn_index(
             index,
             query_values,
             k=k,
@@ -3974,7 +1272,7 @@ class SpectralMapper:
             segment=segment,
             query_band_ids=query_band_ids,
         )
-        return _query_knn_index_with_distances(
+        return _backends._query_knn_index_with_distances(
             index,
             query_values,
             k=k,
@@ -4032,13 +1330,13 @@ class SpectralMapper:
                     knn_eps=knn_eps,
                 )
             else:
-                local_indices, local_distances = _query_local_scipy_ckdtree_results(
+                local_indices, local_distances = _backends._query_local_scipy_ckdtree_results(
                     candidate_matrix,
                     np.asarray(query_vector, dtype=np.float64),
                     k=min(int(k), int(candidate_row_indices.size)),
                     knn_eps=knn_eps,
                 )
-            neighbor_indices, neighbor_distances = _ordered_neighbor_rows_from_local_distances(
+            neighbor_indices, neighbor_distances = _backends._ordered_neighbor_rows_from_local_distances(
                 local_indices[0],
                 local_distances[0],
                 candidate_row_indices,
@@ -5069,7 +2367,7 @@ class SpectralMapper:
                         knn_eps=knn_eps,
                     )
                 else:
-                    group_local_indices, group_local_distances = _query_local_scipy_ckdtree_results(
+                    group_local_indices, group_local_distances = _backends._query_local_scipy_ckdtree_results(
                         candidate_valid,
                         query_group,
                         k=min(int(k), int(candidate_row_indices.size)),
@@ -5115,7 +2413,7 @@ class SpectralMapper:
                         knn_eps=knn_eps,
                     )
                 else:
-                    group_local_indices = _search_local_neighbor_indices(
+                    group_local_indices = _backends._search_local_neighbor_indices(
                         candidate_valid,
                         query_group,
                         k=k,
@@ -5180,7 +2478,7 @@ class SpectralMapper:
                     knn_eps=knn_eps,
                 )
             else:
-                group_local_indices, group_local_distances = _query_local_scipy_ckdtree_results(
+                group_local_indices, group_local_distances = _backends._query_local_scipy_ckdtree_results(
                     candidate_valid,
                     query_group,
                     k=min(int(k), int(candidate_row_indices.size)),
@@ -5202,7 +2500,7 @@ class SpectralMapper:
                 knn_eps=knn_eps,
             )
         else:
-            group_local_indices = _search_local_neighbor_indices(
+            group_local_indices = _backends._search_local_neighbor_indices(
                 candidate_valid,
                 query_group,
                 k=k,
@@ -5921,15 +3219,15 @@ class SpectralMapper:
         neighbor_estimator: str,
         knn_backend: str,
         knn_eps: float,
-    ) -> _ZarrBatchExport:
+    ) -> _backends._ZarrBatchExport:
         output_columns, axis_name, axis_values = self._batch_output_layout(
             output_mode=output_mode,
             target_sensor=target_sensor,
         )
         output_width = int(axis_values.shape[0])
-        zarr = _load_zarr_module()
-        compressor = _default_zarr_compressor()
-        utf8_codec = _zarr_utf8_codec()
+        zarr = _backends._load_zarr_module()
+        compressor = _backends._default_zarr_compressor()
+        utf8_codec = _backends._zarr_utf8_codec()
         output_store = Path(zarr_path)
         output_store.parent.mkdir(parents=True, exist_ok=True)
         root = zarr.open_group(str(output_store), mode="w")
@@ -5992,7 +3290,7 @@ class SpectralMapper:
                 "sample_id_encoding": "utf-8",
             }
         )
-        return _ZarrBatchExport(
+        return _backends._ZarrBatchExport(
             root=root,
             reflectance_dataset=reflectance_dataset,
             source_fit_rmse_dataset=source_fit_dataset,
@@ -6004,7 +3302,7 @@ class SpectralMapper:
 
     def _append_batch_output_arrays_to_zarr(
         self,
-        export: _ZarrBatchExport,
+        export: _backends._ZarrBatchExport,
         *,
         sample_ids: Sequence[str],
         output_chunk: np.ndarray,
@@ -6503,8 +3801,8 @@ class SpectralMapper:
                 chunk_size=chunk_size,
             ),
         )
-        temp_zarr_path = _temporary_output_path(Path(zarr_path))
-        _remove_output_path(temp_zarr_path)
+        temp_zarr_path = _backends._temporary_output_path(Path(zarr_path))
+        _backends._remove_output_path(temp_zarr_path)
         try:
             export = self._open_batch_zarr_export(
                 zarr_path=temp_zarr_path,
@@ -6543,9 +3841,9 @@ class SpectralMapper:
                     output_chunk=output_chunk,
                     source_fit_chunk=source_fit_chunk,
                 )
-            _finalize_output_path(temp_zarr_path, Path(zarr_path))
+            _backends._finalize_output_path(temp_zarr_path, Path(zarr_path))
         except Exception:
-            _remove_output_path(temp_zarr_path)
+            _backends._remove_output_path(temp_zarr_path)
             raise
         return {
             "path": str(Path(zarr_path)),
@@ -6594,7 +3892,6 @@ class SpectralMapper:
             raise SensorSchemaError("Sensor schema must include at least one band.", context={"sensor_id": sensor_id})
         return np.column_stack(values), tuple(band_ids)
 
-
 def _metric_report(predicted: np.ndarray, truth: np.ndarray) -> dict[str, object]:
     """Compute compact reconstruction metrics for benchmarking output."""
 
@@ -6610,7 +3907,6 @@ def _metric_report(predicted: np.ndarray, truth: np.ndarray) -> dict[str, object
         "per_band_mae": [float(value) for value in mae],
         "per_band_bias": [float(value) for value in bias],
     }
-
 
 def benchmark_mapping(
     prepared_root: Path,

@@ -12,6 +12,7 @@ from .mapping import (
     SpectralLibraryError,
     SpectralMapper,
     benchmark_mapping,
+    build_mapping_library,
     prepare_mapping_library,
     validate_prepared_library,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "SpectralLibraryError",
     "SpectralMapper",
     "benchmark_mapping",
+    "build_mapping_library",
     "prepare_mapping_library",
     "validate_prepared_library",
 ]

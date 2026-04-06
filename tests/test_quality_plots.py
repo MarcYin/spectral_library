@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from spectral_library.quality_plots import EXPECTED_GRID_POINTS, generate_quality_plots
+from spectral_library.normalization.plots import EXPECTED_GRID_POINTS, generate_quality_plots
 
 
 def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, object]]) -> None:
