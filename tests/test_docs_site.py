@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,7 +30,7 @@ class DocsSiteBuildTests(unittest.TestCase):
             output_root = Path(tmpdir) / "site"
             subprocess.run(
                 [
-                    "python3",
+                    sys.executable,
                     "-m",
                     "mkdocs",
                     "build",
