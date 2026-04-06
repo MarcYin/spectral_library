@@ -81,7 +81,7 @@ spectral-library download-prepared-library \
 ```
 
 This fetches the latest release, verifies the SHA-256 digest, extracts the
-runtime, and validates it. You can pin a specific release with `--tag v0.6.0`
+runtime, and validates it. You can pin a specific release with `--tag v0.6.1`
 or point at any hosted tarball with `--url <URL>`.
 
 ### Option B: Build your own runtime
@@ -114,6 +114,12 @@ What this does:
 The runtime format is documented in
 [Prepared Runtime Contract](prepared_runtime_contract.md).
 
+Mapping commands can also fetch the default published runtime on demand. If you
+omit `--prepared-root` from `map-reflectance`, `map-reflectance-batch`, or
+`benchmark-mapping`, the CLI resolves the package-matched published runtime
+into the user cache and reuses it on later runs. Keep using `--prepared-root`
+when you want to point at a locally built or otherwise custom runtime.
+
 ## Step 3: Validate The Runtime
 
 Run validation before serving mappings or publishing a prepared runtime:
@@ -137,7 +143,6 @@ Map one source observation to a target sensor:
 
 ```bash
 spectral-library map-reflectance \
-  --prepared-root build/mapping_runtime \
   --source-sensor SENSOR_A \
   --target-sensor SENSOR_B \
   --input path/to/source_reflectance.csv \
@@ -153,7 +158,6 @@ pattern:
 
 ```bash
 spectral-library map-reflectance \
-  --prepared-root build/mapping_runtime \
   --source-sensor SENSOR_A \
   --target-sensor SENSOR_B \
   --input path/to/source_reflectance.csv \

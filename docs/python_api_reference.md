@@ -41,7 +41,7 @@ The repository is also organized into four package areas:
   maintainer-oriented normalization and SIAC package-export tools
 
 The stable public contract is centered on the root `spectral_library` imports
-above plus the documented `spectral_library.distribution` download helper.
+above plus the documented `spectral_library.distribution` helpers.
 
 ## Public Workflow
 
@@ -56,7 +56,7 @@ from spectral_library.distribution import RuntimeDownloadError, download_prepare
 
 output = download_prepared_library(
     Path("build/mapping_runtime"),
-    # tag="v0.6.0",       # optional: pin to a specific release
+    # tag="v0.6.1",       # optional: pin to a specific release
     # url="https://...",   # optional: direct tarball URL
     # sha256="abc123...",  # optional: expected digest
 )
@@ -69,6 +69,21 @@ Returns:
 Raises:
 
 - `RuntimeDownloadError` when the download, verification, or extraction fails
+
+### 0a. `resolve_prepared_library_root(...)`
+
+Resolve the published default runtime or return an explicit override path.
+
+```python
+from spectral_library.distribution import resolve_prepared_library_root
+
+prepared_root = resolve_prepared_library_root()
+custom_root = resolve_prepared_library_root("build/mapping_runtime")
+```
+
+When called without an argument, this helper resolves the package-matched
+published runtime into the user cache and reuses it on later calls. Pass an
+explicit path to bypass the default cache and use your own prepared runtime.
 
 ### 1. `build_mapping_library(...)`
 
@@ -228,11 +243,10 @@ Raises:
 Load a prepared runtime and serve mapping requests.
 
 ```python
-from pathlib import Path
-
 from spectral_library import SpectralMapper
+from spectral_library.distribution import resolve_prepared_library_root
 
-mapper = SpectralMapper(Path("build/official_mapping_runtime"), verify_checksums=True)
+mapper = SpectralMapper(resolve_prepared_library_root(), verify_checksums=True)
 ```
 
 Public methods:

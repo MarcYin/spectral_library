@@ -12,7 +12,7 @@ Project identity:
 - import package: `spectral_library`
 - public CLI: `spectral-library`
 - internal maintainer CLI: `spectral-library-internal`
-- current version: `0.6.0`
+- current version: `0.6.1`
 - license: `MIT` for repository software and repository-authored docs; referenced or redistributed third-party datasets, metadata, and derived artifacts may remain subject to upstream terms
 
 Documentation:
@@ -77,7 +77,6 @@ Map one sample:
 
 ```bash
 spectral-library map-reflectance \
-  --prepared-root build/mapping_runtime \
   --source-sensor SENSOR_A \
   --target-sensor SENSOR_B \
   --input path/to/query.csv \
@@ -91,7 +90,6 @@ Map a batch and write diagnostics:
 
 ```bash
 spectral-library map-reflectance-batch \
-  --prepared-root build/mapping_runtime \
   --source-sensor SENSOR_A \
   --target-sensor SENSOR_B \
   --input path/to/query_batch.csv \
@@ -102,6 +100,10 @@ spectral-library map-reflectance-batch \
   --neighbor-review-output path/to/neighbor_review.csv \
   --output path/to/mapped_batch.csv
 ```
+
+If you omit `--prepared-root`, the mapping CLI downloads the package-matched
+published runtime into the user cache on first use. Pass `--prepared-root` when
+you want to use a custom or locally built runtime instead.
 
 Benchmark a prepared runtime:
 
@@ -181,4 +183,4 @@ Internal build and source-ingest material is intentionally separated from the pu
 
 - internal overview: [docs/internal_overview.md](docs/internal_overview.md)
 - internal build pipeline: [docs/internal_build_pipeline.md](docs/internal_build_pipeline.md)
-- release notes: [docs/releases/0.6.0.md](docs/releases/0.6.0.md)
+- release notes: [docs/releases/0.6.1.md](docs/releases/0.6.1.md)

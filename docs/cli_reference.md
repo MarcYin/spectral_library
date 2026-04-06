@@ -65,7 +65,7 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--url` | direct URL to a `.tar.gz` runtime archive (skips GitHub Release lookup) |
-| `--tag` | GitHub Release tag to download from (e.g. `v0.6.0`); defaults to latest |
+| `--tag` | GitHub Release tag to download from (e.g. `v0.6.1`); defaults to latest |
 | `--sha256` | expected SHA-256 hex digest for the archive |
 | `--no-verify` | skip runtime validation after extraction |
 
@@ -94,7 +94,6 @@ Required arguments:
 
 | Flag | Meaning |
 | --- | --- |
-| `--prepared-root` | prepared runtime root |
 | `--source-sensor` | source sensor id |
 | `--input` | single-sample CSV |
 | `--output-mode` | one of `target_sensor`, `vnir_spectrum`, `swir_spectrum`, `full_spectrum` |
@@ -110,6 +109,7 @@ Optional arguments:
 
 | Flag | Meaning |
 | --- | --- |
+| `--prepared-root` | override the default published runtime with a custom prepared runtime root |
 | `--k` | nearest-neighbor count, default `10` |
 | `--min-valid-bands` | minimum valid source bands per segment, default `1` |
 | `--neighbor-estimator` | `mean`, `distance_weighted_mean`, or `simplex_mixture`, default `mean` |
@@ -140,6 +140,9 @@ status, neighbor rank, distance, estimator weight, query band values, and the
 selected neighbor's source-band values. The review rows also record
 `knn_backend` and `knn_eps`.
 
+When `--prepared-root` is omitted, the CLI resolves the package-matched
+published runtime into the user cache and reuses it on later runs.
+
 The JSON diagnostics also include a heuristic `confidence_score` at the overall
 mapping level and per segment. It is derived from valid-band coverage, neighbor
 distances, estimator weight concentration, and source-space fit RMSE. Treat it
@@ -158,7 +161,6 @@ Required arguments:
 
 | Flag | Meaning |
 | --- | --- |
-| `--prepared-root` | prepared runtime root |
 | `--source-sensor` | source sensor id |
 | `--input` | batch CSV |
 | `--output-mode` | public output mode |
@@ -174,6 +176,7 @@ Optional arguments:
 
 | Flag | Meaning |
 | --- | --- |
+| `--prepared-root` | override the default published runtime with a custom prepared runtime root |
 | `--k` | nearest-neighbor count |
 | `--min-valid-bands` | minimum valid source bands per segment |
 | `--neighbor-estimator` | `mean`, `distance_weighted_mean`, or `simplex_mixture` |
@@ -209,6 +212,9 @@ one row per sample, segment, and retained neighbor. This is the easiest public
 way to audit which candidates were shortlisted and how the estimator reweighted
 them.
 
+When `--prepared-root` is omitted, the CLI resolves the package-matched
+published runtime into the user cache and reuses it on later runs.
+
 ### `benchmark-mapping`
 
 Benchmark retrieval against the regression baseline.
@@ -217,7 +223,6 @@ Required arguments:
 
 | Flag | Meaning |
 | --- | --- |
-| `--prepared-root` | prepared runtime root |
 | `--source-sensor` | source sensor id |
 | `--target-sensor` | target sensor id |
 | `--report` | JSON output path |
@@ -226,6 +231,7 @@ Optional arguments:
 
 | Flag | Meaning |
 | --- | --- |
+| `--prepared-root` | override the default published runtime with a custom prepared runtime root |
 | `--k` | nearest-neighbor count, default `10` |
 | `--test-fraction` | held-out fraction, default `0.2` |
 | `--max-test-rows` | optional cap on held-out rows, default `0` in the CLI and `None` in Python |
@@ -233,6 +239,9 @@ Optional arguments:
 | `--neighbor-estimator` | retrieval estimator to benchmark: `mean`, `distance_weighted_mean`, or `simplex_mixture`; default `mean` |
 | `--knn-backend` | shortlist search backend: `numpy`, `scipy_ckdtree`, `faiss`, `pynndescent`, or `scann`; default `numpy` |
 | `--knn-eps` | approximation slack / search-accuracy knob for supported ANN backends |
+
+When `--prepared-root` is omitted, the CLI resolves the package-matched
+published runtime into the user cache and reuses it on later runs.
 
 Optional backend install extras:
 
