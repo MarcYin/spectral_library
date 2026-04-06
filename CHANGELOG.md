@@ -5,6 +5,28 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.6.1] - 2026-04-06
+
+### Added
+
+- `spectral_library.distribution.resolve_prepared_library_root(...)` and
+  `default_prepared_runtime_root(...)` so callers can resolve the published
+  prepared runtime or override it with a custom root explicitly
+
+### Changed
+
+- `map-reflectance`, `map-reflectance-batch`, and `benchmark-mapping` now
+  auto-resolve the package-matched published prepared runtime when
+  `--prepared-root` is omitted, while still honoring explicit overrides
+- public docs now describe the default-runtime resolution path for both CLI and
+  Python workflows
+
+### Fixed
+
+- CLI default-runtime download failures now surface as stable
+  `download_failed` JSON errors instead of falling through as generic runtime
+  resolution failures
+
 ## [0.6.0] - 2026-04-06
 
 ### Added
