@@ -56,7 +56,7 @@ from spectral_library.distribution import RuntimeDownloadError, download_prepare
 
 output = download_prepared_library(
     Path("build/mapping_runtime"),
-    # tag="v0.6.1",       # optional: pin to a specific release
+    # tag="v0.6.2",       # optional: pin to a specific release
     # url="https://...",   # optional: direct tarball URL
     # sha256="abc123...",  # optional: expected digest
 )
@@ -109,9 +109,11 @@ Built-in sensors now use canonical `rsrf` ids directly, such as
 `noaa-21_viirs`. Pass `srf_root=Path(...)` only when you need extra local
 sensor JSON definitions. Those local files must be valid
 `rsrf_sensor_definition` documents, and any mapping-specific segment metadata
-must live in `bands[].extensions.spectral_library.segment`. If your `rsrf`
-install does not include its registry data, set `RSRF_ROOT` to an `rsrf`
-checkout before using the built-in sensor catalog.
+must live in `bands[].extensions.spectral_library.segment`. Built-in canonical
+sensor resolution now targets `rsrf>=0.3.1`; first use may bootstrap canonical
+runtime data into the local `rsrf` cache automatically. Set `RSRF_ROOT` only
+to override that with a specific checkout or mirrored runtime root, and preseed
+`RSRF_CACHE_DIR` when you need the same flow without network access.
 
 Returns:
 

@@ -87,8 +87,9 @@ SEGMENT_FILE_NAMES = {
 }
 FULL_WAVELENGTH_COUNT = int(CANONICAL_WAVELENGTHS.size)
 RSRF_ROOT_ENV_VAR = "RSRF_ROOT"
+RSRF_CACHE_DIR_ENV_VAR = "RSRF_CACHE_DIR"
 RSRF_REGISTRY_RELATIVE_PATH = Path("data") / "registry" / "sensors.parquet"
-RSRF_INSTALL_HINT = 'pip install "rsrf>=0.3.0"'
+RSRF_INSTALL_HINT = 'pip install "rsrf>=0.3.1"'
 RSRF_REPRESENTATION_VARIANT = "band_average"
 
 

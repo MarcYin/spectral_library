@@ -499,34 +499,66 @@ def _load_rsrf_module() -> Any:
         ) from exc
     return rsrf
 
-def _candidate_rsrf_roots(rsrf_module: Any) -> tuple[Path, ...]:
-    candidates: list[Path] = []
-    env_value = (os.environ.get(RSRF_ROOT_ENV_VAR) or "").strip()
-    if env_value:
-        candidates.append(Path(env_value).expanduser())
+def _load_rsrf_registry_module() -> Any:
+    try:
+        from rsrf import registry as rsrf_registry  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise SensorSchemaError(
+            "rsrf>=0.3.1 is required to resolve canonical sensor schemas through the installed package runtime.",
+            context={"install_hint": RSRF_INSTALL_HINT},
+        ) from exc
+    return rsrf_registry
 
+def _validated_rsrf_root(root: Path, *, source: str) -> Path:
+    resolved = root.expanduser().resolve()
+    registry_path = resolved / RSRF_REGISTRY_RELATIVE_PATH
+    if not registry_path.exists():
+        raise SensorSchemaError(
+            "rsrf root does not contain the canonical registry parquet.",
+            context={"rsrf_root": str(resolved), "registry_path": str(registry_path), "source": source},
+        )
+    return resolved
+
+def _rsrf_checkout_root(rsrf_module: Any) -> Path | None:
     package_root = Path(getattr(rsrf_module, "PACKAGE_ROOT", Path(rsrf_module.__file__).resolve().parent)).resolve()
-    candidates.extend((package_root.parent.parent, package_root.parent))
-
-    unique_candidates: list[Path] = []
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved not in unique_candidates:
-            unique_candidates.append(resolved)
-    return tuple(unique_candidates)
+    repo_root = package_root.parent.parent
+    registry_path = repo_root / RSRF_REGISTRY_RELATIVE_PATH
+    if registry_path.exists():
+        return repo_root
+    return None
 
 def _resolve_rsrf_root() -> Path:
     rsrf_module = _load_rsrf_module()
-    for candidate in _candidate_rsrf_roots(rsrf_module):
-        if (candidate / RSRF_REGISTRY_RELATIVE_PATH).exists():
-            return candidate
-    raise SensorSchemaError(
-        "rsrf is installed but its registry data could not be located.",
-        context={
-            "searched_roots": [str(candidate) for candidate in _candidate_rsrf_roots(rsrf_module)],
-            "env_var": RSRF_ROOT_ENV_VAR,
-        },
-    )
+    env_value = (os.environ.get(RSRF_ROOT_ENV_VAR) or "").strip()
+    if env_value:
+        return _validated_rsrf_root(Path(env_value), source=RSRF_ROOT_ENV_VAR)
+
+    checkout_root = _rsrf_checkout_root(rsrf_module)
+    if checkout_root is not None:
+        return _validated_rsrf_root(checkout_root, source="rsrf_checkout")
+
+    rsrf_registry = _load_rsrf_registry_module()
+    runtime_release_root = getattr(rsrf_registry, "_runtime_release_root", None)
+    if not callable(runtime_release_root):
+        raise SensorSchemaError(
+            "spectral-library requires rsrf>=0.3.1 to resolve canonical sensor schemas from the installed package.",
+            context={
+                "rsrf_version": getattr(rsrf_module, "__version__", None),
+                "install_hint": RSRF_INSTALL_HINT,
+            },
+        )
+    try:
+        runtime_root = Path(runtime_release_root())
+    except Exception as exc:
+        raise SensorSchemaError(
+            "rsrf could not resolve its packaged runtime data.",
+            context={
+                "rsrf_version": getattr(rsrf_module, "__version__", None),
+                "env_var": RSRF_ROOT_ENV_VAR,
+                "cache_env_var": RSRF_CACHE_DIR_ENV_VAR,
+            },
+        ) from exc
+    return _validated_rsrf_root(runtime_root, source="rsrf_runtime")
 
 def _rsrf_band_support_bounds(
     curve_wavelengths: np.ndarray,

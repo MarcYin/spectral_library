@@ -285,6 +285,18 @@ jobs:
             --k 1 \
             --output "${{ runner.temp }}/mapping-smoke/mapped_batch.csv" \
             --diagnostics-output "${{ runner.temp }}/mapping-smoke/mapped_batch_diagnostics.json"
+          spectral-library build-mapping-library \
+            --siac-root "${{ runner.temp }}/mapping-smoke/siac" \
+            --source-sensor sentinel-2a_msi \
+            --output-root "${{ runner.temp }}/mapping-smoke/prepared_rsrf"
+          spectral-library map-reflectance \
+            --prepared-root "${{ runner.temp }}/mapping-smoke/prepared_rsrf" \
+            --source-sensor sentinel-2a_msi \
+            --target-sensor landsat-8_oli \
+            --input "${{ runner.temp }}/mapping-smoke/query_sentinel2a_single.csv" \
+            --output-mode target_sensor \
+            --k 1 \
+            --output "${{ runner.temp }}/mapping-smoke/mapped_rsrf.csv"
 
       - name: Run release smoke workflow (Windows)
         if: runner.os == 'Windows'

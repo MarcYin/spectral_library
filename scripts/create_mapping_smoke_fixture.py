@@ -194,6 +194,21 @@ def create_smoke_fixture(output_root: Path) -> dict[str, str]:
         ],
     )
 
+    canonical_single_query_path = output_root / "query_sentinel2a_single.csv"
+    _write_csv(
+        canonical_single_query_path,
+        ["band_id", "reflectance"],
+        [
+            {"band_id": "ultra_blue", "reflectance": 0.08},
+            {"band_id": "blue", "reflectance": 0.10},
+            {"band_id": "green", "reflectance": 0.15},
+            {"band_id": "red", "reflectance": 0.20},
+            {"band_id": "nir", "reflectance": 0.35},
+            {"band_id": "swir1", "reflectance": 0.30},
+            {"band_id": "swir2", "reflectance": 0.25},
+        ],
+    )
+
     summary = {
         "fixture_root": str(output_root),
         "siac_root": str(siac_root),
@@ -201,6 +216,7 @@ def create_smoke_fixture(output_root: Path) -> dict[str, str]:
         "prepared_root": str(prepared_root),
         "single_query_csv": str(single_query_path),
         "batch_query_csv": str(batch_query_path),
+        "canonical_single_query_csv": str(canonical_single_query_path),
     }
     summary_path = output_root / "fixture_paths.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")

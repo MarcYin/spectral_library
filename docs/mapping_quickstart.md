@@ -46,10 +46,11 @@ Install the package from the repository:
 python3 -m pip install .
 ```
 
-Built-in canonical sensors resolved through `rsrf` currently require access to
-the `rsrf` registry data. If your `rsrf` install does not ship
-`data/registry/sensors.parquet`, point `RSRF_ROOT` at an `rsrf` checkout before
-running `build-mapping-library` without custom JSON files.
+Built-in canonical sensors now require `rsrf>=0.3.1`. On first use, `rsrf`
+can bootstrap the matching canonical runtime data into its local cache
+automatically. Set `RSRF_ROOT` only when you want to override that with a local
+checkout or mirrored runtime root, and preseed `RSRF_CACHE_DIR` if you need the
+same flow in an offline environment.
 
 Optional extras:
 
@@ -81,7 +82,7 @@ spectral-library download-prepared-library \
 ```
 
 This fetches the latest release, verifies the SHA-256 digest, extracts the
-runtime, and validates it. You can pin a specific release with `--tag v0.6.1`
+runtime, and validates it. You can pin a specific release with `--tag v0.6.2`
 or point at any hosted tarball with `--url <URL>`.
 
 ### Option B: Build your own runtime

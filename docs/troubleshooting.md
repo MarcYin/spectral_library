@@ -84,8 +84,10 @@ version is stored in `manifest.json` under `schema_version`.
 - No positive RSR values
 - Positive RSR support outside the declared segment bounds
   (`vnir: 400-1000 nm`, `swir: 800-2500 nm`)
-- `rsrf` is installed without accessible registry data; set `RSRF_ROOT` to an
-  `rsrf` checkout that contains `data/registry/sensors.parquet`
+- `rsrf>=0.3.1` could not resolve its canonical runtime data. On first use,
+  `rsrf` may need network access to populate its cache. In offline or mirrored
+  environments, set `RSRF_ROOT` to a prepared `rsrf` runtime root or preseed
+  `RSRF_CACHE_DIR`.
 
 ## Confidence Score Interpretation
 

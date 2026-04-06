@@ -972,10 +972,14 @@ class SpectralMapper:
 
         schema = self._sensor_schemas.get(sensor_id)
         if schema is None:
-            raise SensorSchemaError(
-                "Sensor schema is not present in the prepared runtime.",
-                context={"prepared_root": str(self.prepared_root), "sensor_id": sensor_id},
-            )
+            try:
+                schema = _load_rsrf_sensor_schema(sensor_id)
+            except SensorSchemaError:
+                raise SensorSchemaError(
+                    "Sensor schema is not present in the prepared runtime.",
+                    context={"prepared_root": str(self.prepared_root), "sensor_id": sensor_id},
+                ) from None
+            self._sensor_schemas[sensor_id] = schema
         return schema
 
     def _load_hyperspectral(self, segment: str) -> np.ndarray:

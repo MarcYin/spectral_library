@@ -183,6 +183,18 @@ jobs:
             --k 1 \
             --output "${RUNNER_TEMP}/mapping-smoke/mapped_batch.csv" \
             --diagnostics-output "${RUNNER_TEMP}/mapping-smoke/mapped_batch_diagnostics.json"
+          spectral-library build-mapping-library \
+            --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
+            --source-sensor sentinel-2a_msi \
+            --output-root "${RUNNER_TEMP}/mapping-smoke/prepared_rsrf"
+          spectral-library map-reflectance \
+            --prepared-root "${RUNNER_TEMP}/mapping-smoke/prepared_rsrf" \
+            --source-sensor sentinel-2a_msi \
+            --target-sensor landsat-8_oli \
+            --input "${RUNNER_TEMP}/mapping-smoke/query_sentinel2a_single.csv" \
+            --output-mode target_sensor \
+            --k 1 \
+            --output "${RUNNER_TEMP}/mapping-smoke/mapped_rsrf.csv"
 
   docs-site:
     needs: unit-tests

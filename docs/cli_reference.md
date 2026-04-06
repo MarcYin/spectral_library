@@ -45,10 +45,11 @@ Optional arguments:
 | `--srf-root` | when provided, load extra local sensor-definition JSON documents alongside built-in `rsrf` sensors; each file must be a valid `rsrf_sensor_definition`, with mapping segment metadata in `bands[].extensions.spectral_library.segment` |
 | `--knn-index-backend` | optionally persist ANN indexes for `faiss`, `pynndescent`, or `scann` during build |
 
-When you rely on built-in `rsrf` sensors instead of local JSON definitions, the
-runtime environment must also expose the `rsrf` registry data. If your `rsrf`
-install does not ship it, set `RSRF_ROOT` to an `rsrf` checkout before running
-`build-mapping-library`.
+When you rely on built-in `rsrf` sensors instead of local JSON definitions,
+install `rsrf>=0.3.1`. On first use, `rsrf` can bootstrap the matching
+canonical runtime data into its local cache automatically. Set `RSRF_ROOT` only
+to force a specific checkout or mirrored runtime root, and preseed
+`RSRF_CACHE_DIR` for offline environments.
 
 ### `download-prepared-library`
 
@@ -65,7 +66,7 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--url` | direct URL to a `.tar.gz` runtime archive (skips GitHub Release lookup) |
-| `--tag` | GitHub Release tag to download from (e.g. `v0.6.1`); defaults to latest |
+| `--tag` | GitHub Release tag to download from (e.g. `v0.6.2`); defaults to latest |
 | `--sha256` | expected SHA-256 hex digest for the archive |
 | `--no-verify` | skip runtime validation after extraction |
 

@@ -7,7 +7,9 @@ import importlib.util
 import json
 import os
 import pickle
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from typing import Any
@@ -3009,6 +3011,49 @@ class MappingValidationTests(unittest.TestCase):
             with self.assertRaises(SensorSchemaError):
                 mapping_module.load_sensor_schemas(legacy_root)
 
+    def test_resolve_rsrf_root_prefers_explicit_env_override(self) -> None:
+        fake_rsrf = types.ModuleType("rsrf")
+        fake_rsrf.__file__ = "/tmp/site-packages/rsrf/__init__.py"
+        fake_rsrf.__path__ = ["/tmp/site-packages/rsrf"]
+        fake_rsrf.PACKAGE_ROOT = Path("/tmp/site-packages/rsrf")
+        fake_rsrf.__version__ = "0.3.1"
+        fake_registry = types.ModuleType("rsrf.registry")
+        fake_rsrf.registry = fake_registry
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_root = Path(tmpdir) / "explicit-rsrf-root"
+            registry_path = env_root / schema_module.RSRF_REGISTRY_RELATIVE_PATH
+            registry_path.parent.mkdir(parents=True, exist_ok=True)
+            registry_path.write_text("stub", encoding="utf-8")
+
+            with patch.dict(sys.modules, {"rsrf": fake_rsrf, "rsrf.registry": fake_registry}):
+                with patch.dict(os.environ, {schema_module.RSRF_ROOT_ENV_VAR: str(env_root)}, clear=True):
+                    resolved = schema_module._resolve_rsrf_root()
+
+        self.assertEqual(resolved, env_root.resolve())
+
+    def test_resolve_rsrf_root_uses_rsrf_runtime_release_root(self) -> None:
+        fake_rsrf = types.ModuleType("rsrf")
+        fake_rsrf.__file__ = "/tmp/site-packages/rsrf/__init__.py"
+        fake_rsrf.__path__ = ["/tmp/site-packages/rsrf"]
+        fake_rsrf.PACKAGE_ROOT = Path("/tmp/site-packages/rsrf")
+        fake_rsrf.__version__ = "0.3.1"
+        fake_registry = types.ModuleType("rsrf.registry")
+        fake_rsrf.registry = fake_registry
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_root = Path(tmpdir) / "runtime-root"
+            registry_path = runtime_root / schema_module.RSRF_REGISTRY_RELATIVE_PATH
+            registry_path.parent.mkdir(parents=True, exist_ok=True)
+            registry_path.write_text("stub", encoding="utf-8")
+            fake_registry._runtime_release_root = lambda: runtime_root
+
+            with patch.dict(sys.modules, {"rsrf": fake_rsrf, "rsrf.registry": fake_registry}):
+                with patch.dict(os.environ, {}, clear=True):
+                    resolved = schema_module._resolve_rsrf_root()
+
+        self.assertEqual(resolved, runtime_root.resolve())
+
     def test_load_sensor_schemas_resolves_required_rsrf_sensor(self) -> None:
         schema = SensorSRFSchema.from_dict(
             _custom_sensor_payload(
@@ -3080,7 +3125,7 @@ class MappingValidationTests(unittest.TestCase):
             mapper = SpectralMapper(fixture["prepared_root"])
 
             with self.assertRaises(SensorSchemaError):
-                mapper.get_sensor_schema("snpp_viirs")
+                mapper.get_sensor_schema("missing_sensor")
 
             with self.assertRaises(PreparedLibraryValidationError):
                 mapper._load_source_matrix("snpp_viirs", "swir")
@@ -4091,6 +4136,40 @@ class MappingCliTests(unittest.TestCase):
                     )
             self.assertEqual(prepare_exit, 0)
             self.assertTrue((fixture["prepared_root"] / "source_sentinel-2c_msi_vnir.npy").exists())
+
+    def test_spectral_mapper_lazily_resolves_missing_target_schema_from_rsrf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture = _build_fixture(root)
+            source_only_root = root / "source-only"
+            source_only_root.mkdir()
+            (source_only_root / "sensor_a.json").write_text(
+                (fixture["srf_root"] / "sensor_a.json").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            build_mapping_library(
+                fixture["siac_root"],
+                source_only_root,
+                fixture["prepared_root"],
+                ["sensor_a"],
+            )
+            mapper = SpectralMapper(fixture["prepared_root"])
+            target_schema = SensorSRFSchema.from_dict(
+                json.loads((fixture["srf_root"] / "sensor_b.json").read_text(encoding="utf-8"))
+            )
+
+            with patch.object(runtime_module, "_load_rsrf_sensor_schema", return_value=target_schema) as mocked_loader:
+                result = mapper.map_reflectance(
+                    source_sensor="sensor_a",
+                    reflectance={"blue": 0.80, "swir": 0.20},
+                    output_mode="target_sensor",
+                    target_sensor="sensor_b",
+                )
+
+            mocked_loader.assert_called_once_with("sensor_b")
+            self.assertEqual(result.target_band_ids, ("target_vnir", "target_swir"))
+            self.assertIsNotNone(result.target_reflectance)
+            self.assertIn("sensor_b", mapper._sensor_schemas)
 
     def test_legacy_prepare_command_alias_still_builds_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5316,7 +5395,7 @@ class MappingCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
                 cli.main_with_args(["--version"])
             self.assertEqual(version_exit.exception.code, 0)
-            self.assertIn("0.6.1", version_stdout.getvalue())
+            self.assertIn("0.6.2", version_stdout.getvalue())
 
             _write_csv(
                 input_path,
