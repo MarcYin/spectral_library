@@ -20,6 +20,21 @@ package contract.
 - [Release Design](production_release_standard_plan.md)
   records the release-standardization plan that shaped the package surface
 
+## Current Repository Package Layout
+
+- `src/spectral_library/mapping/`
+  public mapping runtime, prepared-runtime build, and retrieval engine
+- `src/spectral_library/distribution/`
+  runtime download helpers
+- `src/spectral_library/sources/`
+  source manifests, fetchers, fetch batching, and catalog assembly
+- `src/spectral_library/normalization/`
+  normalization, coverage filtering, quality plots, and SIAC package export
+
+The older flat root modules for those areas are now compatibility shims over
+the refactored package layout, so maintainers should use the package paths
+above when navigating the codebase.
+
 ## Public Docs
 
 If you are using the package rather than maintaining the repository, start with:

@@ -95,7 +95,7 @@ model well enough to trust the outputs.
 - [Security and Provenance](security_provenance.md)
 - [Release Process](release_process.md)
 - [Migration Guide](migration.md)
-- [Release Notes 0.4.0](releases/0.4.0.md)
+- [Release Notes 0.5.0](releases/0.5.0.md)
 - [Release Notes 0.3.1](releases/0.3.1.md)
 - [Release Notes 0.2.0](releases/0.2.0.md)
 - [Release Notes 0.1.0](releases/0.1.0.md)
@@ -108,6 +108,19 @@ model well enough to trust the outputs.
   <div><strong>CLI</strong><span>`spectral-library`</span></div>
   <div><strong>Python</strong><span>`3.9` to `3.14`</span></div>
 </div>
+
+## Repository Layout
+
+The repository code is split into four top-level package areas:
+
+- `spectral_library.mapping`
+  public mapping runtime, prepared-runtime build, and retrieval engine
+- `spectral_library.distribution`
+  runtime download helpers
+- `spectral_library.sources`
+  maintainer-oriented source manifests, fetchers, fetch batching, and catalog assembly
+- `spectral_library.normalization`
+  maintainer-oriented normalization, coverage filtering, quality plots, and SIAC package export
 
 !!! info "Public vs internal material"
     This site includes a small internal section for maintainers. If you are

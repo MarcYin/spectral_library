@@ -5,6 +5,26 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.5.0] - 2026-04-06
+
+### Changed
+
+- canonicalized the public runtime-build entry points to
+  `build_mapping_library(...)` and `spectral-library build-mapping-library`,
+  while keeping compatibility aliases for existing Python and CLI integrations
+- reorganized the codebase into the focused
+  `spectral_library.mapping`, `spectral_library.distribution`,
+  `spectral_library.sources`, and `spectral_library.normalization` packages
+- refreshed package-check, release-smoke, and official-example automation to
+  use the canonical build command and the refactored package layout
+- advanced the package version, release notes, and operator docs for the next
+  tagged release after `v0.4.0`
+
+### Fixed
+
+- restored compatibility wrappers for the older flat internal module entry
+  points so the refactor does not break existing imports
+
 ## [0.4.0] - 2026-04-05
 
 ### Changed

@@ -56,19 +56,26 @@ The packaged sensor schema document contains:
   `step_nm=1`
 - `sensors`
 
-Each sensor entry stores an `rsrf`-compatible `response_definition` for every
-band:
+Each sensor entry is a serialized `rsrf_sensor_definition` document. Band
+segment metadata lives under `extensions.spectral_library.segment`:
 
 ```json
 {
+  "schema_type": "rsrf_sensor_definition",
+  "schema_version": "1.0.0",
   "sensor_id": "sentinel-2a_msi",
   "bands": [
     {
       "band_id": "blue",
-      "segment": "vnir",
       "response_definition": {
+        "kind": "sampled",
         "wavelength_nm": [456.0, 457.0, 458.0],
         "response": [0.001, 0.01, 0.05]
+      },
+      "extensions": {
+        "spectral_library": {
+          "segment": "vnir"
+        }
       }
     }
   ]
@@ -80,7 +87,7 @@ Band rules:
 | Rule | Meaning |
 | --- | --- |
 | unique `band_id` | no duplicates within one sensor |
-| valid `segment` | must be `vnir` or `swir` |
+| valid `extensions.spectral_library.segment` | must be `vnir` or `swir` |
 | valid `response_definition` | must be accepted by `rsrf` |
 | increasing sampled wavelengths | realized sampled wavelengths must be strictly increasing |
 | positive SRF support | realized SRF must contain at least one positive sample |
@@ -121,7 +128,7 @@ But the checksum document itself is still required.
 - row-index continuity and uniqueness in `mapping_metadata.parquet`
 - checksum integrity when hashing is enabled
 
-During `prepare_mapping_library(...)`, blank `nm_*` cells in the SIAC
+During `build_mapping_library(...)`, blank `nm_*` cells in the SIAC
 normalized spectra table are handled conservatively:
 
 - leading and trailing gaps are edge-extrapolated onto the canonical grid

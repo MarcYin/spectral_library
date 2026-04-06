@@ -29,6 +29,14 @@ Current retained build roots:
 
 Important internal paths:
 
+- `src/spectral_library/sources/`
+  source manifests, fetchers, fetch batching, and catalog assembly
+- `src/spectral_library/normalization/`
+  normalization pipeline, coverage filtering, quality plots, and SIAC package export
+- `src/spectral_library/distribution/`
+  runtime download helpers
+- `src/spectral_library/mapping/`
+  public mapping runtime, prepared-runtime build, and retrieval engine
 - `manifests/sources.csv`
   curated source inventory, fetch adapters, source status, and notes
 - `manifests/siac_excluded_spectra.csv`
@@ -110,4 +118,4 @@ Current top-level QA locations in the retained build:
 - The internal build pipeline remains repository-specific and may change without
   the compatibility guarantees applied to the public mapping package.
 - The public prepared-runtime contract begins after SIAC export, at
-  `prepare-mapping-library`.
+  `build-mapping-library`.

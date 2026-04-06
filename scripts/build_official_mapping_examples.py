@@ -497,18 +497,27 @@ def _fwhm_nm(wavelength_nm: np.ndarray, rsr: np.ndarray) -> float:
 
 
 def _band_payload(band_id: str, segment: str, wavelengths_nm: np.ndarray, rsr: np.ndarray) -> dict[str, object]:
-    support = rsr > 0
     return {
         "band_id": band_id,
-        "segment": segment,
         "response_definition": {
+            "kind": "sampled",
             "wavelength_nm": [round(float(value), 4) for value in wavelengths_nm.tolist()],
             "response": [round(float(value), 8) for value in rsr.tolist()],
         },
-        "center_nm": round(_weighted_center(wavelengths_nm, rsr), 4),
-        "fwhm_nm": round(_fwhm_nm(wavelengths_nm, rsr), 4),
-        "support_min_nm": round(float(wavelengths_nm[support][0]), 4),
-        "support_max_nm": round(float(wavelengths_nm[support][-1]), 4),
+        "extensions": {
+            "spectral_library": {
+                "segment": segment,
+            }
+        },
+    }
+
+
+def _sensor_payload(sensor_id: str, bands: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "schema_type": "rsrf_sensor_definition",
+        "schema_version": "1.0.0",
+        "sensor_id": sensor_id,
+        "bands": bands,
     }
 
 
@@ -567,7 +576,7 @@ def _parse_modis_sensor(selection: SensorSelection, workbook_path: Path) -> dict
             dtype=np.float64,
         )
         bands.append(_band_payload(band.band_id, band.segment, wavelengths_nm, rsr))
-    return {"sensor_id": selection.sensor_id, "bands": bands}
+    return _sensor_payload(selection.sensor_id, bands)
 
 
 def _parse_sentinel_sensor(selection: SensorSelection, workbook_path: Path) -> dict[str, object]:
@@ -598,7 +607,7 @@ def _parse_sentinel_sensor(selection: SensorSelection, workbook_path: Path) -> d
                 np.asarray(response, dtype=np.float64),
             )
         )
-    return {"sensor_id": selection.sensor_id, "bands": bands}
+    return _sensor_payload(selection.sensor_id, bands)
 
 
 def _parse_landsat_sensor(selection: SensorSelection) -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -616,7 +625,7 @@ def _parse_landsat_sensor(selection: SensorSelection) -> tuple[dict[str, object]
         artifact_payload["official_band"] = band.official_band
         artifact_payload["band_id"] = band.band_id
         artifacts.append(artifact_payload)
-    return {"sensor_id": selection.sensor_id, "bands": bands}, artifacts
+    return _sensor_payload(selection.sensor_id, bands), artifacts
 
 
 def _simulate_sensor(sensor_schema: dict[str, object], spectrum: np.ndarray) -> dict[str, float]:
@@ -698,7 +707,7 @@ def _prepare_example_runtime(prepared_root: Path, siac_root: Path) -> None:
     if prepared_root.exists():
         shutil.rmtree(prepared_root)
     _run_cli(
-        "prepare-mapping-library",
+        "build-mapping-library",
         "--siac-root",
         str(siac_root),
         "--srf-root",
@@ -1270,7 +1279,10 @@ def _plot_holdout_neighbor_overlays(
         for axis, segment in zip(row_axes, ("vnir", "swir")):
             segment_payload = segment_payloads[segment]  # type: ignore[index]
             query_band_ids = [str(value) for value in segment_payload["query_band_ids"]]  # type: ignore[index]
-            band_centers = [float(band_by_id[band_id]["center_nm"]) for band_id in query_band_ids]
+            band_centers = [
+                _weighted_center(*_band_curve_arrays(band_by_id[band_id]))
+                for band_id in query_band_ids
+            ]
             band_values = [float(value) for value in segment_payload["query_band_values"]]  # type: ignore[index]
             top_neighbors = _sorted_segment_neighbors(segment_payload, top_n=OVERLAY_TOP_NEIGHBORS)
             start_nm, end_nm = segment_ranges[segment]
@@ -1421,7 +1433,7 @@ def _render_official_sensor_examples_doc(
     holdout_batch_query_name = _holdout_batch_query_path().name
 
     prepare_runtime_block = _shell_block(
-        "spectral-library prepare-mapping-library",
+        "spectral-library build-mapping-library",
         f"  --siac-root {_shell_quote(full_library_root)}",
         "  --srf-root examples/official_mapping/srfs",
         "  --source-sensor terra_modis",

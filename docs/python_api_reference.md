@@ -17,10 +17,24 @@ from spectral_library import (
     SpectralLibraryError,
     SpectralMapper,
     benchmark_mapping,
-    prepare_mapping_library,
+    build_mapping_library,
     validate_prepared_library,
 )
 ```
+
+The repository is also organized into four package areas:
+
+- `spectral_library.mapping`
+  public mapping runtime, prepared-runtime build, and retrieval engine
+- `spectral_library.distribution`
+  runtime download helpers
+- `spectral_library.sources`
+  maintainer-oriented source acquisition and catalog tools
+- `spectral_library.normalization`
+  maintainer-oriented normalization and SIAC package-export tools
+
+The stable public contract is centered on the root `spectral_library` imports
+above plus the documented `spectral_library.distribution` download helper.
 
 ## Public Workflow
 
@@ -31,11 +45,11 @@ Download a pre-built prepared runtime from GitHub Releases or a direct URL.
 ```python
 from pathlib import Path
 
-from spectral_library.runtime_download import download_prepared_library
+from spectral_library.distribution import RuntimeDownloadError, download_prepared_library
 
 output = download_prepared_library(
     Path("build/mapping_runtime"),
-    # tag="v0.4.0",       # optional: pin to a specific release
+    # tag="v0.5.0",       # optional: pin to a specific release
     # url="https://...",   # optional: direct tarball URL
     # sha256="abc123...",  # optional: expected digest
 )
@@ -49,16 +63,16 @@ Raises:
 
 - `RuntimeDownloadError` when the download, verification, or extraction fails
 
-### 1. `prepare_mapping_library(...)`
+### 1. `build_mapping_library(...)`
 
 Build the prepared runtime used by mapping.
 
 ```python
 from pathlib import Path
 
-from spectral_library import prepare_mapping_library
+from spectral_library import build_mapping_library
 
-manifest = prepare_mapping_library(
+manifest = build_mapping_library(
     siac_root=Path("build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37"),
     srf_root=None,
     output_root=Path("build/official_mapping_runtime"),
@@ -71,12 +85,11 @@ Built-in sensors now use canonical `rsrf` ids directly, such as
 `sentinel-2a_msi`, `sentinel-2b_msi`, `sentinel-2c_msi`, `landsat-8_oli`,
 `landsat-9_oli2`, `terra_modis`, `snpp_viirs`, `noaa-20_viirs`, and
 `noaa-21_viirs`. Pass `srf_root=Path(...)` only when you need extra local
-sensor JSON definitions. Those local bands must provide an
-`rsrf`-compatible `response_definition`, which may describe either sampled
-responses or a `center_wavelength_nm` plus `fwhm_nm` band spec. Legacy
-top-level sampled-band payloads are not accepted for custom sensors. If your
-`rsrf` install does not include its registry data, set `RSRF_ROOT` to an
-`rsrf` checkout before using the built-in sensor catalog.
+sensor JSON definitions. Those local files must be valid
+`rsrf_sensor_definition` documents, and any mapping-specific segment metadata
+must live in `bands[].extensions.spectral_library.segment`. If your `rsrf`
+install does not include its registry data, set `RSRF_ROOT` to an `rsrf`
+checkout before using the built-in sensor catalog.
 
 Returns:
 
@@ -374,11 +387,11 @@ Every public error carries:
 
 Represents the stable prepared-runtime manifest returned by:
 
-- `prepare_mapping_library(...)`
+- `build_mapping_library(...)`
 - `validate_prepared_library(...)`
 
 Current prepared runtimes also expose `interpolation_summary` so you can see how
-many SIAC rows required gap repair during prepare. When requested at prepare
+many SIAC rows required gap repair during build. When requested at build
 time, they also expose `knn_index_artifacts` so you can see which persisted ANN
 indexes were written into the runtime.
 
@@ -398,11 +411,10 @@ test split.
 
 ### `SensorSRFSchema`
 
-Represents one public sensor JSON schema in memory.
-
-Custom `bands` entries must provide an `rsrf`-compatible
-`response_definition` payload, which is realized into sampled points before
-matrix preparation.
+Represents one public sensor JSON schema in memory, backed by the `rsrf`
+sensor-definition contract. Custom sensor JSON files should be serialized as
+`rsrf_sensor_definition` documents with
+`bands[].extensions.spectral_library.segment`.
 
 The runtime format itself is documented in
 [Prepared Runtime Contract](prepared_runtime_contract.md).

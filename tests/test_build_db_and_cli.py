@@ -13,8 +13,8 @@ import duckdb
 
 from spectral_library import __version__
 from spectral_library import cli
-from spectral_library.build_db import _load_fetch_results, assemble_catalog
-from spectral_library.manifest import SourceRecord
+from spectral_library.sources.catalog import _load_fetch_results, assemble_catalog
+from spectral_library.sources.manifest import SourceRecord
 
 
 def write_manifest(path: Path, rows: list[dict[str, str]]) -> None:
@@ -501,7 +501,7 @@ class CliCommandTests(unittest.TestCase):
         parser = cli.build_internal_parser()
         args = parser.parse_args(["plan-matrix"])
         self.assertEqual(args.manifest, str(cli.DEFAULT_MANIFEST))
-        self.assertEqual(__version__, "0.4.0")
+        self.assertEqual(__version__, "0.5.0")
 
     def test_internal_parser_hides_legacy_build_siac_library_alias_from_help(self) -> None:
         parser = cli.build_internal_parser()

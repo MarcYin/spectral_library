@@ -12,7 +12,7 @@ Project identity:
 - import package: `spectral_library`
 - public CLI: `spectral-library`
 - internal maintainer CLI: `spectral-library-internal`
-- current version: `0.3.0`
+- current version: `0.5.0`
 - license: `MIT` for repository software and repository-authored docs; referenced or redistributed third-party datasets, metadata, and derived artifacts may remain subject to upstream terms
 
 Documentation:
@@ -29,7 +29,7 @@ Documentation:
 
 ## Install
 
-Install the public package in Python `3.9` to `3.12`:
+Install the public package in Python `3.9` to `3.14`:
 
 ```bash
 python3 -m pip install .
@@ -57,7 +57,7 @@ spectral-library download-prepared-library \
 Or build your own from a SIAC-style export:
 
 ```bash
-spectral-library prepare-mapping-library \
+spectral-library build-mapping-library \
   --siac-root build/siac_library \
   --srf-root path/to/srfs \
   --source-sensor SENSOR_A \
@@ -119,10 +119,27 @@ python3 scripts/run_full_library_benchmarks.py \
 
 For CSV layouts, SRF JSON shape, batch self-exclusion, diagnostics, confidence policy, and Python examples, start with [docs/mapping_quickstart.md](docs/mapping_quickstart.md).
 
+## Repository Layout
+
+The repository is now organized around four package areas:
+
+- `spectral_library.mapping`
+  public mapping runtime, prepared-runtime build, and retrieval engine
+- `spectral_library.distribution`
+  runtime download helpers used by `download-prepared-library`
+- `spectral_library.sources`
+  maintainer-oriented source manifests, fetchers, fetch batching, and catalog assembly
+- `spectral_library.normalization`
+  maintainer-oriented normalization, coverage filtering, quality plots, and SIAC package export
+
+Compatibility wrappers keep older flat root modules like `batch.py`,
+`build_db.py`, `normalize.py`, and `runtime_download.py` importable while the
+implementation lives in the new package layout.
+
 ## What The Package Ships
 
-- Stable public Python API for `prepare_mapping_library(...)`, `validate_prepared_library(...)`, and `SpectralMapper`
-- Public CLI for prepare, validate, single-sample mapping, batch mapping, and benchmarking
+- Stable public Python API for `prepare_mapping_library(...)`, `build_mapping_library(...)`, `validate_prepared_library(...)`, and `SpectralMapper`
+- Public CLI for runtime build, validation, single-sample mapping, batch mapping, and benchmarking
 - Prepared runtime format with manifest, checksums, sensor schema, and optional persisted ANN indexes
 - Exact `numpy` KNN plus optional `scipy_ckdtree`, `faiss`, `pynndescent`, and `scann` backends
 - Multiple retrieval estimators including `mean`, `distance_weighted_mean`, and `simplex_mixture`
@@ -164,4 +181,4 @@ Internal build and source-ingest material is intentionally separated from the pu
 
 - internal overview: [docs/internal_overview.md](docs/internal_overview.md)
 - internal build pipeline: [docs/internal_build_pipeline.md](docs/internal_build_pipeline.md)
-- release notes: [docs/releases/0.4.0.md](docs/releases/0.4.0.md)
+- release notes: [docs/releases/0.5.0.md](docs/releases/0.5.0.md)

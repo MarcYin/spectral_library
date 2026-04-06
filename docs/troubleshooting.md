@@ -13,7 +13,7 @@ missing files or inconsistent metadata.
 
 | Cause | Fix |
 | --- | --- |
-| Incomplete prepare run | Re-run `prepare-mapping-library` from scratch |
+| Incomplete prepare run | Re-run `build-mapping-library` from scratch |
 | Missing `.npy` file for a declared source sensor | Re-run mapping or prepare; the runtime can synthesize missing matrices for supported canonical `rsrf` sensors |
 | Checksum mismatch after manual file edits | Re-prepare the runtime; never edit runtime files by hand |
 | Corrupt download or copy | Re-copy the runtime directory and validate again |
@@ -41,7 +41,7 @@ version is stored in `manifest.json` under `schema_version`.
 | --- | --- |
 | 0.1.x | `1.0.0` |
 | 0.2.x | `1.2.0` |
-| 0.3.x and newer | `2.0.0` |
+| current worktree | `3.0.0` |
 
 ## Mapping Errors
 
@@ -73,7 +73,7 @@ version is stored in `manifest.json` under `schema_version`.
 
 ### `invalid_sensor_schema`
 
-**Symptom:** `prepare-mapping-library` fails while resolving a sensor schema.
+**Symptom:** `build-mapping-library` fails while resolving a sensor schema.
 
 **Common causes:**
 

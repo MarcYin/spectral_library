@@ -110,7 +110,7 @@ The v1 public surface should be intentionally narrow.
 
 The stable public surface for 1.x should include:
 
-- `prepare_mapping_library(...)`
+- `build_mapping_library(...)`
 - `SpectralMapper`
 - a result type for mapping and reconstruction outputs plus diagnostics
 - the sensor SRF schema
@@ -148,7 +148,7 @@ The Python API should be versioned around a small stable surface.
 The v1 stable Python API should be centered on:
 
 ```python
-prepare_mapping_library(...)
+build_mapping_library(...)
 SpectralMapper(...)
 MappingResult(...)
 SensorSRFSchema(...)
@@ -190,7 +190,7 @@ The CLI should be treated as a public contract, not just a developer utility.
 
 The v1 stable commands are:
 
-- `spectral-library prepare-mapping-library`
+- `spectral-library build-mapping-library`
 - `spectral-library map-reflectance`
 - `spectral-library benchmark-mapping`
 
@@ -198,7 +198,7 @@ The v1 stable commands are:
 
 The following flags should be guaranteed across 1.x for the commands above:
 
-`prepare-mapping-library`
+`build-mapping-library`
 
 - `--siac-root`
 - `--srf-root`

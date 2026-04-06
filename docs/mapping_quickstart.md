@@ -11,6 +11,20 @@ It covers the public package workflow:
 5. map a batch
 6. call the Python API directly
 
+Repository package layout:
+
+- `spectral_library.mapping`
+  public mapping runtime, prepared-runtime build, and retrieval engine
+- `spectral_library.distribution`
+  runtime download helpers
+- `spectral_library.sources`
+  maintainer-oriented source acquisition and catalog tools
+- `spectral_library.normalization`
+  maintainer-oriented normalization and SIAC package-export tools
+
+For public usage, the main entry points are the root `spectral_library` imports,
+the `spectral_library.mapping` package, and `spectral_library.distribution`.
+
 ## Before You Start
 
 You need:
@@ -35,7 +49,7 @@ python3 -m pip install .
 Built-in canonical sensors resolved through `rsrf` currently require access to
 the `rsrf` registry data. If your `rsrf` install does not ship
 `data/registry/sensors.parquet`, point `RSRF_ROOT` at an `rsrf` checkout before
-running `prepare-mapping-library` without custom JSON files.
+running `build-mapping-library` without custom JSON files.
 
 Optional extras:
 
@@ -67,7 +81,7 @@ spectral-library download-prepared-library \
 ```
 
 This fetches the latest release, verifies the SHA-256 digest, extracts the
-runtime, and validates it. You can pin a specific release with `--tag v0.4.0`
+runtime, and validates it. You can pin a specific release with `--tag v0.5.0`
 or point at any hosted tarball with `--url <URL>`.
 
 ### Option B: Build your own runtime
@@ -76,7 +90,7 @@ If you need different source sensors or a custom spectral library, build the
 prepared runtime from a SIAC-style export:
 
 ```bash
-spectral-library prepare-mapping-library \
+spectral-library build-mapping-library \
   --siac-root build/siac_library \
   --source-sensor sentinel-2b_msi \
   --source-sensor snpp_viirs \
@@ -85,10 +99,9 @@ spectral-library prepare-mapping-library \
 ```
 
 If you have custom sensor definitions that are not available from `rsrf`, add
-them with `--srf-root path/to/srfs`. Each custom band must provide an
-`rsrf`-compatible `response_definition`, which can describe either sampled
-response arrays or a `center_wavelength_nm` plus `fwhm_nm` band spec. Legacy
-top-level sampled-band payloads are not accepted for custom sensors.
+them with `--srf-root path/to/srfs`. Each file in that directory must be a
+valid `rsrf_sensor_definition` JSON document. Band-level segment metadata must
+be declared in `extensions.spectral_library.segment`.
 
 What this does:
 
@@ -306,9 +319,9 @@ fixed row order does not make the actual KNN search cheaper.
 ```python
 from pathlib import Path
 
-from spectral_library import SpectralMapper, prepare_mapping_library, validate_prepared_library
+from spectral_library import SpectralMapper, build_mapping_library, validate_prepared_library
 
-prepare_mapping_library(
+build_mapping_library(
     siac_root=Path("build/siac_library"),
     srf_root=Path("path/to/srfs"),
     output_root=Path("build/mapping_runtime"),
@@ -370,34 +383,46 @@ For the stable imports and result objects, see
 ## Sensor SRF JSON Shape
 
 Use this only for custom sensors that are not already provided by `rsrf`. Each
-file in `--srf-root` defines one sensor, and each band must provide an
-`rsrf`-compatible `response_definition`:
+file in `--srf-root` defines one `rsrf_sensor_definition` sensor document:
 
 ```json
 {
+  "schema_type": "rsrf_sensor_definition",
+  "schema_version": "1.0.0",
   "sensor_id": "SENSOR_A",
   "bands": [
     {
       "band_id": "blue",
-      "segment": "vnir",
       "response_definition": {
+        "kind": "sampled",
         "wavelength_nm": [445.0, 450.0, 455.0],
         "response": [0.2, 1.0, 0.2]
+      },
+      "extensions": {
+        "spectral_library": {
+          "segment": "vnir"
+        }
       }
     },
     {
       "band_id": "green",
-      "segment": "vnir",
       "response_definition": {
+        "kind": "band_spec",
         "center_wavelength_nm": 560.0,
         "fwhm_nm": 20.0
+      },
+      "extensions": {
+        "spectral_library": {
+          "segment": "vnir"
+        }
       }
     }
   ]
 }
 ```
 
-Band support must stay inside its declared segment:
+Band support must stay inside the segment declared in
+`extensions.spectral_library.segment`:
 
 - `vnir`: `400-1000 nm`
 - `swir`: `800-2500 nm`

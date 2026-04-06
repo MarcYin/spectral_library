@@ -128,7 +128,7 @@ already exist at `build/siac_spectral_library_real_full_raw_no_ghisacasia_no_und
 Use the previously composed full SIAC library and the official-source SRF JSONs:
 
 ```bash
-spectral-library prepare-mapping-library \
+spectral-library build-mapping-library \
   --siac-root build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37 \
   --srf-root examples/official_mapping/srfs \
   --source-sensor terra_modis \

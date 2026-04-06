@@ -83,6 +83,7 @@ jobs:
               "SensorSRFSchema",
               "SpectralMapper",
               "benchmark_mapping",
+              "build_mapping_library",
               "prepare_mapping_library",
               "validate_prepared_library",
           }
@@ -92,7 +93,8 @@ jobs:
           PY
           spectral-library --help >/dev/null
           spectral-library-internal --help >/dev/null
-          spectral-library prepare-mapping-library \
+          spectral-library prepare-mapping-library --help >/dev/null
+          spectral-library build-mapping-library \
             --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
             --srf-root "${RUNNER_TEMP}/mapping-smoke/srfs" \
             --source-sensor sensor_a \
@@ -187,7 +189,8 @@ jobs:
           if [ -n "${{ matrix.persist_backend }}" ]; then
             extra_args="--knn-index-backend ${{ matrix.persist_backend }}"
           fi
-          spectral-library prepare-mapping-library \
+          spectral-library prepare-mapping-library --help >/dev/null
+          spectral-library build-mapping-library \
             --siac-root "${RUNNER_TEMP}/mapping-smoke/siac" \
             --srf-root "${RUNNER_TEMP}/mapping-smoke/srfs" \
             --source-sensor sensor_a \

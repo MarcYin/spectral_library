@@ -6,6 +6,15 @@ The public CLI entry point is:
 spectral-library
 ```
 
+Repository code behind the CLI is now split into:
+
+- `spectral_library.mapping`
+- `spectral_library.distribution`
+- `spectral_library.sources`
+- `spectral_library.normalization`
+
+Only the commands below are part of the public CLI contract.
+
 ## Global Options
 
 | Option | Meaning |
@@ -16,7 +25,7 @@ spectral-library
 
 ## Public Commands
 
-### `prepare-mapping-library`
+### `build-mapping-library`
 
 Build the prepared runtime used by mapping.
 
@@ -33,13 +42,13 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--dtype` | floating-point output dtype, default `float32` |
-| `--srf-root` | when provided, load extra local SRF JSON definitions alongside built-in `rsrf` sensors; each custom band must provide an `rsrf` `response_definition`, and legacy top-level sampled-band payloads are rejected |
-| `--knn-index-backend` | optionally persist ANN indexes for `faiss`, `pynndescent`, or `scann` during prepare |
+| `--srf-root` | when provided, load extra local sensor-definition JSON documents alongside built-in `rsrf` sensors; each file must be a valid `rsrf_sensor_definition`, with mapping segment metadata in `bands[].extensions.spectral_library.segment` |
+| `--knn-index-backend` | optionally persist ANN indexes for `faiss`, `pynndescent`, or `scann` during build |
 
 When you rely on built-in `rsrf` sensors instead of local JSON definitions, the
 runtime environment must also expose the `rsrf` registry data. If your `rsrf`
 install does not ship it, set `RSRF_ROOT` to an `rsrf` checkout before running
-`prepare-mapping-library`.
+`build-mapping-library`.
 
 ### `download-prepared-library`
 
@@ -56,7 +65,7 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--url` | direct URL to a `.tar.gz` runtime archive (skips GitHub Release lookup) |
-| `--tag` | GitHub Release tag to download from (e.g. `v0.4.0`); defaults to latest |
+| `--tag` | GitHub Release tag to download from (e.g. `v0.5.0`); defaults to latest |
 | `--sha256` | expected SHA-256 hex digest for the archive |
 | `--no-verify` | skip runtime validation after extraction |
 
@@ -68,7 +77,7 @@ Required arguments:
 
 | Flag | Meaning |
 | --- | --- |
-| `--prepared-root` | runtime root created by `prepare-mapping-library` |
+| `--prepared-root` | runtime root created by `build-mapping-library` |
 
 Optional arguments:
 
@@ -275,8 +284,8 @@ Each structured error carries an `error_code` field for programmatic handling:
 
 | `error_code` | Raised by | Meaning |
 | --- | --- | --- |
-| `invalid_sensor_schema` | `prepare-mapping-library` | Sensor schema data from `rsrf` or local JSON is malformed, unsupported, or violates band rules |
-| `prepare_failed` | `prepare-mapping-library` | Runtime build failed (missing SIAC files, array errors) |
+| `invalid_sensor_schema` | `build-mapping-library` | Sensor schema data from `rsrf` or local JSON is malformed, unsupported, or violates band rules |
+| `prepare_failed` | `build-mapping-library` | Runtime build failed (missing SIAC files, array errors) |
 | `invalid_prepared_library` | `validate-prepared-library`, `map-reflectance` | Runtime layout or checksums are invalid |
 | `prepared_library_incompatible` | `validate-prepared-library`, `map-reflectance` | Runtime schema version is not supported by this package version |
 | `invalid_mapping_input` | `map-reflectance`, `map-reflectance-batch` | Input reflectance is invalid, sensor not found, or no valid segments |

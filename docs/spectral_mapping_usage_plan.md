@@ -489,7 +489,7 @@ behavior.
 
 ### CLI
 
-#### `spectral-library prepare-mapping-library`
+#### `spectral-library build-mapping-library`
 
 Purpose:
 
@@ -507,7 +507,7 @@ Expected responsibilities:
 Representative arguments:
 
 ```bash
-spectral-library prepare-mapping-library \
+spectral-library build-mapping-library \
   --siac-root build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37 \
   --srf-root path/to/srfs \
   --source-sensor SENSOR_A \
@@ -582,10 +582,10 @@ spectral-library benchmark-mapping \
 
 The Python API should mirror the CLI responsibilities.
 
-#### Preparation Entry Point
+#### Build Entry Point
 
 ```python
-prepare_mapping_library(
+build_mapping_library(
     siac_root: Path,
     srf_root: Path,
     output_root: Path,
@@ -599,7 +599,7 @@ Responsibilities:
 
 - materialize the prepared runtime layer,
 - validate row alignment and sensor schema,
-- persist provenance and preparation settings.
+- persist provenance and build settings.
 
 #### Mapper Object
 

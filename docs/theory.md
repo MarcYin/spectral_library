@@ -90,7 +90,7 @@ where:
 
 This is the same forward model used in:
 
-- `prepare_mapping_library(...)` when precomputing source-sensor matrices
+- `build_mapping_library(...)` when precomputing source-sensor matrices
 - target-sensor simulation during mapping
 - the regression baseline inside `benchmark_mapping(...)`
 

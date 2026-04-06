@@ -22,7 +22,9 @@ benchmarking, not for production mapping.
 Any sensor whose spectral response function (SRF) can be expressed as
 wavelength/RSR pairs on the 400-2500 nm range. The package ships official
 examples for MODIS Terra, Sentinel-2A MSI, Landsat 8 OLI, and Landsat 9 OLI,
-but you can define any sensor by writing an SRF JSON file.
+but you can define custom sensors with `rsrf_sensor_definition` JSON files
+under `--srf-root`. Mapping-specific segment metadata must live in
+`bands[].extensions.spectral_library.segment`.
 
 ### What spectral range is covered?
 

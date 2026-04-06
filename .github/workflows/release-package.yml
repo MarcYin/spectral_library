@@ -185,6 +185,7 @@ jobs:
               "SensorSRFSchema",
               "SpectralMapper",
               "benchmark_mapping",
+              "build_mapping_library",
               "prepare_mapping_library",
               "validate_prepared_library",
           }
@@ -194,7 +195,8 @@ jobs:
           PY
           spectral-library --help >/dev/null
           spectral-library-internal --help >/dev/null
-          spectral-library prepare-mapping-library \
+          spectral-library prepare-mapping-library --help >/dev/null
+          spectral-library build-mapping-library \
             --siac-root "${{ runner.temp }}/mapping-smoke/siac" \
             --srf-root "${{ runner.temp }}/mapping-smoke/srfs" \
             --source-sensor sensor_a \
@@ -229,7 +231,8 @@ jobs:
           expected = {
               'BatchMappingArrayResult', 'BatchMappingResult', 'LinearSpectralMapper',
               'MappingResult', 'PreparedLibraryManifest', 'SensorSRFSchema',
-              'SpectralMapper', 'benchmark_mapping', 'prepare_mapping_library',
+              'SpectralMapper', 'benchmark_mapping', 'build_mapping_library',
+              'prepare_mapping_library',
               'validate_prepared_library',
           }
           missing = sorted(expected - set(sl.__all__))
@@ -237,7 +240,8 @@ jobs:
               raise SystemExit(f'Missing public exports: {missing}')
           "@
           spectral-library --help | Out-Null
-          spectral-library prepare-mapping-library `
+          spectral-library prepare-mapping-library --help | Out-Null
+          spectral-library build-mapping-library `
             --siac-root "${{ runner.temp }}/mapping-smoke/siac" `
             --srf-root "${{ runner.temp }}/mapping-smoke/srfs" `
             --source-sensor sensor_a `
