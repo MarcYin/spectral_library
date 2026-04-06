@@ -11,16 +11,22 @@ from pathlib import Path
 
 import spectral_library
 from spectral_library import (
+    BandInput,
     BatchMappingArrayResult,
     BatchMappingResult,
+    HyperspectralLibraryInput,
     MappingResult,
+    PreparedRuntime,
     PreparedLibraryCompatibilityError,
     PreparedLibraryManifest,
+    SensorInput,
     SensorSRFSchema,
     SpectralMapper,
     benchmark_mapping,
     build_mapping_library,
+    build_mapping_runtime,
     cli,
+    coerce_sensor_input,
     prepare_mapping_library,
     validate_prepared_library,
 )
@@ -31,18 +37,24 @@ class PublicApiContractTests(unittest.TestCase):
     def test_public_exports_and_type_marker_are_stable(self) -> None:
         expected_exports = {
             "__version__",
+            "BandInput",
             "BatchMappingArrayResult",
             "BatchMappingResult",
+            "HyperspectralLibraryInput",
             "MappingInputError",
             "MappingResult",
+            "PreparedRuntime",
             "PreparedLibraryCompatibilityError",
             "PreparedLibraryManifest",
             "PreparedLibraryValidationError",
+            "SensorInput",
             "SensorSRFSchema",
             "SpectralLibraryError",
             "SpectralMapper",
             "benchmark_mapping",
             "build_mapping_library",
+            "build_mapping_runtime",
+            "coerce_sensor_input",
             "prepare_mapping_library",
             "validate_prepared_library",
         }
@@ -58,6 +70,23 @@ class PublicApiContractTests(unittest.TestCase):
         self.assertEqual(
             tuple(inspect.signature(validate_prepared_library).parameters),
             ("prepared_root", "verify_checksums"),
+        )
+        self.assertEqual(
+            tuple(inspect.signature(build_mapping_runtime).parameters),
+            (
+                "library",
+                "source_sensors",
+                "target_sensors",
+                "cache_root",
+                "output_root",
+                "dtype",
+                "knn_index_backends",
+                "verify_checksums",
+            ),
+        )
+        self.assertEqual(
+            tuple(inspect.signature(coerce_sensor_input).parameters),
+            ("sensor_input", "segment_policy"),
         )
         self.assertEqual(
             tuple(inspect.signature(benchmark_mapping).parameters),
@@ -268,6 +297,40 @@ class PublicApiContractTests(unittest.TestCase):
             ),
         )
         self.assertEqual(tuple(SensorSRFSchema.__dataclass_fields__), ("sensor_id", "bands"))
+        self.assertEqual(
+            tuple(BandInput.__dataclass_fields__),
+            (
+                "band_id",
+                "center_wavelength_nm",
+                "fwhm_nm",
+                "response_definition",
+                "rsrf_sensor_id",
+                "rsrf_band_id",
+                "rsrf_representation_variant",
+                "segment",
+            ),
+        )
+        self.assertEqual(
+            tuple(SensorInput.__dataclass_fields__),
+            ("sensor_id", "bands", "band_id_policy", "segment_policy"),
+        )
+        self.assertEqual(
+            tuple(HyperspectralLibraryInput.__dataclass_fields__),
+            ("wavelengths_nm", "spectra", "sample_ids", "metadata_rows", "provenance_metadata", "source_id"),
+        )
+        self.assertEqual(
+            tuple(PreparedRuntime.__dataclass_fields__),
+            (
+                "prepared_root",
+                "mapper",
+                "manifest",
+                "source_sensor_ids",
+                "target_sensor_ids",
+                "source_band_ids",
+                "target_band_ids",
+                "_temporary_directory",
+            ),
+        )
 
 
 class CliContractTests(unittest.TestCase):

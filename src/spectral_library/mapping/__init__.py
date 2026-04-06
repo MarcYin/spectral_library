@@ -9,6 +9,7 @@ from .adapters.sensors import (
     SensorSchemaError,
     _load_rsrf_sensor_schema,
     _simulate_segment_matrix,
+    coerce_sensor_input,
     load_sensor_schemas,
 )
 from .build.library import (
@@ -17,6 +18,7 @@ from .build.library import (
     prepare_mapping_library,
     validate_prepared_library,
 )
+from .inputs import BandInput, HyperspectralLibraryInput, SensorInput
 from .engine.core import (
     CANONICAL_WAVELENGTHS,
     SUPPORTED_KNN_BACKENDS,
@@ -56,20 +58,25 @@ from .engine.runtime import (
     _stitch_target_sensor_segment_rows,
     benchmark_mapping,
 )
+from .runtime_builder import PreparedRuntime, build_mapping_runtime
 
 __all__ = [
+    "BandInput",
     "CANONICAL_WAVELENGTHS",
+    "HyperspectralLibraryInput",
     "SUPPORTED_KNN_BACKENDS",
     "SUPPORTED_NEIGHBOR_ESTIMATORS",
     "SUPPORTED_OUTPUT_MODES",
     "SUPPORTED_PERSISTED_KNN_INDEX_BACKENDS",
     "SWIR_WAVELENGTHS",
+    "SensorInput",
     "VNIR_WAVELENGTHS",
     "BatchMappingArrayResult",
     "BatchMappingResult",
     "LinearSpectralMapper",
     "MappingInputError",
     "MappingResult",
+    "PreparedRuntime",
     "PreparedLibraryBuildError",
     "PreparedLibraryCompatibilityError",
     "PreparedLibraryManifest",
@@ -103,6 +110,8 @@ __all__ = [
     "_temporary_output_path",
     "benchmark_mapping",
     "build_mapping_library",
+    "build_mapping_runtime",
+    "coerce_sensor_input",
     "load_sensor_schemas",
     "prepare_mapping_library",
     "validate_prepared_library",

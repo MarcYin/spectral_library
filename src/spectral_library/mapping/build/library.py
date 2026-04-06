@@ -517,47 +517,64 @@ def _expected_runtime_checksums(manifest: PreparedLibraryManifest, manifest_path
         manifest_path.name: _sha256_runtime_path(manifest_path),
     }
 
-def build_mapping_library(
-    siac_root: Path,
-    srf_root: Path | None,
-    output_root: Path,
-    source_sensors: Sequence[str],
+def _build_mapping_library_from_inputs(
     *,
-    dtype: str = "float32",
+    output_root: Path,
+    metadata_fieldnames: Sequence[str],
+    metadata_rows: Sequence[Mapping[str, object]],
+    hyperspectral: np.ndarray,
+    sensors: Mapping[str, SensorSRFSchema],
+    source_sensor_ids: Sequence[str],
+    source_identity_root: str,
+    source_identity_build_id: str,
+    dtype: np.dtype[Any],
     knn_index_backends: Sequence[str] | None = None,
+    interpolation_summary: Mapping[str, int] | None = None,
 ) -> PreparedLibraryManifest:
-    """Prepare a reusable runtime bundle from SIAC spectra and SRF definitions."""
+    """Build a prepared runtime from already-normalized arrays and sensor schemas."""
 
     dtype_np = np.dtype(dtype)
     if dtype_np.kind != "f":
         raise PreparedLibraryBuildError(
-            "build_mapping_library only supports floating-point dtypes.",
-            context={"dtype": dtype},
+            "_build_mapping_library_from_inputs only supports floating-point dtypes.",
+            context={"dtype": dtype_np.name},
         )
 
-    source_sensor_ids = _normalized_source_sensors(source_sensors)
-    persisted_knn_backends = _normalized_knn_index_backends(knn_index_backends)
-    output_root = Path(output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    source_sensor_ids = _normalized_source_sensors(source_sensor_ids)
+    if not metadata_rows:
+        raise PreparedLibraryBuildError("Prepared-library inputs must include at least one metadata row.")
 
-    metadata_path = Path(siac_root) / "tabular" / "siac_spectra_metadata.csv"
-    spectra_path = Path(siac_root) / "tabular" / "siac_normalized_spectra.csv"
-    metadata_fieldnames, metadata_rows, hyperspectral, interpolation_summary = _load_siac_rows(
-        metadata_path,
-        spectra_path,
-        dtype=dtype_np,
-    )
+    hyperspectral_array = np.asarray(hyperspectral, dtype=dtype_np)
+    if hyperspectral_array.ndim != 2 or hyperspectral_array.shape[1] != FULL_WAVELENGTH_COUNT:
+        raise PreparedLibraryBuildError(
+            "Hyperspectral inputs must be a two-dimensional array on the canonical 400-2500 nm grid.",
+            context={
+                "shape": list(hyperspectral_array.shape),
+                "expected_wavelength_count": FULL_WAVELENGTH_COUNT,
+            },
+        )
+    if hyperspectral_array.shape[0] != len(metadata_rows):
+        raise PreparedLibraryBuildError(
+            "Hyperspectral row count must match the metadata row count.",
+            context={
+                "hyperspectral_row_count": int(hyperspectral_array.shape[0]),
+                "metadata_row_count": len(metadata_rows),
+            },
+        )
 
-    sensors = load_sensor_schemas(srf_root, required_sensor_ids=source_sensor_ids)
     missing_source_sensors = [sensor_id for sensor_id in source_sensor_ids if sensor_id not in sensors]
     if missing_source_sensors:
         raise SensorSchemaError(
             "Requested source sensors could not be resolved.",
-            context={"missing_source_sensors": missing_source_sensors, "srf_root": str(srf_root) if srf_root is not None else None},
+            context={"missing_source_sensors": missing_source_sensors},
         )
 
-    hyperspectral_vnir = hyperspectral[:, _segment_slice("vnir")]
-    hyperspectral_swir = hyperspectral[:, _segment_slice("swir")]
+    persisted_knn_backends = _normalized_knn_index_backends(knn_index_backends)
+    output_root = Path(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    hyperspectral_vnir = hyperspectral_array[:, _segment_slice("vnir")]
+    hyperspectral_swir = hyperspectral_array[:, _segment_slice("swir")]
     np.save(output_root / SEGMENT_FILE_NAMES["vnir"], hyperspectral_vnir)
     np.save(output_root / SEGMENT_FILE_NAMES["swir"], hyperspectral_swir)
 
@@ -601,7 +618,10 @@ def build_mapping_library(
                 "end_nm": CANONICAL_END_NM,
                 "step_nm": 1,
             },
-            "sensors": [_prepared_runtime_sensor_payload(schema) for _, schema in sorted(sensors.items())],
+            "sensors": [
+                _prepared_runtime_sensor_payload(schema)
+                for _, schema in sorted(sensors.items())
+            ],
         },
     )
 
@@ -621,18 +641,18 @@ def build_mapping_library(
     manifest = PreparedLibraryManifest(
         schema_version=PREPARED_SCHEMA_VERSION,
         package_version=__version__,
-        source_siac_root=str(Path(siac_root)),
-        source_siac_build_id=_sha256_paths([metadata_path, spectra_path]),
+        source_siac_root=str(source_identity_root),
+        source_siac_build_id=str(source_identity_build_id),
         prepared_at=datetime.now(timezone.utc).isoformat(),
         source_sensors=tuple(source_sensor_ids),
         supported_output_modes=SUPPORTED_OUTPUT_MODES,
-        row_count=int(hyperspectral.shape[0]),
+        row_count=int(hyperspectral_array.shape[0]),
         vnir_wavelength_range_nm=(VNIR_START_NM, VNIR_END_NM),
         swir_wavelength_range_nm=(SWIR_START_NM, SWIR_END_NM),
         array_dtype=dtype_np.name,
         file_checksums=file_checksums,
         knn_index_artifacts=knn_index_artifacts,
-        interpolation_summary=interpolation_summary,
+        interpolation_summary={str(key): int(value) for key, value in dict(interpolation_summary or {}).items()},
     )
     manifest_path = output_root / "manifest.json"
     _write_json(manifest_path, manifest.to_dict())
@@ -646,6 +666,58 @@ def build_mapping_library(
     }
     _write_json(output_root / "checksums.json", checksums_payload)
     return manifest
+
+def build_mapping_library(
+    siac_root: Path,
+    srf_root: Path | None,
+    output_root: Path,
+    source_sensors: Sequence[str],
+    *,
+    dtype: str = "float32",
+    knn_index_backends: Sequence[str] | None = None,
+) -> PreparedLibraryManifest:
+    """Prepare a reusable runtime bundle from SIAC spectra and SRF definitions."""
+
+    dtype_np = np.dtype(dtype)
+    if dtype_np.kind != "f":
+        raise PreparedLibraryBuildError(
+            "build_mapping_library only supports floating-point dtypes.",
+            context={"dtype": dtype},
+        )
+
+    source_sensor_ids = _normalized_source_sensors(source_sensors)
+    persisted_knn_backends = _normalized_knn_index_backends(knn_index_backends)
+    output_root = Path(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    metadata_path = Path(siac_root) / "tabular" / "siac_spectra_metadata.csv"
+    spectra_path = Path(siac_root) / "tabular" / "siac_normalized_spectra.csv"
+    metadata_fieldnames, metadata_rows, hyperspectral, interpolation_summary = _load_siac_rows(
+        metadata_path,
+        spectra_path,
+        dtype=dtype_np,
+    )
+
+    sensors = load_sensor_schemas(srf_root, required_sensor_ids=source_sensor_ids)
+    missing_source_sensors = [sensor_id for sensor_id in source_sensor_ids if sensor_id not in sensors]
+    if missing_source_sensors:
+        raise SensorSchemaError(
+            "Requested source sensors could not be resolved.",
+            context={"missing_source_sensors": missing_source_sensors, "srf_root": str(srf_root) if srf_root is not None else None},
+        )
+    return _build_mapping_library_from_inputs(
+        output_root=output_root,
+        metadata_fieldnames=metadata_fieldnames,
+        metadata_rows=metadata_rows,
+        hyperspectral=hyperspectral,
+        sensors=sensors,
+        source_sensor_ids=source_sensor_ids,
+        source_identity_root=str(Path(siac_root)),
+        source_identity_build_id=_sha256_paths([metadata_path, spectra_path]),
+        dtype=dtype_np,
+        knn_index_backends=persisted_knn_backends,
+        interpolation_summary=interpolation_summary,
+    )
 
 def validate_prepared_library(
     prepared_root: Path,

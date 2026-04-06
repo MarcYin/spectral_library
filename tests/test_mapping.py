@@ -21,18 +21,24 @@ from spectral_library.mapping.adapters import backends as backends_module
 from spectral_library.mapping.adapters import sensors as schema_module
 from spectral_library.mapping.engine import runtime as runtime_module
 from spectral_library import (
+    BandInput,
     BatchMappingArrayResult,
     BatchMappingResult,
+    HyperspectralLibraryInput,
     LinearSpectralMapper,
     MappingInputError,
+    PreparedRuntime,
     PreparedLibraryCompatibilityError,
     PreparedLibraryManifest,
     PreparedLibraryValidationError,
+    SensorInput,
     SensorSRFSchema,
     SpectralMapper,
     benchmark_mapping,
     cli,
     build_mapping_library,
+    build_mapping_runtime,
+    coerce_sensor_input,
     validate_prepared_library,
 )
 from spectral_library.mapping import PreparedLibraryBuildError, SensorSchemaError
@@ -224,6 +230,28 @@ def _prepare_fixture(root: Path) -> tuple[dict[str, Path], PreparedLibraryManife
         ["sensor_a"],
     )
     return fixture, manifest
+
+
+def _in_memory_library_input() -> HyperspectralLibraryInput:
+    sample_ids = ["base", "vnir_high", "swir_high", "mid"]
+    spectra = np.asarray(
+        [
+            [float(_spectrum_values(0.15, 0.25, 0.25)[column]) for column in NM_COLUMNS],
+            [float(_spectrum_values(0.80, 0.40, 0.20)[column]) for column in NM_COLUMNS],
+            [float(_spectrum_values(0.10, 0.90, 0.90)[column]) for column in NM_COLUMNS],
+            [float(_spectrum_values(0.60, 0.60, 0.60)[column]) for column in NM_COLUMNS],
+        ],
+        dtype=np.float32,
+    )
+    return HyperspectralLibraryInput(
+        wavelengths_nm=WAVELENGTHS,
+        spectra=spectra,
+        sample_ids=sample_ids,
+        provenance_metadata=[
+            {"source_id": "fixture_source", "spectrum_id": sample_id, "sample_name": sample_id}
+            for sample_id in sample_ids
+        ],
+    )
 
 
 class MappingWorkflowTests(unittest.TestCase):
@@ -2788,6 +2816,103 @@ class MappingValidationTests(unittest.TestCase):
         with self.assertRaises(SensorSchemaError):
             valid_schema.bands_for_segment("bad")
 
+    def test_coerce_sensor_input_assigns_segments_and_deterministic_ids(self) -> None:
+        schema = coerce_sensor_input(
+            SensorInput(
+                bands=[
+                    BandInput(center_wavelength_nm=550.0, fwhm_nm=20.0),
+                    BandInput(center_wavelength_nm=1600.0, fwhm_nm=40.0),
+                ]
+            )
+        )
+
+        self.assertTrue(schema.sensor_id.startswith("custom_"))
+        self.assertEqual(schema.band_ids(), ("band_1", "band_2"))
+        self.assertEqual(tuple(band.segment for band in schema.bands), ("vnir", "swir"))
+        self.assertLess(schema.bands[0].support_max_nm or 0.0, 1000.000001)
+        self.assertGreaterEqual(schema.bands[1].support_min_nm or 0.0, 800.0)
+
+    def test_build_mapping_runtime_accepts_in_memory_library_and_target_sensors(self) -> None:
+        runtime = build_mapping_runtime(
+            library=_in_memory_library_input(),
+            source_sensors=[
+                SensorInput(
+                    sensor_id="sensor_a",
+                    bands=[
+                        BandInput(
+                            band_id="blue",
+                            response_definition={
+                                "kind": "sampled",
+                                "wavelength_nm": [445.0, 450.0, 455.0],
+                                "response": [0.2, 1.0, 0.2],
+                            },
+                            segment="vnir",
+                        ),
+                        BandInput(
+                            band_id="swir",
+                            response_definition={
+                                "kind": "sampled",
+                                "wavelength_nm": [1595.0, 1600.0, 1605.0],
+                                "response": [0.2, 1.0, 0.2],
+                            },
+                            segment="swir",
+                        ),
+                    ],
+                )
+            ],
+            target_sensors=[
+                SensorInput(
+                    sensor_id="sensor_b",
+                    bands=[
+                        BandInput(center_wavelength_nm=1700.0, fwhm_nm=20.0, band_id="target_swir"),
+                        BandInput(center_wavelength_nm=500.0, fwhm_nm=20.0, band_id="target_vnir"),
+                    ],
+                )
+            ],
+        )
+        self.addCleanup(runtime.close)
+
+        self.assertIsInstance(runtime, PreparedRuntime)
+        self.assertEqual(runtime.source_sensor_ids, ("sensor_a",))
+        self.assertEqual(runtime.target_sensor_ids, ("sensor_b",))
+        self.assertEqual(runtime.mapper.manifest.source_sensors, ("sensor_a",))
+        self.assertEqual(runtime.get_sensor_schema("sensor_b").band_ids(), ("target_swir", "target_vnir"))
+
+        result = runtime.map_reflectance(
+            source_sensor="sensor_a",
+            reflectance={"blue": 0.79, "swir": 0.21},
+            output_mode="target_sensor",
+            target_sensor="sensor_b",
+        )
+
+        self.assertEqual(result.target_band_ids, ("target_swir", "target_vnir"))
+        assert result.target_reflectance is not None
+        self.assertEqual(result.target_reflectance.shape, (2,))
+
+    def test_build_mapping_runtime_reuses_cache_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_root = Path(tmpdir) / "cache"
+            kwargs = {
+                "library": _in_memory_library_input(),
+                "source_sensors": [
+                    SensorInput(
+                        sensor_id="sensor_a",
+                        bands=[
+                            BandInput(center_wavelength_nm=450.0, fwhm_nm=10.0, band_id="blue"),
+                            BandInput(center_wavelength_nm=1600.0, fwhm_nm=10.0, band_id="swir"),
+                        ],
+                    )
+                ],
+                "cache_root": cache_root,
+            }
+            first = build_mapping_runtime(**kwargs)
+            second = build_mapping_runtime(**kwargs)
+            self.addCleanup(first.close)
+            self.addCleanup(second.close)
+
+            self.assertEqual(first.prepared_root, second.prepared_root)
+            self.assertTrue((first.prepared_root / "manifest.json").exists())
+
     def test_build_mapping_library_rejects_invalid_dtype_and_missing_source_sensor(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture = _build_fixture(Path(tmpdir))
@@ -4893,7 +5018,7 @@ class MappingCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
                 cli.main_with_args(["--version"])
             self.assertEqual(version_exit.exception.code, 0)
-            self.assertIn("0.5.0", version_stdout.getvalue())
+            self.assertIn("0.6.0", version_stdout.getvalue())
 
             _write_csv(
                 input_path,

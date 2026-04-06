@@ -6,18 +6,24 @@ This page documents the stable public imports for `spectral-library`.
 
 ```python
 from spectral_library import (
+    BandInput,
     BatchMappingArrayResult,
     BatchMappingResult,
+    HyperspectralLibraryInput,
     MappingInputError,
     MappingResult,
+    PreparedRuntime,
     PreparedLibraryCompatibilityError,
     PreparedLibraryManifest,
     PreparedLibraryValidationError,
+    SensorInput,
     SensorSRFSchema,
     SpectralLibraryError,
     SpectralMapper,
     benchmark_mapping,
     build_mapping_library,
+    build_mapping_runtime,
+    coerce_sensor_input,
     validate_prepared_library,
 )
 ```
@@ -49,7 +55,7 @@ from spectral_library.distribution import RuntimeDownloadError, download_prepare
 
 output = download_prepared_library(
     Path("build/mapping_runtime"),
-    # tag="v0.5.0",       # optional: pin to a specific release
+    # tag="v0.6.0",       # optional: pin to a specific release
     # url="https://...",   # optional: direct tarball URL
     # sha256="abc123...",  # optional: expected digest
 )
@@ -100,7 +106,96 @@ Raises:
 - `PreparedLibraryBuildError` via `SpectralLibraryError`
 - `SensorSchemaError` via `SpectralLibraryError`
 
-### 2. `validate_prepared_library(...)`
+### 2. `build_mapping_runtime(...)`
+
+Build a reusable mapping runtime directly from in-memory arrays and sensor
+input definitions.
+
+```python
+import numpy as np
+
+from spectral_library import (
+    BandInput,
+    HyperspectralLibraryInput,
+    SensorInput,
+    build_mapping_runtime,
+)
+
+wavelengths = np.arange(400.0, 2501.0, 1.0, dtype=np.float64)
+spectra = np.vstack(
+    [
+        np.full(wavelengths.shape, 0.10, dtype=np.float32),
+        np.full(wavelengths.shape, 0.20, dtype=np.float32),
+    ]
+)
+
+with build_mapping_runtime(
+    library=HyperspectralLibraryInput(
+        wavelengths_nm=wavelengths,
+        spectra=spectra,
+        sample_ids=["sample_a", "sample_b"],
+    ),
+    source_sensors=[
+        SensorInput(
+            sensor_id="source_sensor",
+            bands=[
+                BandInput(band_id="blue", center_wavelength_nm=490.0, fwhm_nm=20.0),
+            ],
+        )
+    ],
+    target_sensors=[
+        SensorInput(
+            sensor_id="target_sensor",
+            bands=[
+                BandInput(band_id="green", center_wavelength_nm=560.0, fwhm_nm=20.0),
+            ],
+        )
+    ],
+) as runtime:
+    result = runtime.map_reflectance(
+        source_sensor="source_sensor",
+        reflectance={"blue": 0.12},
+        output_mode="target_sensor",
+        target_sensor="target_sensor",
+    )
+```
+
+Returns:
+
+- `PreparedRuntime`
+
+Raises:
+
+- `PreparedLibraryBuildError` via `SpectralLibraryError`
+- `SensorSchemaError` via `SpectralLibraryError`
+
+### 3. `coerce_sensor_input(...)`
+
+Normalize a canonical sensor id, an `rsrf_sensor_definition` mapping, or a
+neutral `SensorInput` payload into a `SensorSRFSchema`.
+
+```python
+from spectral_library import BandInput, SensorInput, coerce_sensor_input
+
+schema = coerce_sensor_input(
+    SensorInput(
+        bands=[
+            BandInput(center_wavelength_nm=490.0, fwhm_nm=20.0),
+            BandInput(center_wavelength_nm=1610.0, fwhm_nm=40.0),
+        ]
+    )
+)
+```
+
+Returns:
+
+- `SensorSRFSchema`
+
+Raises:
+
+- `SensorSchemaError` via `SpectralLibraryError`
+
+### 4. `validate_prepared_library(...)`
 
 Validate the runtime layout and optionally verify checksums.
 
@@ -124,7 +219,7 @@ Raises:
 - `PreparedLibraryValidationError`
 - `PreparedLibraryCompatibilityError`
 
-### 3. `SpectralMapper`
+### 5. `SpectralMapper`
 
 Load a prepared runtime and serve mapping requests.
 

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
 import duckdb
@@ -24,10 +24,15 @@ from ... import _rustaccel
 from ..._version import __version__
 
 from ..engine import core as _core
+from ..inputs import BandInput, SensorInput
 
 globals().update({name: getattr(_core, name) for name in dir(_core) if not name.startswith("__")})
 
 del _core
+
+if TYPE_CHECKING:
+    from ..inputs import BandInput as PublicBandInput
+    from ..inputs import SensorInput as PublicSensorInput
 
 def _sensor_band_segment_from_payload(payload: Mapping[str, object]) -> str:
     band_id = payload.get("band_id")
@@ -50,6 +55,289 @@ def _sensor_band_segment_from_payload(payload: Mapping[str, object]) -> str:
             context={"band_id": band_id},
         )
     return segment
+
+def _segment_from_center_wavelength(center_wavelength_nm: float) -> str:
+    return "vnir" if float(center_wavelength_nm) < 1000.0 else "swir"
+
+def _center_wavelength_from_response_definition(response_definition: object) -> float | None:
+    if not isinstance(response_definition, Mapping):
+        return None
+    center = _optional_float(response_definition.get("center_wavelength_nm") or response_definition.get("center_nm"))
+    if center is not None:
+        return center
+    wavelengths = response_definition.get("wavelength_nm")
+    response = response_definition.get("response")
+    if not isinstance(wavelengths, Sequence) or isinstance(wavelengths, (str, bytes, bytearray)):
+        return None
+    if not isinstance(response, Sequence) or isinstance(response, (str, bytes, bytearray)):
+        return None
+    wavelength_values = np.asarray(list(wavelengths), dtype=np.float64)
+    response_values = np.asarray(list(response), dtype=np.float64)
+    if wavelength_values.shape != response_values.shape or wavelength_values.size == 0:
+        return None
+    positive = response_values > 0
+    if not np.any(positive):
+        return float(np.mean(wavelength_values))
+    positive_wavelengths = wavelength_values[positive]
+    positive_weights = response_values[positive]
+    weight_sum = float(np.sum(positive_weights))
+    if weight_sum <= 0:
+        return float(np.mean(positive_wavelengths))
+    return float(np.average(positive_wavelengths, weights=positive_weights))
+
+def _normalized_band_input(
+    band_input: BandInput | Mapping[str, Any],
+) -> BandInput:
+    if isinstance(band_input, BandInput):
+        return band_input
+    if isinstance(band_input, Mapping):
+        extensions = band_input.get("extensions")
+        segment = _optional_string(band_input.get("segment"))
+        if segment is None and isinstance(extensions, Mapping):
+            spectral_library = extensions.get("spectral_library")
+            if isinstance(spectral_library, Mapping):
+                segment = _optional_string(spectral_library.get("segment"))
+        return BandInput(
+            band_id=_optional_string(band_input.get("band_id")),
+            center_wavelength_nm=_optional_float(
+                band_input.get("center_wavelength_nm") or band_input.get("center_nm")
+            ),
+            fwhm_nm=_optional_float(band_input.get("fwhm_nm")),
+            response_definition=(
+                dict(band_input["response_definition"])
+                if isinstance(band_input.get("response_definition"), Mapping)
+                else band_input.get("response_definition")
+            ),
+            rsrf_sensor_id=_optional_string(band_input.get("rsrf_sensor_id")),
+            rsrf_band_id=_optional_string(band_input.get("rsrf_band_id")),
+            rsrf_representation_variant=_optional_string(band_input.get("rsrf_representation_variant")),
+            segment=segment,
+        )
+    raise SensorSchemaError(
+        "SensorInput bands must be BandInput objects or mappings.",
+        context={"band_input_type": type(band_input).__name__},
+    )
+
+def _clip_curve_to_segment(
+    *,
+    wavelengths: Sequence[float],
+    response: Sequence[float],
+    segment: str,
+    support_min_nm: float | None,
+    support_max_nm: float | None,
+    band_id: str,
+) -> tuple[tuple[float, ...], tuple[float, ...], float, float]:
+    wavelengths_array = np.asarray(wavelengths, dtype=np.float64)
+    response_array = np.asarray(response, dtype=np.float64)
+    clipped_min, clipped_max = _rsrf_band_support_bounds(
+        wavelengths_array,
+        response_array,
+        native_support_min_nm=support_min_nm,
+        native_support_max_nm=support_max_nm,
+        segment=segment,
+    )
+    mask = (wavelengths_array >= clipped_min) & (wavelengths_array <= clipped_max)
+    clipped_wavelengths = wavelengths_array[mask]
+    clipped_response = response_array[mask]
+    if clipped_wavelengths.size == 0 or np.all(clipped_response <= 0):
+        raise SensorSchemaError(
+            "Sensor band support does not overlap its declared segment after clipping.",
+            context={"band_id": band_id, "segment": segment},
+        )
+    return (
+        tuple(float(value) for value in clipped_wavelengths),
+        tuple(float(value) for value in clipped_response),
+        float(clipped_min),
+        float(clipped_max),
+    )
+
+def _coerce_band_input(
+    band_input: BandInput | Mapping[str, Any],
+    *,
+    index: int,
+    band_id_policy: str,
+    segment_policy: str,
+) -> SensorBandDefinition:
+    normalized = _normalized_band_input(band_input)
+    if band_id_policy not in {"preserve", "deterministic"}:
+        raise SensorSchemaError(
+            "SensorInput band_id_policy must be 'preserve' or 'deterministic'.",
+            context={"band_id_policy": band_id_policy},
+        )
+    if segment_policy not in {"explicit", "center_wavelength"}:
+        raise SensorSchemaError(
+            "SensorInput segment_policy must be 'explicit' or 'center_wavelength'.",
+            context={"segment_policy": segment_policy},
+        )
+    band_id = normalized.band_id if band_id_policy == "preserve" else None
+    if band_id is None:
+        band_id = f"band_{index + 1}"
+
+    if normalized.rsrf_sensor_id and normalized.rsrf_band_id:
+        variant = normalized.rsrf_representation_variant or RSRF_REPRESENTATION_VARIANT
+        rsrf_module = _load_rsrf_module()
+        rsrf_root = _resolve_rsrf_root()
+        band_rows = rsrf_module.list_bands(
+            normalized.rsrf_sensor_id,
+            representation_variant=variant,
+            root=rsrf_root,
+        )
+        band_row = next((row for row in band_rows if str(row["band_id"]) == normalized.rsrf_band_id), None)
+        if band_row is None:
+            raise SensorSchemaError(
+                "Requested rsrf band could not be resolved for the custom sensor input.",
+                context={"sensor_id": normalized.rsrf_sensor_id, "band_id": normalized.rsrf_band_id},
+            )
+        center_nm = _optional_float(band_row.get("center_wavelength_nm")) or normalized.center_wavelength_nm
+        segment = normalized.segment
+        if segment is None:
+            if segment_policy != "center_wavelength" or center_nm is None:
+                raise SensorSchemaError(
+                    "Custom rsrf band inputs must declare segment or provide a center wavelength for automatic assignment.",
+                    context={"band_id": band_id},
+                )
+            segment = _segment_from_center_wavelength(center_nm)
+        selection = _RsrfBandSelection(
+            band_id=band_id,
+            rsrf_band_id=normalized.rsrf_band_id,
+            segment=segment,
+        )
+        schema_band = _sensor_band_definition_from_rsrf(rsrf_module, rsrf_root, normalized.rsrf_sensor_id, selection)
+        return SensorBandDefinition(
+            band_id=band_id,
+            segment=segment,
+            wavelength_nm=schema_band.wavelength_nm,
+            rsr=schema_band.rsr,
+            center_nm=center_nm,
+            fwhm_nm=_optional_float(band_row.get("fwhm_nm")) or normalized.fwhm_nm,
+            support_min_nm=schema_band.support_min_nm,
+            support_max_nm=schema_band.support_max_nm,
+        )
+
+    response_definition: object | None = None
+    if normalized.response_definition is not None:
+        response_definition = (
+            dict(normalized.response_definition)
+            if isinstance(normalized.response_definition, Mapping)
+            else normalized.response_definition
+        )
+    elif normalized.center_wavelength_nm is not None and normalized.fwhm_nm is not None:
+        response_definition = {
+            "kind": "band_spec",
+            "center_wavelength_nm": float(normalized.center_wavelength_nm),
+            "fwhm_nm": float(normalized.fwhm_nm),
+        }
+    if response_definition is None:
+        raise SensorSchemaError(
+            "Custom band inputs must provide either response_definition, rsrf band reference, or center_wavelength_nm plus fwhm_nm.",
+            context={"band_id": band_id},
+        )
+    resolved_center_nm = normalized.center_wavelength_nm
+    if resolved_center_nm is None:
+        resolved_center_nm = _center_wavelength_from_response_definition(response_definition)
+
+    payload: dict[str, object] = {
+        "band_id": band_id,
+        "response_definition": response_definition,
+    }
+    provisional_segment = normalized.segment
+    if provisional_segment is None and resolved_center_nm is not None and segment_policy == "center_wavelength":
+        provisional_segment = _segment_from_center_wavelength(resolved_center_nm)
+    if provisional_segment is not None:
+        payload["extensions"] = {"spectral_library": {"segment": provisional_segment}}
+    if resolved_center_nm is not None:
+        payload["center_wavelength_nm"] = float(resolved_center_nm)
+        payload["center_nm"] = float(resolved_center_nm)
+    if normalized.fwhm_nm is not None:
+        payload["fwhm_nm"] = float(normalized.fwhm_nm)
+
+    ordered_wavelengths, ordered_rsr, center_nm, fwhm_nm, support_min_nm, support_max_nm = (
+        _coerce_sensor_band_response_definition(payload)
+    )
+    segment = normalized.segment
+    resolved_center_nm = resolved_center_nm if resolved_center_nm is not None else center_nm
+    if segment is None:
+        if segment_policy != "center_wavelength" or resolved_center_nm is None:
+            raise SensorSchemaError(
+                "Custom band inputs must declare segment or provide center_wavelength_nm when segment_policy is explicit.",
+                context={"band_id": band_id},
+            )
+        segment = _segment_from_center_wavelength(resolved_center_nm)
+
+    clipped_wavelengths, clipped_rsr, clipped_min, clipped_max = _clip_curve_to_segment(
+        wavelengths=ordered_wavelengths,
+        response=ordered_rsr,
+        segment=segment,
+        support_min_nm=support_min_nm,
+        support_max_nm=support_max_nm,
+        band_id=band_id,
+    )
+    return SensorBandDefinition(
+        band_id=band_id,
+        segment=segment,
+        wavelength_nm=clipped_wavelengths,
+        rsr=clipped_rsr,
+        center_nm=resolved_center_nm,
+        fwhm_nm=normalized.fwhm_nm if normalized.fwhm_nm is not None else fwhm_nm,
+        support_min_nm=clipped_min,
+        support_max_nm=clipped_max,
+    )
+
+def coerce_sensor_input(
+    sensor_input: str | SensorInput | Mapping[str, Any] | SensorSRFSchema,
+    *,
+    segment_policy: str | None = None,
+) -> SensorSRFSchema:
+    """Normalize canonical, rsrf, or neutral custom sensor input into a schema."""
+
+    if isinstance(sensor_input, SensorSRFSchema):
+        return sensor_input
+    if isinstance(sensor_input, str):
+        sensor_id = sensor_input.strip()
+        if not sensor_id:
+            raise SensorSchemaError("Canonical sensor_id must be non-empty.")
+        return _load_rsrf_sensor_schema(sensor_id)
+    if isinstance(sensor_input, Mapping):
+        bands = sensor_input.get("bands")
+        if not isinstance(bands, Sequence) or isinstance(bands, (str, bytes, bytearray)):
+            raise SensorSchemaError(
+                "Mapping sensor inputs must include a bands sequence.",
+                context={"sensor_input_type": type(sensor_input).__name__},
+            )
+        return coerce_sensor_input(
+            SensorInput(
+                sensor_id=_optional_string(sensor_input.get("sensor_id")),
+                bands=tuple(bands),
+                band_id_policy=_optional_string(sensor_input.get("band_id_policy")) or "preserve",
+                segment_policy=_optional_string(sensor_input.get("segment_policy")) or "center_wavelength",
+            ),
+            segment_policy=segment_policy,
+        )
+    if not isinstance(sensor_input, SensorInput):
+        raise SensorSchemaError(
+            "sensor_input must be a canonical sensor id, SensorInput, rsrf sensor-definition mapping, or SensorSRFSchema.",
+            context={"sensor_input_type": type(sensor_input).__name__},
+        )
+
+    resolved_segment_policy = segment_policy or sensor_input.segment_policy
+    bands = tuple(
+        _coerce_band_input(
+            band,
+            index=index,
+            band_id_policy=sensor_input.band_id_policy,
+            segment_policy=resolved_segment_policy,
+        )
+        for index, band in enumerate(sensor_input.bands)
+    )
+    if not bands:
+        raise SensorSchemaError("SensorInput must include at least one band.")
+
+    sensor_id = (sensor_input.sensor_id or "").strip()
+    if not sensor_id:
+        digest = hashlib.sha256()
+        digest.update(json.dumps([band.to_dict() for band in bands], sort_keys=True).encode("utf-8"))
+        sensor_id = f"custom_{digest.hexdigest()[:12]}"
+    return SensorSRFSchema(sensor_id=sensor_id, bands=bands)
 
 def _ensure_rsrf_sensor_definition_api(rsrf_module: Any, *names: str) -> None:
     missing_api = [name for name in names if not hasattr(rsrf_module, name)]
@@ -144,6 +432,9 @@ def _coerce_sensor_band_response_definition(
             context={"band_id": payload.get("band_id")},
         ) from exc
 
+    resolved_support_min_nm: float | None = None
+    resolved_support_max_nm: float | None = None
+
     if hasattr(resolved_definition, "wavelength_nm") and hasattr(resolved_definition, "response"):
         wavelengths = np.asarray(resolved_definition.wavelength_nm, dtype=np.float64)
         response = np.asarray(resolved_definition.response, dtype=np.float64)
@@ -165,17 +456,28 @@ def _coerce_sensor_band_response_definition(
         fwhm_nm = _optional_float(payload.get("fwhm_nm"))
         if fwhm_nm is None:
             fwhm_nm = float(resolved_definition.fwhm_nm)
+        segment = _sensor_band_segment_from_payload(payload)
+        resolved_support_min_nm, resolved_support_max_nm = _rsrf_band_support_bounds(
+            wavelengths,
+            response,
+            native_support_min_nm=_optional_float(payload.get("support_min_nm")),
+            native_support_max_nm=_optional_float(payload.get("support_max_nm")),
+            segment=segment,
+        )
+        mask = (wavelengths >= resolved_support_min_nm) & (wavelengths <= resolved_support_max_nm)
+        wavelengths = wavelengths[mask]
+        response = response[mask]
 
     ordered_pairs = sorted(zip(wavelengths.tolist(), response.tolist()), key=lambda item: item[0])
     ordered_wavelengths = tuple(float(wavelength) for wavelength, _ in ordered_pairs)
     ordered_rsr = tuple(float(weight) for _, weight in ordered_pairs)
     positive_support = [wavelength for wavelength, weight in ordered_pairs if weight > 0]
 
-    support_min_nm = _optional_float(payload.get("support_min_nm"))
+    support_min_nm = resolved_support_min_nm if resolved_support_min_nm is not None else _optional_float(payload.get("support_min_nm"))
     if support_min_nm is None and positive_support:
         support_min_nm = float(min(positive_support))
 
-    support_max_nm = _optional_float(payload.get("support_max_nm"))
+    support_max_nm = resolved_support_max_nm if resolved_support_max_nm is not None else _optional_float(payload.get("support_max_nm"))
     if support_max_nm is None and positive_support:
         support_max_nm = float(max(positive_support))
 
