@@ -23,6 +23,9 @@ PYTHONPATH=src python3 scripts/run_full_library_benchmarks.py \
   --fail-on-thresholds
 python3 -m pip install build
 python3 scripts/build_distribution.py
+python3 scripts/package_prepared_runtime.py \
+  --prepared-root /path/to/prepared/runtime \
+  --output-dir dist
 ```
 5. Confirm the following GitHub Actions checks are green on `main` or the
    release branch head:
@@ -39,8 +42,8 @@ python3 scripts/build_distribution.py
 Create and push a version tag:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 ## What CI Does
@@ -56,6 +59,10 @@ The release workflow:
 7. publishes release artifacts and GitHub release notes for the tag
 
 The release-notes body is loaded from `docs/releases/<version>.md`.
+
+Pre-built runtime tarballs are packaged separately with
+`scripts/package_prepared_runtime.py` and attached to the GitHub Release after
+the tagged package workflow succeeds.
 
 The scheduled full-library benchmark workflow is separate from tagged release
 publishing and uploads its own JSON/CSV artifacts when enabled.

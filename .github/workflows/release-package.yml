@@ -173,25 +173,90 @@ jobs:
         run: |
           . .venv-release-smoke/bin/activate
           python - <<'PY'
+          import numpy as np
           import spectral_library
           import spectral_library as sl
 
           expected = {
+              "BandInput",
               "BatchMappingArrayResult",
               "BatchMappingResult",
+              "HyperspectralLibraryInput",
               "LinearSpectralMapper",
               "MappingResult",
+              "PreparedRuntime",
               "PreparedLibraryManifest",
+              "SensorInput",
               "SensorSRFSchema",
               "SpectralMapper",
               "benchmark_mapping",
               "build_mapping_library",
+              "build_mapping_runtime",
+              "coerce_sensor_input",
               "prepare_mapping_library",
               "validate_prepared_library",
           }
           missing = sorted(expected - set(sl.__all__))
           if missing:
               raise SystemExit(f"Missing public exports: {missing}")
+
+          schema = sl.coerce_sensor_input(
+              sl.SensorInput(
+                  bands=[
+                      sl.BandInput(center_wavelength_nm=550.0, fwhm_nm=20.0),
+                      sl.BandInput(center_wavelength_nm=1600.0, fwhm_nm=20.0),
+                  ]
+              )
+          )
+          if schema.band_ids() != ("band_1", "band_2"):
+              raise SystemExit(f"Unexpected normalized band ids: {schema.band_ids()}")
+
+          wavelengths = np.arange(400.0, 2501.0, 1.0, dtype=np.float64)
+          spectra = np.vstack(
+              [
+                  np.full(wavelengths.shape, 0.1, dtype=np.float32),
+                  np.full(wavelengths.shape, 0.2, dtype=np.float32),
+              ]
+          )
+          with sl.build_mapping_runtime(
+              library=sl.HyperspectralLibraryInput(
+                  wavelengths_nm=wavelengths,
+                  spectra=spectra,
+                  sample_ids=["sample_a", "sample_b"],
+              ),
+              source_sensors=[
+                  sl.SensorInput(
+                      sensor_id="source_sensor",
+                      bands=[
+                          sl.BandInput(
+                              band_id="blue",
+                              center_wavelength_nm=490.0,
+                              fwhm_nm=20.0,
+                          ),
+                      ],
+                  )
+              ],
+              target_sensors=[
+                  sl.SensorInput(
+                      sensor_id="target_sensor",
+                      bands=[
+                          sl.BandInput(
+                              band_id="green",
+                              center_wavelength_nm=560.0,
+                              fwhm_nm=20.0,
+                          ),
+                      ],
+                  )
+              ],
+          ) as runtime:
+              result = runtime.map_reflectance(
+                  source_sensor="source_sensor",
+                  reflectance={"blue": 0.15},
+                  output_mode="target_sensor",
+                  target_sensor="target_sensor",
+              )
+              if result.target_band_ids != ("green",):
+                  raise SystemExit(f"Unexpected target bands: {result.target_band_ids}")
           PY
           spectral-library --help >/dev/null
           spectral-library-internal --help >/dev/null
@@ -227,17 +292,78 @@ jobs:
         run: |
           .\.venv-release-smoke\Scripts\Activate.ps1
           python -c @"
+          import numpy as np
           import spectral_library as sl
           expected = {
+              'BandInput',
               'BatchMappingArrayResult', 'BatchMappingResult', 'LinearSpectralMapper',
-              'MappingResult', 'PreparedLibraryManifest', 'SensorSRFSchema',
+              'HyperspectralLibraryInput', 'MappingResult', 'PreparedRuntime',
+              'PreparedLibraryManifest', 'SensorInput', 'SensorSRFSchema',
               'SpectralMapper', 'benchmark_mapping', 'build_mapping_library',
-              'prepare_mapping_library',
+              'build_mapping_runtime', 'coerce_sensor_input', 'prepare_mapping_library',
               'validate_prepared_library',
           }
           missing = sorted(expected - set(sl.__all__))
           if missing:
               raise SystemExit(f'Missing public exports: {missing}')
+
+          schema = sl.coerce_sensor_input(
+              sl.SensorInput(
+                  bands=[
+                      sl.BandInput(center_wavelength_nm=550.0, fwhm_nm=20.0),
+                      sl.BandInput(center_wavelength_nm=1600.0, fwhm_nm=20.0),
+                  ]
+              )
+          )
+          if schema.band_ids() != ('band_1', 'band_2'):
+              raise SystemExit(f'Unexpected normalized band ids: {schema.band_ids()}')
+
+          wavelengths = np.arange(400.0, 2501.0, 1.0, dtype=np.float64)
+          spectra = np.vstack(
+              [
+                  np.full(wavelengths.shape, 0.1, dtype=np.float32),
+                  np.full(wavelengths.shape, 0.2, dtype=np.float32),
+              ]
+          )
+          with sl.build_mapping_runtime(
+              library=sl.HyperspectralLibraryInput(
+                  wavelengths_nm=wavelengths,
+                  spectra=spectra,
+                  sample_ids=['sample_a', 'sample_b'],
+              ),
+              source_sensors=[
+                  sl.SensorInput(
+                      sensor_id='source_sensor',
+                      bands=[
+                          sl.BandInput(
+                              band_id='blue',
+                              center_wavelength_nm=490.0,
+                              fwhm_nm=20.0,
+                          ),
+                      ],
+                  )
+              ],
+              target_sensors=[
+                  sl.SensorInput(
+                      sensor_id='target_sensor',
+                      bands=[
+                          sl.BandInput(
+                              band_id='green',
+                              center_wavelength_nm=560.0,
+                              fwhm_nm=20.0,
+                          ),
+                      ],
+                  )
+              ],
+          ) as runtime:
+              result = runtime.map_reflectance(
+                  source_sensor='source_sensor',
+                  reflectance={'blue': 0.15},
+                  output_mode='target_sensor',
+                  target_sensor='target_sensor',
+              )
+              if result.target_band_ids != ('green',):
+                  raise SystemExit(f'Unexpected target bands: {result.target_band_ids}')
           "@
           spectral-library --help | Out-Null
           spectral-library prepare-mapping-library --help | Out-Null

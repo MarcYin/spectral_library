@@ -12,7 +12,7 @@ Project identity:
 - import package: `spectral_library`
 - public CLI: `spectral-library`
 - internal maintainer CLI: `spectral-library-internal`
-- current version: `0.5.0`
+- current version: `0.6.0`
 - license: `MIT` for repository software and repository-authored docs; referenced or redistributed third-party datasets, metadata, and derived artifacts may remain subject to upstream terms
 
 Documentation:
@@ -138,7 +138,7 @@ implementation lives in the new package layout.
 
 ## What The Package Ships
 
-- Stable public Python API for `prepare_mapping_library(...)`, `build_mapping_library(...)`, `validate_prepared_library(...)`, and `SpectralMapper`
+- Stable public Python API for `prepare_mapping_library(...)`, `build_mapping_library(...)`, `build_mapping_runtime(...)`, `coerce_sensor_input(...)`, `validate_prepared_library(...)`, and `SpectralMapper`
 - Public CLI for runtime build, validation, single-sample mapping, batch mapping, and benchmarking
 - Prepared runtime format with manifest, checksums, sensor schema, and optional persisted ANN indexes
 - Exact `numpy` KNN plus optional `scipy_ckdtree`, `faiss`, `pynndescent`, and `scann` backends
@@ -181,4 +181,4 @@ Internal build and source-ingest material is intentionally separated from the pu
 
 - internal overview: [docs/internal_overview.md](docs/internal_overview.md)
 - internal build pipeline: [docs/internal_build_pipeline.md](docs/internal_build_pipeline.md)
-- release notes: [docs/releases/0.5.0.md](docs/releases/0.5.0.md)
+- release notes: [docs/releases/0.6.0.md](docs/releases/0.6.0.md)

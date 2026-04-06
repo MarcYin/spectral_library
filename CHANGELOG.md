@@ -5,6 +5,38 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.6.0] - 2026-04-06
+
+### Added
+
+- in-memory runtime construction through `build_mapping_runtime(...)` and the
+  new public `PreparedRuntime`, `HyperspectralLibraryInput`, `SensorInput`,
+  and `BandInput` types
+- public `coerce_sensor_input(...)` support for canonical sensor ids,
+  `rsrf_sensor_definition` payloads, and neutral custom band inputs with
+  deterministic id generation and center-wavelength segment assignment
+- optional target-sensor registration during runtime build so callers can map
+  against custom targets without staging temporary `srf_root` files
+- design notes for the SIAC decoupling work in
+  [`docs/spectral-library-siac-decoupling.md`](docs/spectral-library-siac-decoupling.md)
+
+### Changed
+
+- prepared-runtime assembly is now factored through an internal
+  `_build_mapping_library_from_inputs(...)` path that accepts normalized arrays
+  and schemas without requiring on-disk SIAC exports
+- package-check and tagged-release smoke gates now validate the expanded public
+  root export surface
+- public docs and release metadata now describe the in-memory runtime build
+  path and the `0.6.0` release
+
+### Fixed
+
+- sampled or Gaussian custom band inputs now clip realized support to their
+  declared mapping segment before runtime validation
+- custom sensor inputs without explicit ids now receive deterministic runtime
+  identities derived from their normalized band payloads
+
 ## [0.5.0] - 2026-04-06
 
 ### Changed

@@ -27,6 +27,9 @@ PYTHONPATH=src python3 scripts/run_full_library_benchmarks.py \
   --fail-on-thresholds
 python3 -m pip install build
 python3 scripts/build_distribution.py
+python3 scripts/package_prepared_runtime.py \
+  --prepared-root /path/to/prepared/runtime \
+  --output-dir dist
 ```
 5. Confirm the GitHub Actions security gates are green:
    - `Package Checks`
@@ -42,8 +45,8 @@ python3 scripts/build_distribution.py
 Create and push a version tag:
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 ## CI Responsibilities
@@ -57,6 +60,10 @@ The tagged release workflow:
 5. writes GitHub build-provenance and SBOM attestations
 6. publishes to PyPI through trusted publishing
 7. creates the GitHub release using the matching release-notes file
+
+Pre-built prepared-runtime tarballs are packaged separately with
+`scripts/package_prepared_runtime.py` and attached to the GitHub Release after
+the tagged package workflow succeeds.
 
 The scheduled full-library benchmark workflow is separate from tagged package
 release publishing. It runs from
