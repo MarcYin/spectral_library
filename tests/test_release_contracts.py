@@ -362,6 +362,10 @@ class CliContractTests(unittest.TestCase):
         map_options = {option for action in command_parsers["map-reflectance"]._actions for option in action.option_strings}
         batch_options = {option for action in command_parsers["map-reflectance-batch"]._actions for option in action.option_strings}
         benchmark_options = {option for action in command_parsers["benchmark-mapping"]._actions for option in action.option_strings}
+        map_prepared_action = command_parsers["map-reflectance"]._option_string_actions["--prepared-root"]
+        batch_prepared_action = command_parsers["map-reflectance-batch"]._option_string_actions["--prepared-root"]
+        benchmark_prepared_action = command_parsers["benchmark-mapping"]._option_string_actions["--prepared-root"]
+        validate_prepared_action = command_parsers["validate-prepared-library"]._option_string_actions["--prepared-root"]
         backend_choices = set(command_parsers["map-reflectance"]._option_string_actions["--knn-backend"].choices)
 
         self.assertEqual(legacy_prepare_options, prepare_options)
@@ -423,6 +427,10 @@ class CliContractTests(unittest.TestCase):
                 benchmark_options
             )
         )
+        self.assertFalse(map_prepared_action.required)
+        self.assertFalse(batch_prepared_action.required)
+        self.assertFalse(benchmark_prepared_action.required)
+        self.assertTrue(validate_prepared_action.required)
         self.assertTrue({"numpy", "scipy_ckdtree", "faiss", "pynndescent", "scann"}.issubset(backend_choices))
 
     def test_internal_cli_parser_exposes_retained_maintainer_commands(self) -> None:

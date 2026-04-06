@@ -14,7 +14,11 @@ from typing import Iterator, Mapping, Sequence
 import numpy as np
 
 from ._version import __version__
-from .distribution import RuntimeDownloadError, download_prepared_library
+from .distribution import (
+    RuntimeDownloadError,
+    download_prepared_library,
+    resolve_prepared_library_root,
+)
 from .mapping import (
     CANONICAL_WAVELENGTHS,
     SUPPORTED_KNN_BACKENDS,
@@ -69,6 +73,19 @@ LEGACY_INTERNAL_COMMANDS = ("build-siac-library",)
 
 def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _resolve_cli_prepared_root(prepared_root: str | None) -> Path:
+    explicit_prepared_root = (prepared_root or "").strip()
+    try:
+        resolved_root = resolve_prepared_library_root(explicit_prepared_root or None)
+    except RuntimeDownloadError as exc:
+        raise SpectralLibraryError(
+            "download_failed",
+            str(exc),
+            context={"prepared_root": explicit_prepared_root or None},
+        ) from exc
+    return resolved_root
 
 
 def _emit_cli_log(
@@ -1281,6 +1298,8 @@ def cmd_build_mapping_library(args: argparse.Namespace) -> int:
 def cmd_map_reflectance(args: argparse.Namespace) -> int:
     exclude_row_ids = _split_repeated_csv_arg(args.exclude_row_id)
     exclude_sample_names = _split_repeated_csv_arg(args.exclude_sample_name)
+    explicit_prepared_root = (getattr(args, "prepared_root", None) or "").strip()
+    prepared_root_source = "override" if explicit_prepared_root else "published_default"
     _emit_cli_log(
         args,
         command="map-reflectance",
@@ -1296,12 +1315,14 @@ def cmd_map_reflectance(args: argparse.Namespace) -> int:
             "neighbor_review_output": str(Path(args.neighbor_review_output)) if args.neighbor_review_output else None,
             "output_mode": args.output_mode,
             "output_path": str(Path(args.output)),
-            "prepared_root": str(Path(args.prepared_root)),
+            "prepared_root": explicit_prepared_root or None,
+            "prepared_root_source": prepared_root_source,
             "source_sensor": args.source_sensor,
             "target_sensor": args.target_sensor or None,
         },
     )
-    mapper = SpectralMapper(Path(args.prepared_root))
+    prepared_root = _resolve_cli_prepared_root(getattr(args, "prepared_root", None))
+    mapper = SpectralMapper(prepared_root)
     reflectance, valid_mask = _load_reflectance_input(Path(args.input))
     include_debug = bool(args.diagnostics_output or args.neighbor_review_output)
     if include_debug:
@@ -1395,6 +1416,8 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
     exclude_row_ids = _split_repeated_csv_arg(args.exclude_row_id)
     exclude_sample_names = _split_repeated_csv_arg(args.exclude_sample_name)
     output_path = Path(args.output)
+    explicit_prepared_root = (getattr(args, "prepared_root", None) or "").strip()
+    prepared_root_source = "override" if explicit_prepared_root else "published_default"
     _emit_cli_log(
         args,
         command="map-reflectance-batch",
@@ -1411,14 +1434,16 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
             "output_format": args.output_format,
             "output_path": str(output_path),
             "output_chunk_size": args.output_chunk_size,
-            "prepared_root": str(Path(args.prepared_root)),
+            "prepared_root": explicit_prepared_root or None,
+            "prepared_root_source": prepared_root_source,
             "self_exclude_sample_id": bool(args.self_exclude_sample_id),
             "neighbor_estimator": args.neighbor_estimator,
             "source_sensor": args.source_sensor,
             "target_sensor": args.target_sensor or None,
         },
     )
-    mapper = SpectralMapper(Path(args.prepared_root))
+    prepared_root = _resolve_cli_prepared_root(getattr(args, "prepared_root", None))
+    mapper = SpectralMapper(prepared_root)
     _, input_fieldnames = _batch_input_layout(Path(args.input))
     sample_ids: tuple[str, ...] = ()
     reflectance_rows: list[dict[str, float]] = []
@@ -1563,6 +1588,8 @@ def cmd_map_reflectance_batch(args: argparse.Namespace) -> int:
 
 
 def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
+    explicit_prepared_root = (getattr(args, "prepared_root", None) or "").strip()
+    prepared_root_source = "override" if explicit_prepared_root else "published_default"
     _emit_cli_log(
         args,
         command="benchmark-mapping",
@@ -1572,7 +1599,8 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
             "knn_backend": args.knn_backend,
             "knn_eps": args.knn_eps,
             "max_test_rows": args.max_test_rows if args.max_test_rows > 0 else None,
-            "prepared_root": str(Path(args.prepared_root)),
+            "prepared_root": explicit_prepared_root or None,
+            "prepared_root_source": prepared_root_source,
             "random_seed": args.random_seed,
             "report": str(Path(args.report)),
             "neighbor_estimator": args.neighbor_estimator,
@@ -1581,8 +1609,9 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
             "test_fraction": args.test_fraction,
         },
     )
+    prepared_root = _resolve_cli_prepared_root(getattr(args, "prepared_root", None))
     report = benchmark_mapping(
-        Path(args.prepared_root),
+        prepared_root,
         args.source_sensor,
         args.target_sensor,
         k=args.k,
@@ -1613,7 +1642,8 @@ def cmd_benchmark_mapping(args: argparse.Namespace) -> int:
     print(
         json.dumps(
             {
-                "prepared_root": str(Path(args.prepared_root)),
+                "prepared_root": str(prepared_root),
+                "prepared_root_source": prepared_root_source,
                 "report": str(report_path),
                 "neighbor_estimator": args.neighbor_estimator,
                 "knn_backend": args.knn_backend,
@@ -1764,7 +1794,7 @@ def _add_public_subparsers(subparsers: argparse._SubParsersAction[argparse.Argum
         "map-reflectance",
         help="Map source-sensor reflectance to a target sensor or reconstructed spectral output.",
     )
-    map_parser.add_argument("--prepared-root", required=True)
+    map_parser.add_argument("--prepared-root", default="")
     map_parser.add_argument("--source-sensor", required=True)
     map_parser.add_argument("--target-sensor", default="")
     map_parser.add_argument("--input", required=True)
@@ -1785,7 +1815,7 @@ def _add_public_subparsers(subparsers: argparse._SubParsersAction[argparse.Argum
         "map-reflectance-batch",
         help="Map multiple source-sensor reflectance samples from one CSV input file.",
     )
-    batch_map_parser.add_argument("--prepared-root", required=True)
+    batch_map_parser.add_argument("--prepared-root", default="")
     batch_map_parser.add_argument("--source-sensor", required=True)
     batch_map_parser.add_argument("--target-sensor", default="")
     batch_map_parser.add_argument("--input", required=True)
@@ -1809,7 +1839,7 @@ def _add_public_subparsers(subparsers: argparse._SubParsersAction[argparse.Argum
         "benchmark-mapping",
         help="Benchmark retrieval-based mapping against a regression baseline on held-out library spectra.",
     )
-    benchmark_parser.add_argument("--prepared-root", required=True)
+    benchmark_parser.add_argument("--prepared-root", default="")
     benchmark_parser.add_argument("--source-sensor", required=True)
     benchmark_parser.add_argument("--target-sensor", required=True)
     benchmark_parser.add_argument("--k", type=int, default=10)

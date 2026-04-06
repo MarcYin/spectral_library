@@ -17,6 +17,8 @@ import duckdb
 import numpy as np
 
 import spectral_library.mapping as mapping_module
+from spectral_library import __version__ as PACKAGE_VERSION
+from spectral_library.distribution import RuntimeDownloadError, default_prepared_runtime_root, resolve_prepared_library_root
 from spectral_library.mapping.adapters import backends as backends_module
 from spectral_library.mapping.adapters import sensors as schema_module
 from spectral_library.mapping.engine import runtime as runtime_module
@@ -3747,6 +3749,302 @@ class MappingCliTests(unittest.TestCase):
             self.assertEqual(report["target_sensor_id"], "sensor_b")
             self.assertEqual(report["target_sensor"]["band_ids"], ["target_vnir", "target_swir"])
 
+    def test_resolve_prepared_library_root_returns_override_without_download(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            override_root = Path(tmpdir) / "custom-runtime"
+
+            with patch("spectral_library.distribution.resolver.download_prepared_library") as download_mock:
+                resolved_root = resolve_prepared_library_root(override_root)
+
+            self.assertEqual(resolved_root, override_root)
+            download_mock.assert_not_called()
+
+    def test_resolve_prepared_library_root_downloads_default_runtime_when_cache_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            expected_root = Path(tmpdir) / "cache" / "spectral-library" / "prepared-runtime"
+            with patch("spectral_library.distribution.resolver.default_prepared_runtime_root", return_value=expected_root):
+                with patch("spectral_library.distribution.resolver._cached_prepared_runtime_is_valid", return_value=False):
+                    with patch(
+                        "spectral_library.distribution.resolver.download_prepared_library",
+                        return_value=expected_root,
+                    ) as download_mock:
+                        resolved_root = resolve_prepared_library_root()
+
+            self.assertEqual(resolved_root, expected_root)
+            download_mock.assert_called_once_with(expected_root, tag=f"v{PACKAGE_VERSION}")
+
+    def test_resolve_prepared_library_root_treats_blank_string_as_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            expected_root = Path(tmpdir) / "cache" / "spectral-library" / "prepared-runtime"
+            with patch("spectral_library.distribution.resolver.default_prepared_runtime_root", return_value=expected_root):
+                with patch("spectral_library.distribution.resolver._cached_prepared_runtime_is_valid", return_value=False):
+                    with patch(
+                        "spectral_library.distribution.resolver.download_prepared_library",
+                        return_value=expected_root,
+                    ) as download_mock:
+                        resolved_root = resolve_prepared_library_root("")
+
+            self.assertEqual(resolved_root, expected_root)
+            download_mock.assert_called_once_with(expected_root, tag=f"v{PACKAGE_VERSION}")
+
+    def test_resolve_prepared_library_root_redownloads_when_cached_runtime_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cached_root = Path(tmpdir) / "cache" / "spectral-library" / "prepared-runtime"
+            cached_root.mkdir(parents=True, exist_ok=True)
+            (cached_root / "stale.txt").write_text("stale", encoding="utf-8")
+
+            with patch("spectral_library.distribution.resolver.default_prepared_runtime_root", return_value=cached_root):
+                with patch(
+                    "spectral_library.distribution.resolver._cached_prepared_runtime_is_valid",
+                    side_effect=[False, False],
+                ):
+                    with patch(
+                        "spectral_library.distribution.resolver.download_prepared_library",
+                        return_value=cached_root,
+                    ) as download_mock:
+                        resolved_root = resolve_prepared_library_root()
+
+            self.assertEqual(resolved_root, cached_root)
+            self.assertFalse((cached_root / "stale.txt").exists())
+            download_mock.assert_called_once_with(cached_root, tag=f"v{PACKAGE_VERSION}")
+
+    def test_resolve_prepared_library_root_reuses_cached_default_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cached_root = Path(tmpdir) / "cache" / "spectral-library" / "prepared-runtime"
+            cached_root.mkdir(parents=True, exist_ok=True)
+
+            with patch("spectral_library.distribution.resolver.default_prepared_runtime_root", return_value=cached_root):
+                with patch("spectral_library.distribution.resolver._cached_prepared_runtime_is_valid", return_value=True):
+                    with patch("spectral_library.distribution.resolver.download_prepared_library") as download_mock:
+                        resolved_root = resolve_prepared_library_root()
+
+            self.assertEqual(resolved_root, cached_root)
+            download_mock.assert_not_called()
+
+    def test_resolve_prepared_library_root_treats_empty_string_as_default_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            expected_root = Path(tmpdir) / "cache" / "spectral-library" / "prepared-runtime"
+            with patch("spectral_library.distribution.resolver.default_prepared_runtime_root", return_value=expected_root):
+                with patch("spectral_library.distribution.resolver._cached_prepared_runtime_is_valid", return_value=False):
+                    with patch(
+                        "spectral_library.distribution.resolver.download_prepared_library",
+                        return_value=expected_root,
+                    ) as download_mock:
+                        resolved_root = resolve_prepared_library_root("")
+
+            self.assertEqual(resolved_root, expected_root)
+            download_mock.assert_called_once_with(expected_root, tag=f"v{PACKAGE_VERSION}")
+
+    def test_default_prepared_runtime_root_uses_xdg_cache_when_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"XDG_CACHE_HOME": tmpdir}, clear=False):
+                with patch("spectral_library.distribution.resolver.os.name", "posix"):
+                    with patch("spectral_library.distribution.resolver.sys.platform", "linux"):
+                        resolved_root = default_prepared_runtime_root()
+
+            self.assertEqual(
+                resolved_root,
+                Path(tmpdir) / "spectral-library" / "prepared-runtime" / f"v{PACKAGE_VERSION}",
+            )
+
+    def test_map_reflectance_command_uses_default_runtime_when_prepared_root_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "query.csv"
+            output_path = root / "mapped.csv"
+
+            _write_csv(
+                input_path,
+                ["band_id", "reflectance"],
+                [
+                    {"band_id": "blue", "reflectance": 0.80},
+                    {"band_id": "swir", "reflectance": 0.20},
+                ],
+            )
+
+            with patch.object(cli, "resolve_prepared_library_root", return_value=fixture["prepared_root"]) as resolver_mock:
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = cli.main_with_args(
+                        [
+                            "map-reflectance",
+                            "--source-sensor",
+                            "sensor_a",
+                            "--target-sensor",
+                            "sensor_b",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "target_sensor",
+                            "--k",
+                            "1",
+                            "--output",
+                            str(output_path),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            resolver_mock.assert_called_once_with(None)
+            self.assertTrue(output_path.exists())
+
+    def test_map_reflectance_batch_command_uses_default_runtime_when_prepared_root_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch.csv"
+            output_path = root / "mapped.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "blue", "swir"],
+                [
+                    {"sample_id": "alpha", "blue": 0.80, "swir": 0.20},
+                ],
+            )
+
+            with patch.object(cli, "resolve_prepared_library_root", return_value=fixture["prepared_root"]) as resolver_mock:
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = cli.main_with_args(
+                        [
+                            "map-reflectance-batch",
+                            "--source-sensor",
+                            "sensor_a",
+                            "--target-sensor",
+                            "sensor_b",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "target_sensor",
+                            "--k",
+                            "1",
+                            "--output",
+                            str(output_path),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            resolver_mock.assert_called_once_with(None)
+            self.assertTrue(output_path.exists())
+
+    def test_benchmark_mapping_command_uses_default_runtime_when_prepared_root_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            report_path = root / "benchmark.json"
+
+            with patch.object(cli, "resolve_prepared_library_root", return_value=fixture["prepared_root"]) as resolver_mock:
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = cli.main_with_args(
+                        [
+                            "benchmark-mapping",
+                            "--source-sensor",
+                            "sensor_a",
+                            "--target-sensor",
+                            "sensor_b",
+                            "--k",
+                            "1",
+                            "--test-fraction",
+                            "0.25",
+                            "--random-seed",
+                            "0",
+                            "--report",
+                            str(report_path),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            resolver_mock.assert_called_once_with(None)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["prepared_root"], str(fixture["prepared_root"]))
+            self.assertEqual(payload["prepared_root_source"], "published_default")
+
+    def test_map_reflectance_batch_command_uses_default_runtime_when_prepared_root_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fixture, _ = _prepare_fixture(root)
+            input_path = root / "batch.csv"
+            output_path = root / "mapped_batch.csv"
+
+            _write_csv(
+                input_path,
+                ["sample_id", "band_id", "reflectance"],
+                [
+                    {"sample_id": "alpha", "band_id": "blue", "reflectance": 0.80},
+                    {"sample_id": "alpha", "band_id": "swir", "reflectance": 0.20},
+                ],
+            )
+
+            with patch.object(cli, "resolve_prepared_library_root", return_value=fixture["prepared_root"]) as resolver_mock:
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = cli.main_with_args(
+                        [
+                            "map-reflectance-batch",
+                            "--source-sensor",
+                            "sensor_a",
+                            "--target-sensor",
+                            "sensor_b",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "target_sensor",
+                            "--k",
+                            "1",
+                            "--output",
+                            str(output_path),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            resolver_mock.assert_called_once_with(None)
+            self.assertTrue(output_path.exists())
+
+    def test_map_reflectance_command_reports_download_failure_when_default_runtime_resolution_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            input_path = root / "query.csv"
+
+            _write_csv(
+                input_path,
+                ["band_id", "reflectance"],
+                [
+                    {"band_id": "blue", "reflectance": 0.80},
+                ],
+            )
+
+            stderr = io.StringIO()
+            with patch.object(
+                cli,
+                "resolve_prepared_library_root",
+                side_effect=RuntimeDownloadError("Failed to query GitHub releases: boom"),
+            ):
+                with contextlib.redirect_stderr(stderr):
+                    exit_code = cli.main_with_args(
+                        [
+                            "--json-errors",
+                            "map-reflectance",
+                            "--source-sensor",
+                            "sensor_a",
+                            "--target-sensor",
+                            "sensor_b",
+                            "--input",
+                            str(input_path),
+                            "--output-mode",
+                            "target_sensor",
+                            "--output",
+                            str(root / "unused.csv"),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 2)
+            payload = json.loads(stderr.getvalue())
+            self.assertEqual(payload["command"], "map-reflectance")
+            self.assertEqual(payload["error_code"], "download_failed")
+            self.assertEqual(payload["context"]["prepared_root"], None)
+
     def test_prepare_command_accepts_rsrf_sensor_without_srf_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -5018,7 +5316,7 @@ class MappingCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
                 cli.main_with_args(["--version"])
             self.assertEqual(version_exit.exception.code, 0)
-            self.assertIn("0.6.0", version_stdout.getvalue())
+            self.assertIn("0.6.1", version_stdout.getvalue())
 
             _write_csv(
                 input_path,
