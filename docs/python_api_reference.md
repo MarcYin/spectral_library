@@ -24,6 +24,7 @@ from spectral_library import (
     build_mapping_library,
     build_mapping_runtime,
     coerce_sensor_input,
+    prepare_mapping_library,
     validate_prepared_library,
 )
 ```
@@ -105,6 +106,9 @@ Raises:
 
 - `PreparedLibraryBuildError` via `SpectralLibraryError`
 - `SensorSchemaError` via `SpectralLibraryError`
+
+`prepare_mapping_library(...)` remains available as a compatibility alias with
+the same signature and return type.
 
 ### 2. `build_mapping_runtime(...)`
 

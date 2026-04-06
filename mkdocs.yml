@@ -77,6 +77,7 @@ nav:
       - Internal Docs Overview: internal_overview.md
       - Internal Build Pipeline: internal_build_pipeline.md
       - Mapping Design: spectral_mapping_usage_plan.md
+      - SIAC Decoupling: spectral-library-siac-decoupling.md
       - Release Design: production_release_standard_plan.md
 plugins:
   - search
