@@ -5316,7 +5316,7 @@ class MappingCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
                 cli.main_with_args(["--version"])
             self.assertEqual(version_exit.exception.code, 0)
-            self.assertIn("0.6.0", version_stdout.getvalue())
+            self.assertIn("0.6.1", version_stdout.getvalue())
 
             _write_csv(
                 input_path,
