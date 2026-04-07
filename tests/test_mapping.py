@@ -288,7 +288,7 @@ class MappingWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture, manifest = _prepare_fixture(Path(tmpdir))
 
-            self.assertEqual(manifest.schema_version, "3.0.0")
+            self.assertEqual(manifest.schema_version, "3.1.0")
             self.assertEqual(manifest.source_sensors, ("sensor_a",))
             self.assertEqual(manifest.row_count, 4)
             self.assertEqual(manifest.supported_output_modes, ("target_sensor", "vnir_spectrum", "swir_spectrum", "full_spectrum"))
@@ -314,7 +314,7 @@ class MappingWorkflowTests(unittest.TestCase):
 
             sensor_schema_payload = json.loads((fixture["prepared_root"] / "sensor_schema.json").read_text(encoding="utf-8"))
             first_band = sensor_schema_payload["sensors"][0]["bands"][0]
-            self.assertEqual(sensor_schema_payload["schema_version"], "3.0.0")
+            self.assertEqual(sensor_schema_payload["schema_version"], "3.1.0")
             self.assertEqual(sensor_schema_payload["sensors"][0]["schema_type"], "rsrf_sensor_definition")
             self.assertEqual(sensor_schema_payload["sensors"][0]["schema_version"], "1.0.0")
             self.assertIn("response_definition", first_band)
@@ -3054,6 +3054,15 @@ class MappingValidationTests(unittest.TestCase):
 
         self.assertEqual(resolved, runtime_root.resolve())
 
+    def test_builtin_sentinel_nir_maps_to_b08(self) -> None:
+        for sensor_id in ("sentinel-2a_msi", "sentinel-2b_msi", "sentinel-2c_msi"):
+            with self.subTest(sensor_id=sensor_id):
+                selected_bands = {
+                    selection.band_id: selection.rsrf_band_id
+                    for selection in schema_module.RSRF_SENSOR_BAND_SELECTIONS[sensor_id]
+                }
+                self.assertEqual(selected_bands["nir"], "B08")
+
     def test_load_sensor_schemas_resolves_required_rsrf_sensor(self) -> None:
         schema = SensorSRFSchema.from_dict(
             _custom_sensor_payload(
@@ -3303,7 +3312,7 @@ class MappingValidationTests(unittest.TestCase):
             fixture, _ = _prepare_fixture(Path(tmpdir))
             manifest_path = fixture["prepared_root"] / "manifest.json"
             manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest_payload["schema_version"] = "4.0.0"
+            manifest_payload["schema_version"] = "3.0.0"
             manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
             with self.assertRaises(PreparedLibraryCompatibilityError):
                 SpectralMapper(fixture["prepared_root"])
@@ -5395,7 +5404,7 @@ class MappingCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as version_exit, contextlib.redirect_stdout(version_stdout):
                 cli.main_with_args(["--version"])
             self.assertEqual(version_exit.exception.code, 0)
-            self.assertIn("0.6.2", version_stdout.getvalue())
+            self.assertIn("0.6.3", version_stdout.getvalue())
 
             _write_csv(
                 input_path,

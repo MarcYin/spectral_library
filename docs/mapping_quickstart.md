@@ -82,7 +82,7 @@ spectral-library download-prepared-library \
 ```
 
 This fetches the latest release, verifies the SHA-256 digest, extracts the
-runtime, and validates it. You can pin a specific release with `--tag v0.6.2`
+runtime, and validates it. You can pin a specific release with `--tag v0.6.3`
 or point at any hosted tarball with `--url <URL>`.
 
 ### Option B: Build your own runtime

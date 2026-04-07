@@ -164,7 +164,7 @@ OFFICIAL_SENSORS = (
             BandSelection("blue", "B2", "vnir", "S2A_SR_AV_B2", "Blue"),
             BandSelection("green", "B3", "vnir", "S2A_SR_AV_B3", "Green"),
             BandSelection("red", "B4", "vnir", "S2A_SR_AV_B4", "Red"),
-            BandSelection("nir", "B8A", "vnir", "S2A_SR_AV_B8A", "Near infrared"),
+            BandSelection("nir", "B08", "vnir", "S2A_SR_AV_B8", "Near infrared"),
             BandSelection("swir1", "B11", "swir", "S2A_SR_AV_B11", "Shortwave infrared 1"),
             BandSelection("swir2", "B12", "swir", "S2A_SR_AV_B12", "Shortwave infrared 2"),
         ),

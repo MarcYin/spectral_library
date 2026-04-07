@@ -41,7 +41,7 @@ version is stored in `manifest.json` under `schema_version`.
 | --- | --- |
 | 0.1.x | `1.0.0` |
 | 0.2.x | `1.2.0` |
-| current worktree | `3.0.0` |
+| current worktree | `3.1.0` |
 
 ## Mapping Errors
 

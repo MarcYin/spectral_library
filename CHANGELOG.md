@@ -5,6 +5,22 @@ All notable changes to `spectral-library` will be documented in this file.
 The format follows Keep a Changelog and the project uses semantic versioning
 for its public Python API, CLI, and prepared-runtime contract.
 
+## [0.6.3] - 2026-04-07
+
+### Changed
+
+- built-in Sentinel-2A, Sentinel-2B, and Sentinel-2C canonical `nir` now map
+  to `B08` instead of `B8A` so the semantic band matches SIAC and the packaged
+  `rsrf>=0.3.1` runtime data
+- prepared-runtime schema version advanced to `3.1.0` so `0.6.2` runtimes with
+  the old Sentinel `B8A` semantic mapping are rejected and must be rebuilt
+
+### Fixed
+
+- regenerated the official Sentinel-2A example bundle and docs so the checked-in
+  source manifest, rendered tables, and derived metrics all match the new
+  `B08` contract
+
 ## [0.6.2] - 2026-04-06
 
 ### Changed

@@ -112,7 +112,7 @@ class DocsSiteBuildTests(unittest.TestCase):
             self.assertIn("NIR-to-SWIR retrieval", official_html)
             self.assertIn("exclude_row_id", official_html)
             self.assertIn("simplex_mixture", official_html)
-            self.assertIn("B8A", official_html)
+            self.assertIn("B08", official_html)
             self.assertNotIn('href="../examples/', official_html)
             self.assertIn("Mathematical Foundations", official_html)
             self.assertIn("root-mean-square Euclidean distance", theory_html)

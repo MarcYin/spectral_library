@@ -24,8 +24,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.002875586932279035,
-      "rmse": 0.003717779464902716,
+      "mean_abs_error": 0.0028149109611122036,
+      "rmse": 0.0037363574938804284,
       "sample_count": 4
     },
     {
@@ -43,8 +43,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.002636703896214273,
-      "rmse": 0.003524497747938685,
+      "mean_abs_error": 0.002388872832638021,
+      "rmse": 0.0034060396071653684,
       "sample_count": 4
     },
     {
@@ -62,8 +62,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0026370007074006663,
-      "rmse": 0.003528748699219717,
+      "mean_abs_error": 0.002397302273508719,
+      "rmse": 0.0034108855582718938,
       "sample_count": 4
     },
     {
@@ -81,8 +81,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0023009624005263245,
-      "rmse": 0.0033502232430058566,
+      "mean_abs_error": 0.0025283002380722228,
+      "rmse": 0.0035097887530979623,
       "sample_count": 4
     },
     {
@@ -100,8 +100,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0016715700344359973,
-      "rmse": 0.0021538543016644384,
+      "mean_abs_error": 0.0016791070425092212,
+      "rmse": 0.0025093375240353576,
       "sample_count": 4
     },
     {
@@ -119,8 +119,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0016856560283681273,
-      "rmse": 0.0021665830611653507,
+      "mean_abs_error": 0.0016910981996769703,
+      "rmse": 0.0025178739861875946,
       "sample_count": 4
     },
     {
@@ -138,8 +138,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0021099586808331922,
-      "rmse": 0.003195384505805405,
+      "mean_abs_error": 0.0021591808087949613,
+      "rmse": 0.003267524096083597,
       "sample_count": 4
     },
     {
@@ -157,8 +157,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.001886209977777832,
-      "rmse": 0.0024594043816051946,
+      "mean_abs_error": 0.0018384810153529126,
+      "rmse": 0.002456989233627962,
       "sample_count": 4
     },
     {
@@ -195,8 +195,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.0020628842514105647,
-      "rmse": 0.0031291339084658126,
+      "mean_abs_error": 0.002097466491425521,
+      "rmse": 0.003181673742675708,
       "sample_count": 4
     },
     {
@@ -214,8 +214,8 @@
         "swir2"
       ],
       "evaluated_band_count": 6,
-      "mean_abs_error": 0.001795014000248016,
-      "rmse": 0.002362906754864295,
+      "mean_abs_error": 0.0017455351325433156,
+      "rmse": 0.002352354460909049,
       "sample_count": 4
     },
     {

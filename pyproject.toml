@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spectral-library"
-version = "0.6.2"
+version = "0.6.3"
 description = "Spectral library build, preparation, and retrieval-based mapping toolkit."
 readme = "README.md"
 license = "MIT"
@@ -43,7 +43,7 @@ dependencies = [
   "duckdb>=1.1.0",
   "numpy>=1.24.0",
   "pandas>=2.0.0",
-  "rsrf>=0.3.0",
+  "rsrf>=0.3.1",
 ]
 
 [project.urls]

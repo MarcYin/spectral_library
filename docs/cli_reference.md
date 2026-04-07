@@ -66,7 +66,7 @@ Optional arguments:
 | Flag | Meaning |
 | --- | --- |
 | `--url` | direct URL to a `.tar.gz` runtime archive (skips GitHub Release lookup) |
-| `--tag` | GitHub Release tag to download from (e.g. `v0.6.2`); defaults to latest |
+| `--tag` | GitHub Release tag to download from (e.g. `v0.6.3`); defaults to latest |
 | `--sha256` | expected SHA-256 hex digest for the archive |
 | `--no-verify` | skip runtime validation after extraction |
 

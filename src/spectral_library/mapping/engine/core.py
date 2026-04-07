@@ -23,7 +23,7 @@ import numpy as np
 from ... import _rustaccel
 from ..._version import __version__
 
-PREPARED_SCHEMA_VERSION = "3.0.0"
+PREPARED_SCHEMA_VERSION = "3.1.0"
 SUPPORTED_OUTPUT_MODES = (
     "target_sensor",
     "vnir_spectrum",
@@ -106,7 +106,7 @@ RSRF_SENSOR_BAND_SELECTIONS: dict[str, tuple[_RsrfBandSelection, ...]] = {
         _RsrfBandSelection("blue", "B02", "vnir"),
         _RsrfBandSelection("green", "B03", "vnir"),
         _RsrfBandSelection("red", "B04", "vnir"),
-        _RsrfBandSelection("nir", "B8A", "vnir"),
+        _RsrfBandSelection("nir", "B08", "vnir"),
         _RsrfBandSelection("swir1", "B11", "swir"),
         _RsrfBandSelection("swir2", "B12", "swir"),
     ),
@@ -115,7 +115,7 @@ RSRF_SENSOR_BAND_SELECTIONS: dict[str, tuple[_RsrfBandSelection, ...]] = {
         _RsrfBandSelection("blue", "B02", "vnir"),
         _RsrfBandSelection("green", "B03", "vnir"),
         _RsrfBandSelection("red", "B04", "vnir"),
-        _RsrfBandSelection("nir", "B8A", "vnir"),
+        _RsrfBandSelection("nir", "B08", "vnir"),
         _RsrfBandSelection("swir1", "B11", "swir"),
         _RsrfBandSelection("swir2", "B12", "swir"),
     ),
@@ -124,7 +124,7 @@ RSRF_SENSOR_BAND_SELECTIONS: dict[str, tuple[_RsrfBandSelection, ...]] = {
         _RsrfBandSelection("blue", "B02", "vnir"),
         _RsrfBandSelection("green", "B03", "vnir"),
         _RsrfBandSelection("red", "B04", "vnir"),
-        _RsrfBandSelection("nir", "B8A", "vnir"),
+        _RsrfBandSelection("nir", "B08", "vnir"),
         _RsrfBandSelection("swir1", "B11", "swir"),
         _RsrfBandSelection("swir2", "B12", "swir"),
     ),

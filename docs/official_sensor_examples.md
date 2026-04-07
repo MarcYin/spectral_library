@@ -19,7 +19,7 @@ the rest of the external full library available.
   <div><strong>Example estimator</strong><span>`simplex_mixture`</span></div>
   <div><strong>Scored subset</strong><span>blue, green, red, nir, swir1, swir2</span></div>
   <div><strong>Library root</strong><span>`build/siac_spectral_library_real_full_raw_no_ghisacasia_no_understory_no_santa37`</span></div>
-  <div><strong>Regenerated</strong><span>2026-04-05 UTC</span></div>
+  <div><strong>Regenerated</strong><span>2026-04-07 UTC</span></div>
 </div>
 
 Related pages:
@@ -37,7 +37,7 @@ Related pages:
 | Landsat 9 OLI | USGS [Spectral Characteristics Viewer band JSON](https://landsat.usgs.gov/spectral-characteristics-viewer) | [`examples/official_mapping/srfs/landsat-9_oli2.json`](../examples/official_mapping/srfs/landsat-9_oli2.json) |
 
 The reduced JSON files and derived figures were regenerated from the official
-upstream assets on `2026-04-05` UTC. Provenance, download timestamps,
+upstream assets on `2026-04-07` UTC. Provenance, download timestamps,
 and SHA-256 hashes are stored in
 [`examples/official_mapping/official_source_manifest.json`](../examples/official_mapping/official_source_manifest.json).
 
@@ -99,7 +99,7 @@ each segment’s `k = 10` retrieval for readability.
 | `blue` | `Band 3` | `B2` | `Band 2` | `Band 2` |
 | `green` | `Band 4` | `B3` | `Band 3` | `Band 3` |
 | `red` | `Band 1` | `B4` | `Band 4` | `Band 4` |
-| `nir` | `Band 2` | `B8A` | `Band 5` | `Band 5` |
+| `nir` | `Band 2` | `B08` | `Band 5` | `Band 5` |
 | `swir1` | `Band 6` | `B11` | `Band 6` | `Band 6` |
 | `swir2` | `Band 7` | `B12` | `Band 7` | `Band 7` |
 
@@ -162,7 +162,7 @@ Observed range in the bundled example:
 - lowest comparable mean absolute band error:
   `0.0016` for Landsat 9 -> Landsat 8
 - highest comparable mean absolute band error:
-  `0.0029` for MODIS Terra -> Sentinel-2A
+  `0.0028` for MODIS Terra -> Sentinel-2A
 - pairwise metrics on this page were generated with `neighbor_estimator = simplex_mixture`
 
 The full pairwise summary, including `evaluated_band_ids` and
@@ -181,7 +181,7 @@ targets across all `12` ordered source-target pairs.
   `0.0021` with `simplex_mixture`
 - best Landsat 8 ->
   Sentinel-2A held-out mean absolute error:
-  `0.0019` with
+  `0.0018` with
   `simplex_mixture`
 
 Reference benchmark files:
@@ -277,12 +277,12 @@ Reference output:
 
 | Band | Truth | Mapped |
 | --- | --- | --- |
-| `ultra_blue` | `0.0856` | `0.0709` |
-| `blue` | `0.0858` | `0.0771` |
-| `green` | `0.1065` | `0.1086` |
-| `red` | `0.0621` | `0.0733` |
-| `nir` | `0.3979` | `0.4011` |
-| `swir1` | `0.0971` | `0.0952` |
+| `ultra_blue` | `0.0856` | `0.0721` |
+| `blue` | `0.0858` | `0.0778` |
+| `green` | `0.1065` | `0.1066` |
+| `red` | `0.0621` | `0.0722` |
+| `nir` | `0.3979` | `0.3978` |
+| `swir1` | `0.0971` | `0.0954` |
 | `swir2` | `0.0356` | `0.0331` |
 
 The `ultra_blue` band is shown in the example table because it is a real target

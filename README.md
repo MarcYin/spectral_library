@@ -161,7 +161,7 @@ Important:
 
 - the official example bundle expects the previously composed full SIAC library recorded in its manifest
 - the docs example is a held-out evaluation against that full library, not a vendored miniature retrieval database
-- Sentinel-2 uses `B8A` for the semantic `nir` band in the published example set
+- Sentinel-2 uses `B08` for the semantic `nir` band in the published example set
 
 ## Production Readiness
 

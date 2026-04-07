@@ -102,7 +102,7 @@ class OfficialExamplesTests(unittest.TestCase):
             sensor for sensor in manifest_payload["sensors"] if sensor["sensor_id"] == "sentinel-2a_msi"
         )
         sentinel_nir = next(band for band in sentinel_payload["selected_bands"] if band["band_id"] == "nir")
-        self.assertEqual(sentinel_nir["official_band"], "B8A")
+        self.assertEqual(sentinel_nir["official_band"], "B08")
 
     def test_selected_band_plot_windows_cover_full_official_support(self) -> None:
         sensor_payloads = {
@@ -219,7 +219,7 @@ class OfficialExamplesTests(unittest.TestCase):
         self.assertIn("exclude_row_id", doc_text)
         self.assertIn("--exclude-row-id 'usgs_v7:usgs_v7_002183:Blue_Spruce DW92-5 needles", doc_text)
         self.assertIn("`--neighbor-estimator simplex_mixture`", doc_text)
-        self.assertIn("| `nir` | `Band 2` | `B8A` | `Band 5` | `Band 5` |", doc_text)
+        self.assertIn("| `nir` | `Band 2` | `B08` | `Band 5` | `Band 5` |", doc_text)
         self.assertIn(f"`{float(modis_rows[0]['reflectance']):.4f}`", doc_text)
         self.assertIn("[Mathematical Foundations](theory.md)", doc_text)
         self.assertIn("spectral-library build-mapping-library \\\n  --siac-root", doc_text)

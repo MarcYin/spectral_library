@@ -56,7 +56,7 @@ from spectral_library.distribution import RuntimeDownloadError, download_prepare
 
 output = download_prepared_library(
     Path("build/mapping_runtime"),
-    # tag="v0.6.2",       # optional: pin to a specific release
+    # tag="v0.6.3",       # optional: pin to a specific release
     # url="https://...",   # optional: direct tarball URL
     # sha256="abc123...",  # optional: expected digest
 )

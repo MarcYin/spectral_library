@@ -44,8 +44,10 @@ Required fields:
 | `file_checksums` | files included in checksum validation |
 | `interpolation_summary` | summary counts for repaired SIAC `nm_*` gaps, when any rows needed repair |
 
-Additive optional fields are allowed in minor releases. Renames, removals, or
-required-field changes require a major version change.
+The loader requires an exact `schema_version` match. Additive optional fields
+are allowed only when the package also advances to the matching schema version.
+Renames, removals, required-field changes, or semantic sensor-contract changes
+must publish a new prepared-runtime schema version and rebuilt runtimes.
 
 ## `sensor_schema.json`
 

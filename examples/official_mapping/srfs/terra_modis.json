@@ -6,6 +6,7 @@
     {
       "band_id": "blue",
       "response_definition": {
+        "kind": "sampled",
         "wavelength_nm": [
           450.89,
           451.2,
@@ -671,8 +672,7 @@
           0.01,
           0.01,
           0.01
-        ],
-        "kind": "sampled"
+        ]
       },
       "extensions": {
         "spectral_library": {
@@ -683,6 +683,7 @@
     {
       "band_id": "green",
       "response_definition": {
+        "kind": "sampled",
         "wavelength_nm": [
           538.746,
           538.8003,
@@ -1626,8 +1627,7 @@
           0.01,
           0.01,
           0.01
-        ],
-        "kind": "sampled"
+        ]
       },
       "extensions": {
         "spectral_library": {
@@ -1638,6 +1638,7 @@
     {
       "band_id": "red",
       "response_definition": {
+        "kind": "sampled",
         "wavelength_nm": [
           614.08,
           614.09,
@@ -2973,8 +2974,7 @@
           0.01,
           0.01,
           0.01
-        ],
-        "kind": "sampled"
+        ]
       },
       "extensions": {
         "spectral_library": {
@@ -2985,6 +2985,7 @@
     {
       "band_id": "nir",
       "response_definition": {
+        "kind": "sampled",
         "wavelength_nm": [
           819.11,
           819.13,
@@ -4518,8 +4519,7 @@
           0.01,
           0.01,
           0.01
-        ],
-        "kind": "sampled"
+        ]
       },
       "extensions": {
         "spectral_library": {
@@ -4530,6 +4530,7 @@
     {
       "band_id": "swir1",
       "response_definition": {
+        "kind": "sampled",
         "wavelength_nm": [
           1594.6,
           1595.3,
@@ -5225,8 +5226,7 @@
           0.01,
           0.01,
           0.01
-        ],
-        "kind": "sampled"
+        ]
       },
       "extensions": {
         "spectral_library": {
@@ -5237,6 +5237,7 @@
     {
       "band_id": "swir2",
       "response_definition": {
+        "kind": "sampled",
         "wavelength_nm": [
           2058.2,
           2058.5,
@@ -5758,8 +5759,7 @@
           0.01,
           0.01,
           0.01
-        ],
-        "kind": "sampled"
+        ]
       },
       "extensions": {
         "spectral_library": {

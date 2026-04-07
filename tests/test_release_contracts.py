@@ -548,14 +548,14 @@ class PreparedRuntimeContractTests(unittest.TestCase):
                     "interpolation_summary",
                 },
             )
-            self.assertEqual(manifest_payload["schema_version"], "3.0.0")
+            self.assertEqual(manifest_payload["schema_version"], "3.1.0")
             self.assertEqual(set(manifest_payload["file_checksums"]), set(manifest.file_checksums))
             self.assertEqual(manifest_payload["knn_index_artifacts"], manifest.knn_index_artifacts)
             self.assertEqual(set(manifest_payload["interpolation_summary"]), set(manifest.interpolation_summary))
 
             checksums_payload = json.loads((fixture["prepared_root"] / "checksums.json").read_text(encoding="utf-8"))
             self.assertEqual(set(checksums_payload), {"files", "schema_version"})
-            self.assertEqual(checksums_payload["schema_version"], "3.0.0")
+            self.assertEqual(checksums_payload["schema_version"], "3.1.0")
             self.assertIn("manifest.json", checksums_payload["files"])
             self.assertIn("mapping_metadata.parquet", checksums_payload["files"])
             self.assertIn("sensor_schema.json", checksums_payload["files"])
@@ -564,7 +564,7 @@ class PreparedRuntimeContractTests(unittest.TestCase):
 
             sensor_schema_payload = json.loads((fixture["prepared_root"] / "sensor_schema.json").read_text(encoding="utf-8"))
             self.assertEqual(set(sensor_schema_payload), {"schema_version", "canonical_wavelength_grid", "sensors"})
-            self.assertEqual(sensor_schema_payload["schema_version"], "3.0.0")
+            self.assertEqual(sensor_schema_payload["schema_version"], "3.1.0")
             self.assertEqual(
                 sensor_schema_payload["canonical_wavelength_grid"],
                 {"start_nm": 400, "end_nm": 2500, "step_nm": 1},
@@ -578,7 +578,7 @@ class PreparedRuntimeContractTests(unittest.TestCase):
             )
 
     def test_prepared_runtime_compatibility_error_is_public_and_stable(self) -> None:
-        for schema_version in ("1.2.0", "4.0.0"):
+        for schema_version in ("1.2.0", "3.0.0"):
             with self.subTest(schema_version=schema_version):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     fixture, _ = _prepare_fixture(Path(tmpdir))
